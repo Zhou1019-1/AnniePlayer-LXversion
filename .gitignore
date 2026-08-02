@@ -1,0 +1,30 @@
+# ---- 构建产物（用 GitHub Releases 发布 setup.exe，不进仓库）----
+setupEXE/
+*.blockmap
+
+# ---- 依赖（npm install 可恢复）----
+node_modules/
+
+# ---- 早期启动器残留：完整 LX Electron 运行时，深度集成后已不使用 ----
+bundled/
+
+# ---- 洛雪源码克隆（仅移植参考，上游: https://github.com/lyswhut/lx-music-desktop）----
+_lx-source/
+_lx-build/
+
+# ---- AnnieEngine 二进制（由 AnnieEngine 引擎项目构建产出，构建前放入 engine/）----
+engine/publish/
+engine/tools/
+
+# ---- 构建日志/临时文件 ----
+build-err.txt
+build-out.txt
+better-sqlite3.tar.gz
+*.log
+
+# ---- 便携模式数据 ----
+portable/
+
+# ---- 系统文件 ----
+Thumbs.db
+.DS_Store

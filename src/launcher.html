@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+  <title>AnniePlayer SVLX</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0b0b10; color: #e8e8ec; overflow: hidden;
+      font: 14px/1.6 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      -webkit-user-select: none; user-select: none; }
+    .titlebar { display: flex; align-items: center; justify-content: space-between;
+      height: 40px; padding: 0 12px 0 20px; -webkit-app-region: drag;
+      background: linear-gradient(180deg, #12121a, #0b0b10); }
+    .titlebar .brand { font-weight: 600; letter-spacing: 1px; }
+    .titlebar .brand .ver { color: #6ee7b7; font-size: 11px; margin-left: 8px; }
+    .titlebar .btns { -webkit-app-region: no-drag; display: flex; gap: 8px; }
+    .titlebar .btns button { width: 32px; height: 26px; border: 0; border-radius: 4px;
+      background: #1a1a24; color: #aaa; cursor: pointer; font-size: 13px; }
+    .titlebar .btns button:hover { background: #26263a; color: #fff; }
+    .stage { display: flex; gap: 24px; justify-content: center; align-items: stretch;
+      padding: 44px 48px 20px; height: calc(100% - 110px); }
+    .card { flex: 1; max-width: 340px; border-radius: 14px; padding: 28px 24px;
+      background: #14141e; border: 1px solid #23233a; cursor: pointer;
+      display: flex; flex-direction: column; gap: 12px;
+      transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+    .card:hover { transform: translateY(-4px); border-color: #6ee7b7;
+      box-shadow: 0 12px 40px rgba(110, 231, 183, .12); }
+    .card h2 { font-size: 20px; }
+    .card .tag { font-size: 11px; color: #6ee7b7; letter-spacing: 2px; }
+    .card p { color: #9a9aad; font-size: 12.5px; flex: 1; }
+    .card .go { align-self: flex-start; font-size: 12px; color: #0b0b10;
+      background: #6ee7b7; border-radius: 6px; padding: 6px 14px; font-weight: 600; }
+    .card.lx .tag { color: #7cc7ff; }
+    .card.lx:hover { border-color: #7cc7ff; box-shadow: 0 12px 40px rgba(124, 199, 255, .12); }
+    .card.lx .go { background: #7cc7ff; }
+    .card .missing { color: #ffb86b; font-size: 11px; }
+    .footer { text-align: center; color: #555; font-size: 11px; padding-bottom: 14px; }
+    .footer a { color: #6a6a80; cursor: pointer; text-decoration: none; }
+    .footer a:hover { color: #6ee7b7; }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="brand">AnniePlayer <span class="ver" id="ver">SVLX</span></div>
+    <div class="btns">
+      <button id="min" title="最小化">—</button>
+      <button id="close" title="退出">×</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="card annie" id="card-annie">
+      <div class="tag">内嵌 · 同进程</div>
+      <h2>安妮播放器</h2>
+      <p>DSD 原生输出 / 防削波 / 响度归一 / 媒体库 / CUE 分轨 / 迷你模式 / 命令面板 / 流媒体(网易云·QQ)。AnnieEngine 音效后端全量保留。</p>
+      <span class="go">启动 →</span>
+    </div>
+    <div class="card lx" id="card-lx">
+      <div class="tag">内嵌 · 独立进程</div>
+      <h2>洛雪音乐</h2>
+      <p>洛雪音乐桌面版完整功能:歌单 / 排行榜 / 桌面歌词 / 全局热键 / 数据同步 / 开放 API。以独立子进程运行,互不干扰。<span class="missing" id="lx-missing"></span></p>
+      <span class="go">启动 →</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    洛雪音乐组件来自 <a id="lnk">lyswhut/lx-music-desktop</a>(Apache-2.0),声明见 THIRDPARTY 目录
+  </div>
+
+  <script src="launcher.js"></script>
+</body>
+</html>

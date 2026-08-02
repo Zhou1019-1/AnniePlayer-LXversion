@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; connect-src 'self' blob: data:; worker-src 'self' blob:; font-src 'self' data:;">
+<title>安妮播放器Plus Pro</title>
+<script>
+// 主题早标记：首帧前确定界面主题，避免旧主题闪屏（localStorage key: annieplayer.theme）
+try { document.documentElement.dataset.theme = localStorage.getItem('annieplayer.theme') || 'legacy'; }
+catch (e) { document.documentElement.dataset.theme = 'legacy'; }
+// Plus：配色早标记（localStorage key: annieplayer.palette）
+try { document.documentElement.dataset.palette = localStorage.getItem('annieplayer.palette') || 'gold'; }
+catch (e) { document.documentElement.dataset.palette = 'gold'; }
+</script>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/fb2k.css">
+</head>
+<body>
+
+<!-- 标题栏 -->
+<header id="titlebar">
+  <div class="tb-drag">
+    <span class="tb-logo">安妮播放器Plus <em>Pro</em> <span class="tb-ver">beta0.0.2</span></span>
+    <span id="tb-backend" class="tb-badge" title="输出后端">未连接</span>
+  </div>
+  <div class="tb-btns">
+    <button id="btn-settings" title="设置">⚙</button>
+    <button id="btn-min" title="最小化">—</button>
+    <button id="btn-max" title="最大化">□</button>
+    <button id="btn-close" class="close" title="关闭">×</button>
+  </div>
+</header>
+
+<div id="tool-banner" class="hidden">⚠ 缺少 ffmpeg：解码播放不可用。请把 ffmpeg.exe 和 ffprobe.exe 放入 engine/tools 目录后重启播放器。</div>
+
+<main id="layout">
+  <!-- 左：曲库 / 流媒体 -->
+  <aside id="sidebar">
+    <div id="side-tabs">
+      <button class="side-tab active" data-tab="local">本地曲库</button>
+      <button class="side-tab" data-tab="stream">流媒体</button>
+    </div>
+
+    <!-- 本地曲库面板 -->
+    <div id="panel-local" class="side-panel active">
+      <div class="side-actions">
+        <button id="btn-add-folder" class="btn-accent">+ 添加音乐文件夹</button>
+        <button id="btn-rescan" class="btn-ghost" title="重新扫描">↻</button>
+      </div>
+      <div id="folder-list"></div>
+      <!-- V1.1.0：平铺文件夹导航（原 #folder-tree 移除；曲目区在文件夹视图/曲目视图间切换） -->
+      <div id="sidebar-resizer" title="拖拽调整曲库宽度"></div>
+      <input id="search" type="search" placeholder="搜索曲库…" spellcheck="false">
+      <div class="side-bar2">
+        <select id="sort-select" title="曲库排序">
+          <option value="name">按名称</option>
+          <option value="folder">按文件夹</option>
+          <option value="mtime">按最近修改</option>
+          <option value="artist">按艺术家</option>
+          <option value="album">按专辑</option>
+          <option value="genre">按流派</option>
+          <option value="year">按年份</option>
+        </select>
+        <button id="btn-view-toggle" class="btn-ghost" title="切换文件夹图标视图">🗂</button>
+        <button id="btn-collapse" title="收起曲库">«</button>
+      </div>
+      <div id="lib-nav" class="hidden">
+        <button id="btn-lib-back" title="返回文件夹列表">←</button>
+        <span id="lib-nav-name"></span>
+      </div>
+      <div id="track-list"></div>
+      <!-- 文件夹图标网格视图（默认隐藏，🗂 按钮切换） -->
+      <div id="grid-view" class="hidden">
+        <div id="grid-nav">
+          <button id="grid-back" title="返回上级文件夹">←</button>
+          <span id="grid-crumb">全部文件夹</span>
+        </div>
+        <div id="folder-grid"></div>
+      </div>
+    </div>
+
+    <!-- 流媒体面板 -->
+    <div id="panel-stream" class="side-panel">
+      <!-- 洛雪式音源管理 -->
+      <div class="stream-bar src-bar">
+        <button id="btn-source-import" class="btn-accent" title="导入洛雪音源脚本(.js)">导入音源</button>
+        <span id="source-status">未导入音源（使用内置解析）</span>
+      </div>
+      <div id="source-list"></div>
+      <!-- 下载目录 -->
+      <div class="stream-bar dl-bar">
+        <span id="dl-dir" title="">下载目录：…</span>
+        <button id="btn-dl-dir" title="更改下载目录">更改</button>
+        <button id="btn-dl-dir-reset" title="恢复默认目录">默认</button>
+      </div>
+      <!-- 平台标签 + 音质（洛雪五大平台） -->
+      <div class="stream-bar pf-bar">
+        <div class="pf-tabs">
+          <button class="pf-tab active" data-pf="kg">酷狗</button>
+          <button class="pf-tab" data-pf="kw">酷我</button>
+          <button class="pf-tab" data-pf="mg">咪咕</button>
+          <button class="pf-tab" data-pf="tx">QQ</button>
+          <button class="pf-tab" data-pf="wy">网易</button>
+        </div>
+        <select id="stream-quality" title="播放/下载音质">
+          <option value="hires">Hi-Res</option>
+          <option value="lossless" selected>无损</option>
+          <option value="exhigh">极高</option>
+          <option value="standard">标准</option>
+        </select>
+      </div>
+      <div class="stream-bar">
+        <input id="stream-search" type="search" placeholder="搜索在线音乐，回车确认…" spellcheck="false">
+        <button id="btn-stream-search" class="btn-accent" title="搜索">搜索</button>
+      </div>
+      <div id="stream-status"></div>
+      <div id="stream-list"></div>
+      <div class="side-bar2">
+        <span class="stream-hint">在线音源以独占模式解码输出</span>
+        <button id="btn-collapse2" title="收起曲库">«</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 右：视觉舞台（three.js 画布 + 悬浮信息层） -->
+  <section id="stage-wrap">
+    <div id="album-bg"></div>
+    <div id="album-bg-next" aria-hidden="true"></div>
+    <div id="canvas-container"></div>
+
+    <!-- 节拍分析状态（视觉模块会写入文本并控制显隐） -->
+    <div id="beat-chip"><span id="beat-text">节奏分析中…</span></div>
+
+    <!-- 悬浮：当前曲目 -->
+    <div id="np-overlay">
+      <img id="thumb-cover" alt="" draggable="false">
+      <div id="np-texts">
+        <div id="thumb-title">未在播放</div>
+        <div id="thumb-artist">从左侧曲库选择一首歌开始</div>
+        <div id="np-format"></div>
+      </div>
+    </div>
+
+    <!-- 悬浮：右上角槽位（视觉模块引用） -->
+    <div id="top-right"></div>
+
+    <!-- 曲库收起后的展开把手 -->
+    <button id="btn-expand" class="hidden" title="展开曲库">»</button>
+    <!-- 可视化面板关闭后的恢复把手 -->
+    <button id="btn-viz-restore" class="hidden" title="展开可视化面板">▲ 波形 / 频谱</button>
+  </section>
+
+  <!-- 右：双声道电平停靠栏（独立于其他功能区） -->
+  <aside id="level-dock" title="实时输出电平（左 / 右声道）">
+    <div class="lvl-title">电平</div>
+    <canvas id="level-canvas"></canvas>
+    <div class="lvl-ch-labels"><span>L</span><span>R</span></div>
+  </aside>
+</main>
+
+<!-- 可视化面板：波形 / 频谱 / 无损检测（标签页切换，可整体关闭） -->
+<section id="viz-bar">
+  <div id="viz-tabs">
+    <button class="viz-tab active" data-vtab="wave">波形</button>
+    <button class="viz-tab" data-vtab="spec">频谱</button>
+    <button class="viz-tab" data-vtab="lossless">无损检测</button>
+    <span id="viz-status"></span>
+    <button id="btn-viz-close" title="关闭可视化面板">×</button>
+  </div>
+  <div id="viz-body">
+    <canvas id="wave-canvas" class="viz-page active"></canvas>
+    <canvas id="spec-canvas" class="viz-page"></canvas>
+    <div id="lossless-page" class="viz-page">
+      <div id="lossless-summary">播放任意曲目后自动生成无损检测报告</div>
+      <div id="lossless-reasons"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 底部传输条（id 沿用视觉模块引用的 bottom-bar） -->
+<footer id="bottom-bar">
+  <div id="progress-wrap">
+    <span id="t-cur">0:00</span>
+    <div id="progress"><div id="progress-fill"></div><div id="progress-knob"></div></div>
+    <span id="t-total">0:00</span>
+  </div>
+  <!-- Plus 方案A：传输条三段分层（高频播放 / 中频音频工具 / 低频系统） -->
+  <div id="controls">
+    <div class="ctl-group transport">
+      <button id="btn-prev" class="ctl" title="上一首">⏮</button>
+      <button id="btn-play" class="ctl big" title="播放/暂停">▶</button>
+      <button id="btn-next" class="ctl" title="下一首">⏭</button>
+      <button id="btn-stop" class="ctl" title="停止">⏹</button>
+    </div>
+    <div class="ctl-group tools">
+      <button id="btn-fav-cur" class="ctl" title="收藏当前曲目">♡</button>
+      <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板">📊</button>
+      <!-- EQ 按钮由 eq.js 注入本组 -->
+    </div>
+    <div class="ctl-group sys">
+      <!-- Pro beat0.0.1：Bit-perfect 直通状态（绿点=直通 / 黄点+原因） -->
+      <span id="bp-chip" class="hidden"><i class="bp-dot"></i><span id="bp-text"></span></span>
+      <div id="volume-wrap" title="数字音量（独占模式下系统音量无效）">
+        <span>🔊</span><input id="volume" type="range" min="0" max="100" value="100">
+      </div>
+      <button id="btn-device" class="ctl" title="输出设备（WASAPI 独占 / ASIO）">🎧</button>
+      <!-- Pro beat0.0.1：Now Playing 全屏（N 键）与迷你模式（Ctrl+M） -->
+      <button id="btn-npf" class="ctl" title="Now Playing 全屏（N）" onclick="window.annieProUi && annieProUi.toggleNpf()">🖵</button>
+      <button id="btn-mini" class="ctl" title="迷你模式（Ctrl+M）" onclick="window.annieProUi && annieProUi.toggleMini()">🗕</button>
+    </div>
+  </div>
+</footer>
+
+<!-- Plus：设备选择弹层（从底栏移除常驻下拉，低频操作不占用黄金位置） -->
+<div id="device-pop" class="hidden">
+  <div class="dp-head"><span>输出设备</span><button id="btn-device-close" title="关闭">×</button></div>
+  <select id="device-select" title="输出设备（WASAPI 独占 / ASIO）"></select>
+</div>
+
+<!-- 流媒体登录弹窗已随洛雪化改造移除（洛雪无需平台登录） -->
+
+<!-- 仿 foobar2000 主题根容器（内容由 fb2k.js 构建；默认隐藏，由 html[data-theme] 控制） -->
+<div id="fb2k-root" aria-hidden="true"></div>
+
+<!-- 主题切换淡入淡出遮罩 -->
+<div id="theme-fade"></div>
+
+<script src="vendor/three.r128.min.js"></script>
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/music-tempo.min.js"></script>
+<script src="js/local/stage-loader.js"></script>
+<script src="js/local/stage-adapter.js"></script>
+<script src="js/local/settings.js"></script>
+<script src="js/local/viz.js"></script>
+<script src="js/local/streaming.js"></script>
+<script src="js/local/eq.js"></script>
+<script src="js/local/player.js"></script>
+<script src="js/local/pro.js"></script>
+<script src="js/local/proUi.js"></script>
+<script src="js/local/theme.js"></script>
+<script src="js/local/fb2k.js"></script>
+</body>
+</html>

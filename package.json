@@ -1,0 +1,82 @@
+{
+  "name": "annie-player-svlx",
+  "productName": "AnniePlayer SVLX",
+  "version": "1.0.0-SVLX",
+  "description": "AnniePlayer SVLX - Annie Player integrated with lx-music-desktop (Apache-2.0). See THIRDPARTY/lx-music-desktop/NOTICE.LICENSE.",
+  "main": "src/main.js",
+  "author": "Annie Player Project",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack:dir": "electron-builder --dir --win",
+    "dist": "electron-builder --win nsis --publish never",
+    "dist:setup": "electron-builder --win nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3",
+    "music-metadata": "^11.14.0"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.annieplayer.svlx",
+    "productName": "AnniePlayer-SVLX",
+    "copyright": "Copyright (c) Annie Player Project. Includes material from https://github.com/lyswhut/lx-music-desktop (Apache-2.0).",
+    "compression": "maximum",
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "files": [
+      "src/**/*",
+      "annie/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine/publish",
+        "to": "engine",
+        "filter": [
+          "**/*",
+          "!**/*.pdb"
+        ]
+      },
+      {
+        "from": "engine/tools",
+        "to": "engine/tools",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "executableName": "AnniePlayerSVLX",
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "directories": {
+      "output": "setupEXE",
+      "buildResources": "build"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AnniePlayer SVLX",
+      "runAfterFinish": false,
+      "menuCategory": false,
+      "artifactName": "setup.${ext}"
+    }
+  }
+}

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+<title>桌面歌词</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: transparent; overflow: hidden;
+    font-family: "Microsoft YaHei UI", "微软雅黑", sans-serif; user-select: none; }
+  #bar { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    gap: 6px; padding: 10px 24px; border-radius: 14px; background: rgba(8, 10, 16, .55);
+    -webkit-app-region: drag; position: relative; }
+  #bar:hover { background: rgba(8, 10, 16, .75); }
+  #cur { font-size: 26px; font-weight: 700; color: #ffd23f; text-align: center; line-height: 1.3;
+    text-shadow: 0 2px 10px rgba(0,0,0,.8); }
+  #next { font-size: 15px; color: rgba(232, 234, 240, .65); text-align: center; }
+  #idle { font-size: 14px; color: rgba(232, 234, 240, .5); }
+  #tools { position: absolute; top: 6px; right: 10px; display: none; gap: 6px; -webkit-app-region: no-drag; }
+  #bar:hover #tools { display: flex; }
+  #tools button { width: 26px; height: 26px; border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    background: rgba(20,23,34,.9); color: #e8eaf0; font-size: 13px; cursor: pointer; }
+  #tools button:hover { border-color: #ffd23f; color: #ffd23f; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div id="tools">
+    <button id="t-lock" title="锁定位置（鼠标穿透）">🔓</button>
+    <button id="t-minus" title="缩小字号">A-</button>
+    <button id="t-plus" title="放大字号">A+</button>
+    <button id="t-op" title="透明度">◐</button>
+    <button id="t-close" title="关闭">✕</button>
+  </div>
+  <div id="cur"></div>
+  <div id="next"></div>
+  <div id="idle">♪ 桌面歌词已开启 ♪</div>
+</div>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const LS = 'annieplayer.pro.dlyrics';
+let cfg = { scale: 1, opacity: 1, locked: false };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS) || '{}')); } catch { }
+
+function apply() {
+  $('#cur').style.fontSize = Math.round(26 * cfg.scale) + 'px';
+  $('#next').style.fontSize = Math.round(15 * cfg.scale) + 'px';
+  window.mine.dlyricsCtl({ opacity: cfg.opacity });
+  localStorage.setItem(LS, JSON.stringify(cfg));
+}
+
+window.mine.onDlyricsLine((d) => {
+  $('#idle').style.display = (d.cur || d.next) ? 'none' : '';
+  $('#cur').textContent = d.cur || '';
+  $('#next').textContent = d.next || '';
+});
+
+$('#t-lock').onclick = () => {
+  cfg.locked = !cfg.locked;
+  $('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
+  window.mine.dlyricsCtl({ lock: cfg.locked });
+  apply();
+};
+$('#t-minus').onclick = () => { cfg.scale = Math.max(0.6, cfg.scale - 0.15); apply(); };
+$('#t-plus').onclick = () => { cfg.scale = Math.min(2.2, cfg.scale + 0.15); apply(); };
+$('#t-op').onclick = () => { cfg.opacity = cfg.opacity > 0.55 ? cfg.opacity - 0.25 : 1; apply(); };
+$('#t-close').onclick = () => window.mine.dlyricsToggle();
+
+apply();
+</script>
+</body>
+</html>

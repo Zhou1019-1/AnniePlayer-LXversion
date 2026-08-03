@@ -1135,7 +1135,7 @@
   }
 
   function tickProgress() {
-    if (state.seeking) return;
+    if (state.seeking || state.seekPending) return; // V1.1.4：seek 保护——旧 position 不拉回
     var pct = S.dur > 0 ? Math.min(100, S.pos / S.dur * 100) : 0;
     R.fill.style.width = pct + '%';
     R.knob.style.left = pct + '%';
@@ -1172,6 +1172,12 @@
         window.removeEventListener('pointermove', seek);
         window.removeEventListener('pointerup', up);
         state.seeking = false;
+        // V1.1.4：seek 保护——锁定目标位置，引擎 seek 完成前旧 position 不拉回
+        state.seekPending = true;
+        state.seekTarget = sec;
+        clearTimeout(state.seekTimer);
+        state.seekTimer = setTimeout(function () { state.seekPending = false; }, 10000);
+        if (typeof proToast === 'function') proToast('正在跳转…'); // 网络流 seek 需重新拉流（数秒）
         window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000).catch(function () { });
       };
       window.addEventListener('pointermove', seek);
@@ -1270,6 +1276,10 @@
         } else {
           S.pos = d.seconds;
           if (d.duration) S.dur = d.duration;
+        }
+        if (state.seekPending && d.seconds >= state.seekTarget - 0.5) { // V1.1.4：seek 完成
+          state.seekPending = false;
+          clearTimeout(state.seekTimer);
         }
         if (state.currentPath !== S.lastPath) onTrackChanged();
         tickProgress(); tickLyrics();

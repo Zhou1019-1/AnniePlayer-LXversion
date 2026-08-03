@@ -13,6 +13,10 @@ const state = {
   duration: 0,
   position: 0,
   seeking: false,
+  seekPending: false,  // V1.1.4：seek 保护——引擎 seek 未完成前，旧 position 事件不得拉回进度条
+  seekTarget: 0,
+  seekTimer: 0,
+  _posAt: 0,             // V1.1.7：最近一次 position 事件到达时刻（进度插值锚点）
   metaCache: new Map(),
   currentPath: null,
   currentStream: null, // 正在播放的流媒体曲目（本地播放时为 null）
@@ -856,9 +860,32 @@ function updateBpChip(d) {
 }
 
 /* ---------------- 播放 ---------------- */
+// V1.1.4：本地快速切歌合并——150ms 窗口内连点累计目标，只执行最后一次（减少引擎设备开关）
+const localSwitch = { timer: 0, target: null };
+function cancelLocalSwitch() {
+  clearTimeout(localSwitch.timer);
+  localSwitch.timer = 0;
+  localSwitch.target = null;
+}
+function requestLocalSwitch(dir) {
+  localSwitch.target = Math.max(0, Math.min(state.queue.length - 1, (localSwitch.target !== null ? localSwitch.target : state.index) + dir));
+  clearTimeout(localSwitch.timer);
+  localSwitch.timer = setTimeout(() => {
+    const t = localSwitch.target;
+    cancelLocalSwitch();
+    playAt(t);
+  }, 150);
+}
 async function playAt(i, offsetSec = 0) {
   const t = state.queue[i];
   if (!t) return;
+  cancelLocalSwitch(); // 明确指定目标（列表点击/自动切歌），取消未执行的合并
+  // V1.1.4：切歌清除 seek 保护——否则新歌 position（从 0 起）永远达不到旧 seekTarget，
+  // 进度条被 seekPending 冻结 10 秒（快速混合操作卡顿源）
+  if (state.seekPending) { state.seekPending = false; clearTimeout(state.seekTimer); }
+  // V1.1.5：取消流媒体侧未执行的切歌合并——否则用户点本地曲目后 150ms 定时器仍会开火，
+  // playStreamAt 劫持播放（把刚播的本地曲目换成流媒体曲目）
+  if (typeof cancelStreamSwitch === 'function') cancelStreamSwitch();
   state.index = i;
   state.currentPath = t.path;
   state.currentStream = null;
@@ -916,7 +943,10 @@ window.annieStreamPlay = async function (track) {
   if (track.onPlayed) { try { track.onPlayed(); } catch (e) { console.warn('[player] onPlayed', e); } }
 
   try {
-    await window.mine.engine('play', { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
+    // V1.1.4：流媒体切歌同样走 crossfade（设备保持）——与本地 playAt 一致，避免高频设备开关
+    const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
+    const method = cf > 0 ? 'play.crossfade' : 'play';
+    await window.mine.engine(method, { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
   } catch (e) {
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);
     return;
@@ -924,7 +954,15 @@ window.annieStreamPlay = async function (track) {
   // 悬浮信息层
   $('#thumb-title').textContent = track.title || '未知曲目';
   $('#thumb-artist').textContent = [track.artist, track.album].filter(Boolean).join(' · ');
-  if (track.cover) $('#thumb-cover').src = track.cover;
+  // V1.1.8：http 封面（kwcdn.kuwo.cn 等）经代理转 dataURL 再显示——
+  // 直接赋 http 会被 CSP img-src 拦截，且会覆盖 doInject 已代理好的 dataURL
+  if (track.cover) {
+    if (/^https?:\/\//i.test(track.cover) && window.mine.streamCoverProxy) {
+      window.mine.streamCoverProxy(track.cover).then(r => {
+        if (r && r.url && state.currentStream === track) $('#thumb-cover').src = r.url;
+      }).catch(() => { });
+    } else $('#thumb-cover').src = track.cover;
+  }
   if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
   // 可视化分析（ffmpeg 拉流解码）
   if (window.annieViz) window.annieViz.analyze(track.url, track.headers);
@@ -937,6 +975,9 @@ async function showMeta(p) {
   $('#thumb-title').textContent = m.title || '未知曲目';
   $('#thumb-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
   if (m.cover) $('#thumb-cover').src = m.cover;
+  // V1.1.8：本地无封面时清除残留——旧实现只在新封面存在时赋值，
+  // 流媒体带封面 → 本地无封面切换时，上一首封面会残留不消失
+  else $('#thumb-cover').removeAttribute('src');
   if (m.duration) { state.duration = m.duration; $('#t-total').textContent = fmtTime(m.duration); }
   // Plus：切歌微交互（封面交叉淡入 + 文本逐行滑入）
   const np = $('#np-overlay');
@@ -969,13 +1010,29 @@ window.mine.onEngineEvent((event, d) => {
           if (fb) state.duration = fb;
         }
       }
-      if (!state.seeking) updateProgress();
-      if (window.annieViz) window.annieViz.setProgress(state.position, state.duration);
+      // V1.1.4：seek 保护——引擎 seek 期间（ffprobe 探测/重缓冲）旧 position 事件持续到达，
+      // 会把进度条拉回播放中位置造成"乱跳"；锁定目标位置直到引擎确认到达目标
+      if (state.seekPending) {
+        if (d.seconds >= state.seekTarget - 0.5) {
+          state.seekPending = false;
+          clearTimeout(state.seekTimer);
+        }
+      }
+      // V1.1.7：插值锚点——记录引擎位置与到达时刻，rAF 外推实现连续滑动
+      state._posAt = performance.now();
+      if (!state.seeking && !state.seekPending) {
+        updateProgress();
+        if (window.annieViz) window.annieViz.setProgress(state.position, state.duration);
+        startProgressInterp();
+      }
       break;
     case 'state':
       state.playing = d.state === 'playing';
       $('#btn-play').textContent = state.playing ? '⏸' : '▶';
       { const bp = $('#btn-play'); bp.classList.remove('pop'); void bp.offsetWidth; bp.classList.add('pop'); } // Plus：播放键回弹
+      // V1.1.7：暂停→停止插值（position 冻结）；恢复→重置锚点（下一 position 事件重新起算）
+      if (!state.playing) cancelProgressInterp();
+      else state._posAt = performance.now();
       if (d.state === 'ended') {
         if (state.currentStream && window.annieStream) window.annieStream.playNext();
         else playAt(state.index + 1);
@@ -1034,12 +1091,34 @@ function setFormatChips(chips) {
 }
 
 /* ---------------- 传输控制 ---------------- */
-function updateProgress() {
-  const pct = state.duration > 0 ? Math.min(100, state.position / state.duration * 100) : 0;
+// V1.1.7：进度插值状态——引擎 position 事件 10Hz，直接更新进度条会"一格一格跳"；
+// 事件到达时记锚点（position + 到达时刻），rAF 循环按播放速率外推，进度条连续平滑滑动。
+function updateProgress(pos) {
+  const p = pos !== undefined ? pos : state.position;
+  const pct = state.duration > 0 ? Math.min(100, p / state.duration * 100) : 0;
   $('#progress-fill').style.width = pct + '%';
   $('#progress-knob').style.left = pct + '%';
-  $('#t-cur').textContent = fmtTime(state.position);
+  $('#t-cur').textContent = fmtTime(p);
   $('#t-total').textContent = fmtTime(state.duration);
+}
+let _interpRaf = 0;
+function cancelProgressInterp() {
+  if (_interpRaf) { cancelAnimationFrame(_interpRaf); _interpRaf = 0; }
+}
+function startProgressInterp() {
+  if (_interpRaf || !state.playing) return;
+  const tick = () => {
+    _interpRaf = 0;
+    // 暂停/seek 保护/拖动中不插值（等 position 事件恢复锚点）
+    if (!state.playing || state.seeking || state.seekPending) return;
+    const dt = (performance.now() - state._posAt) / 1000;
+    if (dt < 0 || dt > 5) return; // 锚点过期（引擎事件停滞），等下个事件刷新
+    const disp = state.position + dt;
+    updateProgress(disp);
+    if (window.annieViz) window.annieViz.setProgress(disp, state.duration);
+    _interpRaf = requestAnimationFrame(tick);
+  };
+  _interpRaf = requestAnimationFrame(tick);
 }
 
 $('#btn-play').onclick = async () => {
@@ -1051,13 +1130,17 @@ $('#btn-play').onclick = async () => {
 // streaming.js 的播放队列（window.annieStream），否则会误播本地队列第 0 首。
 $('#btn-next').onclick = () => {
   if (state.currentStream && window.annieStream) window.annieStream.playNext();
-  else playAt(state.index + 1);
+  else requestLocalSwitch(1); // V1.1.4：合并连点，只执行最后一次
 };
 $('#btn-prev').onclick = () => {
   if (state.currentStream && window.annieStream && window.annieStream.playPrev) window.annieStream.playPrev(state.position);
-  else { if (state.position > 3) playAt(state.index); else playAt(Math.max(0, state.index - 1)); }
+  else { if (state.position > 3) playAt(state.index); else requestLocalSwitch(-1); } // V1.1.4：合并连点
 };
-$('#btn-stop').onclick = () => window.mine.engine('stop').catch(() => { });
+$('#btn-stop').onclick = () => {
+  // V1.1.5：stop 立即解除 seek 保护——否则停止后 seekPending 残留，下次播放进度条被冻结
+  if (state.seekPending) { state.seekPending = false; clearTimeout(state.seekTimer); }
+  window.mine.engine('stop').catch(() => { });
+};
 
 // 进度条拖动
 (() => {
@@ -1074,13 +1157,20 @@ $('#btn-stop').onclick = () => window.mine.engine('stop').catch(() => { });
   let sec = 0;
   bar.addEventListener('pointerdown', (e) => {
     if (!state.currentPath || !state.duration) return;
+    cancelProgressInterp(); // V1.1.7：拖动期间暂停插值，避免 rAF 外推与拖动手竞争
     state.seeking = true; sec = seekTo(e);
     const move = (ev) => { sec = seekTo(ev); };
     const up = async () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       state.seeking = false;
-      try { await window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000); } catch { }
+      // V1.1.4：seek 保护——锁定目标位置，引擎 seek 完成前旧 position 不拉回（见 position 处理）
+      state.seekPending = true;
+      state.seekTarget = sec;
+      clearTimeout(state.seekTimer);
+      state.seekTimer = setTimeout(() => { state.seekPending = false; }, 10000);
+      try { await window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000); }
+      catch { state.seekPending = false; clearTimeout(state.seekTimer); } // V1.1.5：seek 失败立即解除冻结，避免进度条锁死 10 秒
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1177,8 +1267,18 @@ $('#btn-close').onclick = () => window.mine.winClose();
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.code === 'Space') { e.preventDefault(); $('#btn-play').click(); }
-  else if (e.code === 'ArrowRight') window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + state.position + 5 }, 30000).catch(() => { });
-  else if (e.code === 'ArrowLeft') window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + Math.max(0, state.position - 5) }, 30000).catch(() => { });
+  // V1.1.5：方向键 seek 复用 seekPending 保护——旧实现直接发 seek 无保护，
+  // 引擎 seek 期间旧 position 事件把进度条拉回（乱跳）
+  else if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') {
+    const delta = e.code === 'ArrowRight' ? 5 : -5;
+    if (!state.currentPath) return;
+    const target = (state.currentCue ? state.currentCue.start : 0) + Math.max(0, state.position + delta);
+    state.seekPending = true;
+    state.seekTarget = state.currentCue ? target - state.currentCue.start : target;
+    clearTimeout(state.seekTimer);
+    state.seekTimer = setTimeout(() => { state.seekPending = false; }, 10000);
+    window.mine.engine('seek', { seconds: target }, 30000).catch(() => { state.seekPending = false; clearTimeout(state.seekTimer); });
+  }
   else if (e.code === 'ArrowUp') { e.preventDefault(); $('#volume').value = Math.min(100, +$('#volume').value + 5); $('#volume').oninput({ target: $('#volume') }); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); $('#volume').value = Math.max(0, +$('#volume').value - 5); $('#volume').oninput({ target: $('#volume') }); }
 });

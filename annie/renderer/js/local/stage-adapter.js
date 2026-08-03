@@ -141,9 +141,19 @@
 
   function applyStageCover(dataUrl, trackKey, token) {
     if (!dataUrl) { clearStageCover(); return; }
-    // 流媒体封面是 HTTP URL 时，优先交给 Mineradio 原生的 loadCoverFromUrl
+    // 流媒体封面是 HTTP(S) URL 时，优先交给 Mineradio 原生的 loadCoverFromUrl
     // （内部已处理 Referer 注入、canvas 裁剪、粒子纹理更新）
     if (typeof dataUrl === 'string' && (dataUrl.startsWith('http://') || dataUrl.startsWith('https://'))) {
+      // V1.1.8：http 封面（如 kwcdn.kuwo.cn，其 https 证书无效且 CSP 拦 http）
+      // 直接经主进程代理转 dataURL，避免加载失败。
+      if (dataUrl.startsWith('http://') && window.mine.streamCoverProxy) {
+        window.mine.streamCoverProxy(dataUrl).then(function (r) {
+          if (token !== trackSwitchToken) return;
+          if (r && r.url) applyStageCover(r.url, trackKey, token); // dataURL 走下方 blob 分支
+          else clearStageCover();
+        }).catch(function () { clearStageCover(); });
+        return;
+      }
       if (typeof loadCoverFromUrl === 'function') {
         loadCoverFromUrl(dataUrl, {
           trackToken: token,
@@ -366,6 +376,8 @@
   window.mine.onEngineEvent(function (event, d) {
     switch (event) {
       case 'position':
+        // V1.1.4：seek 保护——引擎 seek 未完成时忽略旧曲 position 校准（歌词时间源防乱跳）
+        if (typeof state !== 'undefined' && state.seekPending) break;
         // 切歌后 600ms 内的"大秒数"position 事件是旧曲残留（引擎 play 确认后
         // 仍可能补发旧曲位置），会把歌词时间源钉在旧位置导致新歌词错位；
         // 新曲首个 position 事件从 0 附近开始，不会被误杀。

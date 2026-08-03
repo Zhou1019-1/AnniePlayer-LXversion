@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* 安妮播放器 —— 设置面板（MR 风格视觉自定义 + 界面偏好）
  * 视觉参数直推 Mineradio 视觉栈的 fx 对象（syncFxUniforms 实时生效）；
  * 歌词参数改动后 invalidate 重建歌词网格；全部偏好经主进程持久化到 store.ui。
@@ -22,9 +22,9 @@
     palette: 'gold',
     /* ---------------- Pro beat0.0.1：音质链路 ---------------- */
     dsdMode: 'pcm',        // pcm 转 PCM（默认）| dop（DoP 直通）| native（ASIO DSD）
-    bufferMs: 50,          // 独占缓冲 50–500ms
+    bufferMs: 150,        // 独占缓冲 50–500ms（默认 150ms：50ms 过小，快速操作时易欠载爆音）
     preload: false,        // 整轨预载到内存
-    crossfadeSec: 0,       // 交叉淡入 0–10s（0=关闭）
+    crossfadeSec: 0.5,       // 交叉淡入 0–10s（0=关闭）
     loudMode: 'off'        // 响度均衡：off | track | album
   };
   var ui = Object.assign({}, DEFAULTS);

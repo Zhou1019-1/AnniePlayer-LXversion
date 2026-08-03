@@ -115,11 +115,45 @@ async function doSearch(fresh) {
     streamState.index = -1;
     renderResults();
     setStreamStatus(`${pname}：共 ${r.total ?? streamState.results.length} 首 · 已加载 ${streamState.results.length} 首（第 ${streamState.page}/${streamState.allPage} 页）`);
+    prefetchCovers(); // 后台补齐列表封面（搜索后立即显示，无需等点击播放）
   } catch (e) {
     setStreamStatus('搜索失败：' + (e.message || e), true);
   } finally {
     streamState.searching = false;
   }
+}
+
+/* ---------------- 搜索结果封面预补齐 ----------------
+ * 酷狗/酷我等平台搜索接口不带封面图（img:null），仅在播放时才 getPic 补齐。
+ * 这里在搜索/分页完成后后台并发拉取无封面歌曲的封面，增量更新列表行，
+ * 让搜索结果直接展示封面。并发 4 防止平台接口限流；播放流程的补齐逻辑保留兜底。 */
+function updateRowCover(song) {
+  const gi = streamState.results.indexOf(song);
+  if (gi < 0) return;
+  const row = document.querySelector(`.stream-row[data-gi="${gi}"]`);
+  const img = row && row.querySelector('img');
+  if (img) { img.src = song.cover; img.style.visibility = ''; }
+}
+
+async function prefetchCovers() {
+  const pending = streamState.results.filter(s => !s.cover && !s._coverPending);
+  if (!pending.length) return;
+  pending.forEach(s => { s._coverPending = true; });
+  let idx = 0;
+  const worker = async () => {
+    while (idx < pending.length) {
+      const song = pending[idx++];
+      try {
+        const p = await window.mine.streamGetPic({ provider: song.provider, song });
+        if (p && p.url) {
+          song.cover = p.url;
+          song._coverPending = false;
+          updateRowCover(song);
+        }
+      } catch { }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
 }
 
 $s('#btn-stream-search').onclick = () => doSearch(true);
@@ -176,6 +210,7 @@ function renderResults() {
     const dup = localDupOf(song);
     const row = document.createElement('div');
     row.className = 'stream-row' + (gi === streamState.index ? ' active' : '');
+    row.setAttribute('data-gi', gi);
     const dur = song.interval || (song.duration ? Math.floor(song.duration / 60000) + ':' + String(Math.floor(song.duration / 1000) % 60).padStart(2, '0') : '');
     row.innerHTML = `
       ${song.cover ? `<img src="${song.cover}" loading="lazy" alt="" onerror="this.style.visibility='hidden'">` : '<img alt="" style="visibility:hidden">'}
@@ -216,13 +251,20 @@ async function playStreamAt(i) {
   const pname = PLATFORMS[song.provider] || song.provider;
   setStreamStatus(`正在获取播放地址：${song.name}…`);
 
-  let r;
+  let r, ly;
   try {
-    r = await window.mine.streamSongUrl({
-      provider: song.provider,
-      quality: currentQuality(),
-      song, // 完整歌曲对象（含 meta：洛雪音源脚本需要 hash/songmid 等原始字段）
-    });
+    // 播放地址与歌词并行获取：歌词网络请求不再排在播放启动之后，
+    // 播放就绪时歌词已到手，可立即注入舞台（消除串行等待）。
+    [r, ly] = await Promise.all([
+      window.mine.streamSongUrl({
+        provider: song.provider,
+        quality: currentQuality(),
+        song, // 完整歌曲对象（含 meta：洛雪音源脚本需要 hash/songmid 等原始字段）
+      }),
+      (window.mine.streamLyric
+        ? window.mine.streamLyric({ provider: song.provider, song }).catch(() => null)
+        : Promise.resolve(null)),
+    ]);
   } catch (e) {
     setStreamStatus(`获取播放地址失败：${e.message || e}`, true);
     return;
@@ -239,6 +281,28 @@ async function playStreamAt(i) {
     ? `（所选 ${TYPE_FULL[r.requestedType] || r.requestedType} 不可用，已降级为 ${TYPE_FULL[r.level] || r.level}）`
     : '';
   setStreamStatus(`${pname} · ${r.quality || ''} · ${fmt}${downgradeNote} · 独占输出中`, !!r.downgraded);
+  // 歌词/封面注入通过 onPlayed 回调：playTrack（视觉切换）在 engine('play') 确认前
+  // 同步执行完毕（player.js 已重排），此时注入 token 匹配、不会被 reset 覆盖，
+  // 也不再被慢速网络流的引擎确认时间阻塞。
+  const doInject = () => {
+    if (streamState.index !== i) return; // 等待期间用户已点击其他曲目
+    // 异步补齐封面（部分平台搜索结果不带图；拿到后除刷新列表外，还要推给舞台/悬浮封面）
+    if (!song.cover && window.mine.streamGetPic) {
+      window.mine.streamGetPic({ provider: song.provider, song }).then(p => {
+        if (!p || !p.url) return;
+        song.cover = p.url;
+        if (streamState.results.includes(song)) renderResults();
+        // 仍停留在该曲时，同步更新舞台封面（applyCoverCanvas 内部会连带刷新 thumb-cover）
+        if (streamState.index === i && window.annieStage && window.annieStage.setCover) {
+          window.annieStage.setCover(p.url);
+        }
+      }).catch(() => {});
+    }
+    // 注入歌词：与播放地址并行获取，playTrack 完成后立即渲染
+    if (ly && ly.lrc && window.annieStage && window.annieStage.setLyricText) {
+      window.annieStage.setLyricText(ly.lrc);
+    }
+  };
   if (window.annieStreamPlay) {
     window.annieStreamPlay({
       url: r.url,
@@ -250,13 +314,10 @@ async function playStreamAt(i) {
       duration: song.duration ? song.duration / 1000 : 0,
       provider: song.provider,
       quality: r.quality || '',
+      onPlayed: doInject,
     });
-  }
-  // 异步补齐封面（部分平台搜索结果不带图）
-  if (!song.cover && window.mine.streamGetPic) {
-    window.mine.streamGetPic({ provider: song.provider, song }).then(p => {
-      if (p && p.url) { song.cover = p.url; if (streamState.results.includes(song)) renderResults(); }
-    }).catch(() => {});
+  } else {
+    doInject();
   }
 }
 
@@ -265,6 +326,16 @@ window.annieStream = {
   playNext() {
     if (streamState.results.length && streamState.index < streamState.results.length - 1) {
       playStreamAt(streamState.index + 1);
+    }
+  },
+  playPrev(positionSec) {
+    // 播放超过 3 秒视为"想回到这首开头"，否则切上一首
+    if (streamState.index > 0 && positionSec > 3) {
+      playStreamAt(streamState.index);
+    } else if (streamState.index > 0) {
+      playStreamAt(streamState.index - 1);
+    } else if (streamState.results.length) {
+      playStreamAt(0);
     }
   },
   currentFallbackDuration() {

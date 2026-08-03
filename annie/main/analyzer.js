@@ -181,10 +181,16 @@ function startAnalyze(win, input, headers, gen, forcedLossless) {
   let stderrBuf = '';
   proc.stderr.on('data', d => { stderrBuf += d; if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000); });
 
-  proc.stdout.on('data', (chunk) => {
-    byteQueue.push(chunk); queued += chunk.length;
-    // 攒够一帧就处理（FFT_SIZE 个 s16 采样 = 8192 字节）
-    while (queued >= FFT_SIZE * 2) {
+  // FFT 分批处理：一次 data 事件可能携带大量 PCM（ffmpeg 全速解码），
+  // 若在事件循环内同步处理全部帧（4 分钟歌 5000+ 帧 4096 点 FFT），
+  // 主进程会被长时间阻塞，导致切歌/播放等 IPC 全部延迟（界面卡顿）。
+  // 每批最多处理 64 帧（约 3 秒音频）就通过 setImmediate 让出事件循环。
+  const BATCH_MAX = 64;
+  let processing = false;
+
+  function drainFrames() {
+    let processed = 0;
+    while (queued >= FFT_SIZE * 2 && processed < BATCH_MAX) {
       // 拼出 8192 字节
       const frameBuf = Buffer.concat(byteQueue);
       const consumed = HOP * 2; // 每次前进 HOP 个采样
@@ -193,7 +199,19 @@ function startAnalyze(win, input, headers, gen, forcedLossless) {
       byteQueue.length = 0;
       if (rest.length) byteQueue.push(rest);
       queued = rest.length;
+      processed++;
     }
+    if (queued >= FFT_SIZE * 2) {
+      setImmediate(drainFrames); // 还有剩余：让出事件循环后继续
+    } else {
+      processing = false;
+      if (queued > 0) { /* 不足一帧的残余，等下一批 */ }
+    }
+  }
+
+  proc.stdout.on('data', (chunk) => {
+    byteQueue.push(chunk); queued += chunk.length;
+    if (!processing) { processing = true; drainFrames(); }
   });
 
   proc.on('error', (err) => {
@@ -393,19 +411,23 @@ function register(ipcMain, getWindow) {
     const win = getWindow();
     if (!win || !input) return { ok: false };
     const myGen = ++gen;
-    // 有损容器格式：探测编码后直接给出预定结论（频谱图仍照常生成供查看）
-    const codecInfo = await probeCodec(input, headers);
-    if (myGen !== gen) return { ok: false, reason: 'superseded' };
-    let forcedLossless = null;
-    if (codecInfo && LOSSY_CODECS.has(codecInfo.codec)) {
-      forcedLossless = {
-        score: 0, verdict: '有损压缩格式', verdictLevel: 0,
-        reasons: [`源文件编码为 ${codecInfo.codec.toUpperCase()}，属于有损压缩格式，无需频谱检测`],
-        codec: codecInfo.codec, formatShortcut: true,
-      };
-    }
-    startAnalyze(win, input, headers, myGen, forcedLossless);
-    return { ok: true, gen: myGen, codec: codecInfo };
+    // 频谱分析立即开始（频谱帧流式推送，不等编码探测——网络流探测可能耗时数秒）。
+    // 有损容器格式的快捷结论由探测完成后补发 'lossless' 事件覆盖。
+    startAnalyze(win, input, headers, myGen, null);
+    probeCodec(input, headers).then((codecInfo) => {
+      if (myGen !== gen || !win || win.isDestroyed()) return;
+      if (codecInfo && LOSSY_CODECS.has(codecInfo.codec)) {
+        send(win, {
+          type: 'lossless', gen: myGen,
+          lossless: {
+            score: 0, verdict: '有损压缩格式', verdictLevel: 0,
+            reasons: [`源文件编码为 ${codecInfo.codec.toUpperCase()}，属于有损压缩格式，无需频谱检测`],
+            codec: codecInfo.codec, formatShortcut: true,
+          },
+        });
+      }
+    }).catch(() => { });
+    return { ok: true, gen: myGen, codec: null };
   });
   ipcMain.handle('analyze:cancel', () => { gen++; cancelAnalyze(); return { ok: true }; });
 }

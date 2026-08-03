@@ -11,8 +11,10 @@ function httpFetch(url, options = {}) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let reqBody = body;
+  let bodyIsForm = false;
   if (reqBody == null && form != null) {
     reqBody = new URLSearchParams(form).toString();
+    bodyIsForm = true;
   }
 
   const init = {
@@ -21,8 +23,10 @@ function httpFetch(url, options = {}) {
     signal: controller.signal,
   };
   if (reqBody != null) init.body = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody);
+  // Content-Type 推断：form 参数 → urlencoded；对象 body（JSON 字符串）→ application/json。
+  // 此前统一按 urlencoded 处理导致 QQ musics.fcg 等接口拒绝 JSON body 请求。
   if (typeof reqBody === 'string' && !init.headers['Content-Type']) {
-    init.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    init.headers['Content-Type'] = bodyIsForm ? 'application/x-www-form-urlencoded' : 'application/json';
   }
 
   // cancel-ability

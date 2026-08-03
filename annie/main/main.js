@@ -161,7 +161,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // 播放器后台/失焦时保持 rAF 渲染（歌词粒子/舞台动画不被节流冻结）
+      backgroundThrottling: false
     }
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -454,7 +456,7 @@ function registerIpc() {
     if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
 
     let devices = null;
-    try { devices = await engine.call('devices.list', {}, 8000); } catch (e) { devices = { error: e.message }; }
+    try { devices = await engine.call('devices.list', {}, 60000); } catch (e) { devices = { error: e.message }; }
     const store = loadStore();
     const settings = {
       folders: store.folders, volume: store.volume, backend: store.backend,
@@ -498,7 +500,7 @@ function registerIpc() {
   ipcMain.handle('settings:save', (_e, patch) => saveStore(patch));
 
   // 引擎直通
-  ipcMain.handle('engine:call', (_e, method, params, timeoutMs) => engine.call(method, params || {}, timeoutMs || 15000));
+  ipcMain.handle('engine:call', (_e, method, params, timeoutMs) => engine.call(method, params || {}, timeoutMs || 60000));
 
   // 流媒体平台（洛雪 musicSdk：酷狗 / 酷我 / 咪咕 / QQ / 网易）
   ipcMain.handle('stream:search', (_e, params) => streaming.search(params));
@@ -558,6 +560,8 @@ if (global.__svlxBoot) {
   streaming.init(app);
   setupImageReferer();
   engine.start();
+  // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
+  engine.call('devices.list', {}, 90000).catch(() => { });
   createWindow();
   global.__svlxAnnieOpen = () => {
     try { if (!mainWindow) createWindow(); else { mainWindow.show(); mainWindow.focus(); } } catch { }
@@ -579,6 +583,8 @@ if (!gotLock) {
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入
     engine.start(); // 引擎拉起失败不阻塞 UI，调用时再报错
+    // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
+    engine.call('devices.list', {}, 90000).catch(() => { });
     createWindow();
     createTray(); // Pro beat0.0.1：系统托盘
 

@@ -56,6 +56,11 @@ function deriveId(source, info) {
   }
 }
 
+/** CDN 封面统一升级为 https：页面 CSP img-src 仅放行 https，http 图（酷狗/网易）会被浏览器拦截 */
+function httpsCover(url) {
+  return String(url || '').replace(/^http:\/\//i, 'https://');
+}
+
 /** LX musicInfo → 安妮流媒体歌曲对象（meta 完整透传，音源脚本需要原始字段） */
 function normalize(source, info) {
   return {
@@ -64,7 +69,7 @@ function normalize(source, info) {
     name: info.name || '',
     artist: info.singer || '',
     album: info.albumName || '',
-    cover: info.img || '',
+    cover: httpsCover(info.img || ''),
     duration: (info._interval || intervalToSec(info.interval)) * 1000,
     interval: info.interval || '',
     types: info.types || [], // [{type:'flac24bit'|'flac'|'320k'|'128k', size, hash?}]
@@ -209,16 +214,25 @@ async function songUrl({ provider, song, quality = 'hires' }) {
   };
 }
 
+/** 清洗洛雪原版 YRC 元数据行解析 bug 产生的 [NaN:NaN.NaN] 时间戳行（网易云 YRC 无 t 字段的元数据行） */
+function cleanLyric(text) {
+  if (!text) return '';
+  return String(text).split('\n').filter((line) => !/^\[NaN:NaN\.NaN\]/.test(line)).join('\n');
+}
+
 async function lyric({ provider, song }) {
   const meta = (song && song.meta) || song || {};
   const sdk = await loadSdk();
   const mod = sdk[provider];
   if (!mod) throw new Error('未知平台: ' + provider);
   // 1) 平台官方歌词（洛雪内置实现）
+  // 注意：洛雪 SDK 的 getLyric 返回 requestObj（{promise, cancelHttp}）而非 Promise，
+  // 直接 await 只会拿到对象本身导致 r.lyric 永远 undefined；此处兼容两种形态。
   try {
-    const r = await mod.getLyric(meta);
-    if (r && r.lyric) return { provider, lrc: r.lyric, tlyric: r.tlyric || '', rlyric: r.rlyric || '', lxlyric: r.lxlyric || '' };
-  } catch { }
+    const raw = mod.getLyric(meta);
+    const r = (raw && typeof raw.then === 'function') ? await raw : await raw.promise;
+    if (r && r.lyric) return { provider, lrc: cleanLyric(r.lyric), tlyric: cleanLyric(r.tlyric || ''), rlyric: cleanLyric(r.rlyric || ''), lxlyric: cleanLyric(r.lxlyric || '') };
+  } catch (e) { console.warn('[lxsdk] 平台歌词获取失败:', e && e.message); }
   // 2) 自定义音源兜底
   if (sources.hasActiveSource()) {
     try {
@@ -231,13 +245,13 @@ async function lyric({ provider, song }) {
 
 async function getPic({ provider, song }) {
   const meta = (song && song.meta) || song || {};
-  if (meta.img) return { provider, url: meta.img };
+  if (meta.img) return { provider, url: httpsCover(meta.img) };
   try {
     const sdk = await loadSdk();
     const mod = sdk[provider];
     const r = await mod.getPic(meta);
     const url = typeof r === 'string' ? r : (r && r.url);
-    return { provider, url: url || '' };
+    return { provider, url: httpsCover(url || '') };
   } catch { return { provider, url: '' }; }
 }
 

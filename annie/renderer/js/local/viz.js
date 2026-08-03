@@ -54,15 +54,26 @@ const PALETTE = (() => {
 const $v = (s) => document.querySelector(s);
 
 /* ---------------- 标签页切换（波形 / 频谱 / 无损，任意时刻仅显示其一） ---------------- */
+let autoSwitchedTab = false; // 分析中自动切到频谱页签的标记（分析完成后切回）
+
+function switchVizTab(tab) {
+  document.querySelectorAll('.viz-tab').forEach(b => b.classList.toggle('active', b.dataset.vtab === tab));
+  $v('#wave-canvas').classList.toggle('active', tab === 'wave');
+  $v('#spec-canvas').classList.toggle('active', tab === 'spec');
+  $v('#lossless-page').classList.toggle('active', tab === 'lossless');
+  renderWave();
+  renderSpec();
+}
+
+function currentVizTab() {
+  const active = document.querySelector('.viz-tab.active');
+  return active ? active.dataset.vtab : 'wave';
+}
+
 document.querySelectorAll('.viz-tab').forEach(btn => {
   btn.onclick = () => {
-    document.querySelectorAll('.viz-tab').forEach(b => b.classList.toggle('active', b === btn));
-    const tab = btn.dataset.vtab;
-    $v('#wave-canvas').classList.toggle('active', tab === 'wave');
-    $v('#spec-canvas').classList.toggle('active', tab === 'spec');
-    $v('#lossless-page').classList.toggle('active', tab === 'lossless');
-    renderWave();
-    renderSpec();
+    autoSwitchedTab = false; // 用户手动切换后不再自动切回
+    switchVizTab(btn.dataset.vtab);
   };
 });
 
@@ -286,6 +297,10 @@ window.mine.onAnalyzeEvent((p) => {
     $v('#viz-status').textContent = '分析完成';
     renderWave();
     renderSpec();
+    if (autoSwitchedTab) { autoSwitchedTab = false; switchVizTab('wave'); } // 波形就绪，切回
+  } else if (p.type === 'lossless') {
+    // 并行编码探测补发的无损结论（覆盖频谱计算的判定，如"有损压缩格式"快捷结论）
+    renderLossless(p.lossless);
   } else if (p.type === 'error') {
     vizState.analyzing = false;
     $v('#viz-status').textContent = '分析失败';
@@ -293,6 +308,7 @@ window.mine.onAnalyzeEvent((p) => {
     $v('#lossless-summary').textContent = '分析失败：' + (p.message || '未知错误');
     renderWave();
     renderSpec();
+    if (autoSwitchedTab) { autoSwitchedTab = false; switchVizTab('wave'); }
   }
 });
 
@@ -307,6 +323,12 @@ window.annieViz = {
     resetSpec();
     renderLossless(null);
     $v('#viz-status').textContent = '分析中…';
+    // 分析中自动展示"频谱"页签：频谱是流式渲染（逐批到达即绘制），
+    // 波形必须等整曲分析完成才一次性出现——避免用户误以为要等分析完才有图。
+    if (!$v('#viz-bar').classList.contains('hidden') && currentVizTab() === 'wave') {
+      autoSwitchedTab = true;
+      switchVizTab('spec');
+    }
     renderWave();
     renderSpec();
     const r = await window.mine.analyzeStart(input, headers || null);

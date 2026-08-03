@@ -894,6 +894,27 @@ window.annieStreamPlay = async function (track) {
   state.duration = track.duration || 0;
   renderTracks();
 
+  // 视觉立即切换（++trackSwitchToken / reset 歌词 / 封面 / 节拍）——不等待引擎确认。
+  // 原因：engine('play') 是 JSON-RPC，慢速网络流可能数秒甚至超时才确认；
+  // 若等它，舞台上的歌词/封面（数据早已并行就绪）会被引擎确认时间阻塞。
+  try {
+    if (window.annieStage) {
+      window.annieStage.playTrack({
+        path: track.url,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        cover: track.cover,
+        duration: track.duration || 0,
+        sampleRate: 0,
+        bitsPerSample: 0,
+        codec: track.quality || '流媒体'
+      });
+    }
+  } catch (e) { console.warn('[player] stage playTrack', e); }
+  // playTrack 已完成（token 已更新）→ 通知调用方注入歌词/封面（同步时机，无竞态）
+  if (track.onPlayed) { try { track.onPlayed(); } catch (e) { console.warn('[player] onPlayed', e); } }
+
   try {
     await window.mine.engine('play', { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
   } catch (e) {
@@ -905,20 +926,6 @@ window.annieStreamPlay = async function (track) {
   $('#thumb-artist').textContent = [track.artist, track.album].filter(Boolean).join(' · ');
   if (track.cover) $('#thumb-cover').src = track.cover;
   if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
-  // 喂给视觉舞台，让粒子/封面墙也能识别流媒体封面与元数据
-  if (window.annieStage) {
-    window.annieStage.playTrack({
-      path: track.url,
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      cover: track.cover,
-      duration: track.duration || 0,
-      sampleRate: 0,
-      bitsPerSample: 0,
-      codec: track.quality || '流媒体'
-    });
-  }
   // 可视化分析（ffmpeg 拉流解码）
   if (window.annieViz) window.annieViz.analyze(track.url, track.headers);
 };
@@ -1040,8 +1047,16 @@ $('#btn-play').onclick = async () => {
     try { await window.mine.engine(state.playing ? 'pause' : 'resume'); } catch { }
   } else if (state.queue.length) playAt(0);
 };
-$('#btn-next').onclick = () => playAt(state.index + 1);
-$('#btn-prev').onclick = () => { if (state.position > 3) playAt(state.index); else playAt(Math.max(0, state.index - 1)); };
+// 流媒体播放时 state.index = -1（不占用本地队列索引），下一首/上一首必须走
+// streaming.js 的播放队列（window.annieStream），否则会误播本地队列第 0 首。
+$('#btn-next').onclick = () => {
+  if (state.currentStream && window.annieStream) window.annieStream.playNext();
+  else playAt(state.index + 1);
+};
+$('#btn-prev').onclick = () => {
+  if (state.currentStream && window.annieStream && window.annieStream.playPrev) window.annieStream.playPrev(state.position);
+  else { if (state.position > 3) playAt(state.index); else playAt(Math.max(0, state.index - 1)); }
+};
 $('#btn-stop').onclick = () => window.mine.engine('stop').catch(() => { });
 
 // 进度条拖动

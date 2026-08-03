@@ -506,8 +506,9 @@ function registerIpc() {
   ipcMain.handle('stream:search', (_e, params) => streaming.search(params));
   ipcMain.handle('stream:songUrl', (_e, params) => streaming.songUrl(params));
   ipcMain.handle('stream:lyric', (_e, params) => streaming.lyric(params));
-  ipcMain.handle('stream:getPic', (_e, params) => streaming.getPic(params));
-  ipcMain.handle('stream:hotSearch', (_e, params) => streaming.hotSearch(params));
+ipcMain.handle('stream:getPic', (_e, params) => streaming.getPic(params));
+ipcMain.handle('stream:coverProxy', (_e, url) => streaming.coverProxy(url));
+ipcMain.handle('stream:hotSearch', (_e, params) => streaming.hotSearch(params));
 
   // —— 洛雪式音源管理（导入/删除/启停）——
   ipcMain.handle('stream:sources:list', () => streaming.sources.list());

@@ -46,6 +46,31 @@ async function getPic(params) {
   return lxsdk.getPic(params);
 }
 
+/**
+ * 封面代理：把 HTTP(S) 图片转成 dataURL 交给渲染层。
+ * 用途：kwcdn.kuwo.cn 的 https 证书无效、部分 CDN 图被 CSP 拦 http——
+ * 主进程 Node fetch 走系统 TLS/直连能取到，转 data: 后渲染层 img-src 放行。
+ * 带 10 秒超时 + 大小上限（8MB），失败返回空串由调用方回退。
+ */
+async function coverProxy(url) {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) return { url: '', error: 'bad-url' };
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 10000);
+    const resp = await fetch(u, { signal: ctrl.signal });
+    clearTimeout(to);
+    if (!resp.ok) return { url: '', error: 'http-' + resp.status };
+    const type = (resp.headers.get('content-type') || '').split(';')[0].trim();
+    if (!/^image\//i.test(type)) return { url: '', error: 'not-image:' + type };
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length > 8 * 1024 * 1024) return { url: '', error: 'too-large' };
+    return { url: `data:${type};base64,${buf.toString('base64')}` };
+  } catch (e) {
+    return { url: '', error: String((e && e.message) || e).slice(0, 80) };
+  }
+}
+
 async function hotSearch(params) {
   return lxsdk.hotSearch(params);
 }
@@ -119,7 +144,7 @@ async function download(params, onProgress) {
 }
 
 module.exports = {
-  init, search, songUrl, lyric, getPic, hotSearch, download, downloadDir, setDownloadDir,
+  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, download, downloadDir, setDownloadDir,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层
 };

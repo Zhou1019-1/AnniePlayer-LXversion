@@ -5,30 +5,200 @@
 // 存储:
 //   userData/stream-sources/        音源脚本文件(<id>.js)
 //   userData/stream-sources.json    注册表 [{id,name,version,description,author,enabled}]
+//
+// V1.0.1 (R1)：脚本执行迁移到 worker_threads（sources-worker.js）。
+//   原因：脚本在主进程 vm 沙箱同步执行，第三方脚本的死循环/超重同步计算
+//   会冻结整个主进程（所有 IPC 无响应，只能杀进程）。
+//   现在：脚本卡死只阻塞 Worker；请求超时先 ping 探测，确认无响应后
+//   terminate + 退避重建 + 重新加载 + 排队请求重试一次。
+// 对外 API 签名保持不变（setEnabled / importFromPath 因需等待加载回执变为 async，
+// 调用方均为 ipcMain.handle，天然兼容）。
 // ============================================================================
 const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
 const crypto = require('crypto');
-const { httpFetch } = require('./lx-http');
+const { Worker } = require('worker_threads');
 
 let _app = null;
 let _dir = '';          // 脚本目录
 let _registryFile = ''; // 注册表路径
 let _registry = [];     // [{id,name,version,description,author,enabled}]
-const _runtimes = new Map(); // id -> {handler, info}
+const _loadedIds = new Set(); // 已加载（Worker 回执维护）
 
-/* ---------------- 工具 ---------------- */
+/* ---------------- Worker 生命周期 ---------------- */
+let _worker = null;
+let _workerReady = false;
+let _restarting = false;      // 熔断重建中
+let _restartAttempt = 0;      // 退避计数
+let _readyWaiters = [];       // waitForReady 等待者
+let _loadWaiters = [];        // 加载回执等待者 [{id, resolve(ok)}]
+let _restartWaiters = [];     // 重建期间排队请求 [{resolve, reject}]
+let _jobSeq = 0;
+const _pendingJobs = new Map(); // jobId -> {resolve, reject, timer, sourceId, sourceName}
+
+function startWorker() {
+  if (_worker) return;
+  _worker = new Worker(path.join(__dirname, 'sources-worker.js'));
+  _workerReady = false;
+  _worker.on('message', onWorkerMessage);
+  _worker.on('error', (err) => console.error('[lx-source] worker error:', err && err.message));
+  _worker.on('exit', onWorkerExit);
+}
+
+function onWorkerExit(code) {
+  console.error(`[lx-source][${Date.now()}] 音源沙箱退出 code=` + code);
+  // 拒绝所有在途请求（重建后调用方按需重试）
+  for (const [, job] of _pendingJobs) {
+    clearTimeout(job.timer);
+    job.reject(new Error('音源沙箱已重启'));
+  }
+  _pendingJobs.clear();
+  // 清空加载/就绪状态：重建完成后由 init 回执重建
+  _loadedIds.clear();
+  _loadWaiters = [];
+  _readyWaiters = [];
+  _worker = null;
+  _workerReady = false;
+  scheduleRestart();
+}
+
+function scheduleRestart() {
+  if (_restarting) return;
+  _restarting = true;
+  const delay = Math.min(4000, 500 * Math.pow(2, _restartAttempt++));
+  console.error(`[lx-source] ${delay}ms 后重启音源沙箱（第 ${_restartAttempt} 次）`);
+  setTimeout(() => {
+    try {
+      startWorker();
+      waitForReady()
+        .then(() => {
+          // 重建后重新加载所有启用音源（init 消息驱动 loaded 回执）
+          postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled) });
+          return reloadAll();
+        })
+        .then(() => {
+          _restarting = false;
+          _restartAttempt = 0;
+          const waiters = _restartWaiters.splice(0);
+          for (const w of waiters) w.resolve();
+        })
+        .catch((e) => {
+          _restarting = false;
+          const waiters = _restartWaiters.splice(0);
+          for (const w of waiters) w.reject(new Error('音源沙箱重启失败: ' + (e.message || e)));
+        });
+    } catch (e) {
+      _restarting = false;
+      const waiters = _restartWaiters.splice(0);
+      for (const w of waiters) w.reject(new Error('音源沙箱重启失败: ' + (e.message || e)));
+    }
+  }, delay);
+}
+
+function waitForReady() {
+  if (_workerReady) return Promise.resolve();
+  return new Promise((resolve) => _readyWaiters.push({ resolve }));
+}
+
+function waitLoad(id) {
+  if (_loadedIds.has(id)) return Promise.resolve({ ok: true });
+  return new Promise((resolve) => _loadWaiters.push({ id, resolve }));
+}
+
+function reloadAll() {
+  const entries = _registry.filter((e) => e.enabled);
+  if (!entries.length) return Promise.resolve();
+  return Promise.allSettled(entries.map((e) => waitLoad(e.id)));
+}
+
+/* ---------------- Worker 消息 ---------------- */
+function onWorkerMessage(msg) {
+  switch (msg.type) {
+    case 'ready': {
+      _workerReady = true;
+      const waiters = _readyWaiters.splice(0);
+      for (const w of waiters) w.resolve();
+      break;
+    }
+    case 'loaded': {
+      if (msg.ok) _loadedIds.add(msg.id);
+      else _loadedIds.delete(msg.id);
+      const waiters = _loadWaiters.filter((w) => w.id === msg.id);
+      _loadWaiters = _loadWaiters.filter((w) => w.id !== msg.id);
+      for (const w of waiters) w.resolve({ ok: !!msg.ok, error: msg.error });
+      break;
+    }
+    case 'unloaded':
+      _loadedIds.delete(msg.id);
+      break;
+    case 'result': {
+      const job = _pendingJobs.get(msg.jobId);
+      if (!job) break;
+      _pendingJobs.delete(msg.jobId);
+      clearTimeout(job.timer);
+      if (msg.ok) job.resolve({ sourceId: job.sourceId, sourceName: job.sourceName, result: msg.value });
+      else job.reject(new Error(msg.error || '音源请求失败'));
+      break;
+    }
+  }
+}
+
+/* ---------------- 请求 + 超时熔断 ---------------- */
+function postToWorker(msg) {
+  if (!_worker) throw new Error('音源沙箱未启动');
+  _worker.postMessage(msg);
+}
+
+/**
+ * 请求超时处理：先 ping 健康探测。
+ * 若 Worker 事件循环被同步死循环占用（ping 无响应）→ terminate 熔断，exit 回调触发重建；
+ * 若只是慢请求（ping 有响应）→ 仅超时，不打断 Worker。
+ */
+function onJobTimeout(jobId) {
+  const job = _pendingJobs.get(jobId);
+  if (!job) return;
+  _pendingJobs.delete(jobId);
+  clearTimeout(job.timer);
+  let ponged = false;
+  const pingId = 'ping' + jobId;
+  const pongHandler = (msg) => { if (msg.type === 'pong' && msg.id === pingId) ponged = true; };
+  try {
+    _worker.on('message', pongHandler);
+    postToWorker({ type: 'ping', id: pingId });
+  } catch { ponged = true; }
+  setTimeout(() => {
+    _worker.removeListener('message', pongHandler);
+    if (!ponged) {
+      console.error(`[lx-source][${Date.now()}] 音源沙箱疑似卡死，熔断重启`);
+      try { _worker.terminate(); } catch { }
+    }
+    job.reject(new Error('音源响应超时' + (ponged ? '' : '（沙箱已重置）')));
+  }, 1000);
+}
+
+async function requestInWorker(sourceId, sourceName, action, source, info, timeoutMs) {
+  // 熔断重建期间：排队等待，重建完成后重试
+  if (_restarting) {
+    await new Promise((resolve, reject) => _restartWaiters.push({ resolve, reject }));
+  }
+  if (!_workerReady) await waitForReady();
+  const jobId = ++_jobSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => onJobTimeout(jobId), timeoutMs);
+    _pendingJobs.set(jobId, { resolve, reject, timer, sourceId, sourceName });
+    try {
+      postToWorker({ type: 'request', jobId, sourceId, action, source, info });
+    } catch (e) {
+      clearTimeout(timer);
+      _pendingJobs.delete(jobId);
+      reject(e);
+    }
+  });
+}
+
+/* ---------------- 对外 API（签名与迁移前一致） ---------------- */
 function md5(s) {
   return crypto.createHash('md5').update(typeof s === 'string' ? Buffer.from(s, 'utf8') : s).digest('hex');
-}
-function aesEncrypt(data, mode, key, iv) {
-  // 兼容 lx utils.crypto.aesEncrypt(buffer|string, 'ecb'|'cbc'|'aes-128-ecb'|..., keyBuffer, ivBuffer)
-  const m = String(mode || 'ecb').toLowerCase();
-  const alg = m.startsWith('aes-') ? m : `aes-128-${m}`;
-  const cipher = crypto.createCipheriv(alg, key, alg.endsWith('ecb') ? null : (iv || Buffer.alloc(16)));
-  const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
-  return Buffer.concat([cipher.update(buf), cipher.final()]);
 }
 
 /** 解析脚本头部注释元数据：@name @version @description @author */
@@ -46,112 +216,6 @@ function parseMeta(script, fallbackName) {
   return meta;
 }
 
-/* ---------------- LX API 沙箱 ---------------- */
-function createSandbox(sourceId, scriptInfo) {
-  const state = { requestHandler: null, initedHandler: null };
-  const EVENT_NAMES = {
-    request: 'request',
-    inited: 'inited',
-    updateAlert: 'updateAlert',
-  };
-
-  const lxRequest = (url, options, callback) => {
-    const { promise, cancelHttp } = httpFetch(url, options || {});
-    promise
-      .then((resp) => {
-        // 与洛雪 userApi 的 lx.request 契约一致：callback(err, resp, body)
-        const respObj = {
-          statusCode: resp.statusCode,
-          statusMessage: '',
-          headers: resp.headers || {},
-          bytes: resp.raw ? resp.raw.length : 0,
-          raw: resp.raw,
-          body: resp.body,
-        };
-        callback(null, respObj, respObj.body);
-      })
-      .catch((err) => callback(err, null, null));
-    return cancelHttp; // 洛雪约定：返回取消函数
-  };
-
-  const lxApi = {
-    EVENT_NAMES,
-    env: 'desktop',
-    version: '2.0.0',
-    currentScriptInfo: scriptInfo,
-    on(eventName, handler) {
-      if (eventName === EVENT_NAMES.request) state.requestHandler = handler;
-      else if (eventName === EVENT_NAMES.inited) state.initedHandler = handler;
-    },
-    send(eventName, data) {
-      if (eventName === EVENT_NAMES.request && state.requestHandler) {
-        return Promise.resolve().then(() => state.requestHandler(data));
-      }
-      return Promise.reject(new Error('未知事件: ' + eventName));
-    },
-    request: lxRequest,
-    utils: {
-      crypto: {
-        md5,
-        aesEncrypt,
-        randomBytes: (len) => crypto.randomBytes(len),
-        buffer: Buffer,
-      },
-      buffer: {
-        from: (...args) => Buffer.from(...args),
-        bufToString: (buf, format) => Buffer.from(buf).toString(format === 'hex' ? 'hex' : 'utf8'),
-      },
-      zlib: {
-        inflate: (data) => Promise.resolve(require('zlib').inflateSync(data)),
-        deflate: (data) => Promise.resolve(require('zlib').deflateSync(data)),
-      },
-    },
-  };
-
-  const sandbox = {
-    globalThis: null,
-    lx: lxApi,
-    window: { lx: lxApi },
-    console,
-    setTimeout, clearTimeout, setInterval, clearInterval,
-    atob: (s) => Buffer.from(s, 'base64').toString('binary'),
-    btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
-    encodeURIComponent, decodeURIComponent, encodeURI, decodeURI,
-    TextEncoder, TextDecoder,
-    Buffer: undefined, // 不直接暴露，统一走 lx.utils
-    fetch: undefined,
-    require: undefined,
-    process: undefined,
-    module: undefined,
-    exports: undefined,
-  };
-  sandbox.globalThis = sandbox;
-  return { sandbox, state };
-}
-
-/* ---------------- 运行时管理 ---------------- */
-function loadRuntime(entry) {
-  const file = path.join(_dir, entry.id + '.js');
-  const script = fs.readFileSync(file, 'utf8');
-  const info = { name: entry.name, version: entry.version, description: entry.description, author: entry.author };
-  const { sandbox, state } = createSandbox(entry.id, info);
-  try {
-    vm.createContext(sandbox, { name: 'lx-source:' + entry.id });
-    vm.runInContext(script, sandbox, { timeout: 5000, filename: entry.id + '.js' });
-  } catch (e) {
-    _runtimes.delete(entry.id);
-    throw new Error(`音源脚本执行失败: ${e.message}`);
-  }
-  if (typeof state.requestHandler !== 'function') {
-    _runtimes.delete(entry.id);
-    throw new Error('音源脚本未注册请求处理器 (lx.on("request", ...))');
-  }
-  _runtimes.set(entry.id, { handler: state.requestHandler, info });
-  if (state.initedHandler) {
-    try { Promise.resolve(state.initedHandler({ status: true, sources: {} })).catch(() => {}); } catch { }
-  }
-}
-
 function saveRegistry() {
   fs.writeFileSync(_registryFile, JSON.stringify(_registry, null, 2), 'utf8');
 }
@@ -164,32 +228,44 @@ function init(app) {
   try {
     _registry = JSON.parse(fs.readFileSync(_registryFile, 'utf8'));
   } catch { _registry = []; }
-  // 加载所有启用的音源
-  for (const entry of _registry) {
-    if (!entry.enabled) continue;
-    try { loadRuntime(entry); } catch (e) { console.warn('[lx-source] 加载失败', entry.id, e.message); }
-  }
+  // 启动沙箱 Worker 并异步加载所有启用的音源（不再阻塞主进程）
+  startWorker();
+  postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled) });
 }
 
 function list() {
   return _registry.map((e) => ({
     id: e.id, name: e.name, version: e.version,
     description: e.description, author: e.author,
-    enabled: e.enabled, loaded: _runtimes.has(e.id),
+    enabled: e.enabled, loaded: _loadedIds.has(e.id),
   }));
 }
 
 /** 导入音源脚本（从给定路径复制进沙箱目录并验证） */
-function importFromPath(srcPath) {
+async function importFromPath(srcPath) {
   const script = fs.readFileSync(srcPath, 'utf8');
   const meta = parseMeta(script, path.basename(srcPath, '.js'));
-  // 生成稳定 id
   const id = 'src_' + md5(meta.name + Date.now()).slice(0, 10);
   const entry = { id, name: meta.name, version: meta.version, description: meta.description, author: meta.author, enabled: true };
   const dest = path.join(_dir, id + '.js');
   fs.writeFileSync(dest, script, 'utf8');
-  // 先验证可运行再入册
-  loadRuntime(entry);
+  // 先验证可运行再入册（等待 Worker 加载回执，失败抛错）
+  let ok = false;
+  let loadError = '';
+  try {
+    await waitForReady();
+    postToWorker({ type: 'load', entry });
+    const r = await waitLoad(id);
+    ok = r.ok;
+    loadError = r.error || '';
+  } catch (e) {
+    try { fs.unlinkSync(dest); } catch { }
+    throw new Error(`音源脚本执行失败: ${e.message}`);
+  }
+  if (!ok) {
+    try { fs.unlinkSync(dest); } catch { }
+    throw new Error(loadError || '音源脚本验证失败（沙箱加载未通过）');
+  }
   _registry = _registry.filter((e) => e.id !== id);
   _registry.push(entry);
   saveRegistry();
@@ -198,28 +274,40 @@ function importFromPath(srcPath) {
 
 function remove(id) {
   _registry = _registry.filter((e) => e.id !== id);
-  _runtimes.delete(id);
+  _loadedIds.delete(id);
+  try { postToWorker({ type: 'unload', id }); } catch { }
   try { fs.unlinkSync(path.join(_dir, id + '.js')); } catch { }
   saveRegistry();
   return { ok: true };
 }
 
-function setEnabled(id, enabled) {
+async function setEnabled(id, enabled) {
   const entry = _registry.find((e) => e.id === id);
   if (!entry) throw new Error('音源不存在');
   entry.enabled = !!enabled;
   saveRegistry();
   if (enabled) {
-    try { loadRuntime(entry); } catch (e) { entry.enabled = false; saveRegistry(); throw e; }
+    // 等待 Worker 加载回执；失败回滚注册表并抛错
+    try {
+      await waitForReady();
+      postToWorker({ type: 'load', entry });
+      const r = await waitLoad(id);
+      if (!r.ok) throw new Error(r.error || '音源加载失败');
+    } catch (e) {
+      entry.enabled = false;
+      saveRegistry();
+      throw e;
+    }
   } else {
-    _runtimes.delete(id);
+    _loadedIds.delete(id);
+    try { postToWorker({ type: 'unload', id }); } catch { }
   }
   return { ok: true, enabled: entry.enabled };
 }
 
 /** 是否有可用（已加载）的自定义音源 */
 function hasActiveSource() {
-  return _registry.some((e) => e.enabled && _runtimes.has(e.id));
+  return _registry.some((e) => e.enabled && _loadedIds.has(e.id));
 }
 
 /**
@@ -228,17 +316,12 @@ function hasActiveSource() {
  * @param {object} payload { source, info }  source: kg/kw/tx/wy/mg
  */
 async function handleRequest(action, payload, timeoutMs = 15000) {
-  const enabled = _registry.filter((e) => e.enabled && _runtimes.has(e.id));
+  const enabled = _registry.filter((e) => e.enabled && _loadedIds.has(e.id));
   if (!enabled.length) throw new Error('没有已启用的音源');
   const errors = [];
   for (const entry of enabled) {
-    const rt = _runtimes.get(entry.id);
     try {
-      const result = await Promise.race([
-        Promise.resolve().then(() => rt.handler({ action, source: payload.source, info: payload.info })),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('音源响应超时')), timeoutMs)),
-      ]);
-      return { sourceId: entry.id, sourceName: entry.name, result };
+      return await requestInWorker(entry.id, entry.name, action, payload.source, payload.info, timeoutMs);
     } catch (e) {
       errors.push(`${entry.name}: ${e.message}`);
     }
@@ -248,13 +331,8 @@ async function handleRequest(action, payload, timeoutMs = 15000) {
 
 /** 指定具体音源发起请求 */
 async function handleRequestById(id, action, payload, timeoutMs = 15000) {
-  const rt = _runtimes.get(id);
-  if (!rt) throw new Error('音源未加载');
-  const result = await Promise.race([
-    Promise.resolve().then(() => rt.handler({ action, source: payload.source, info: payload.info })),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('音源响应超时')), timeoutMs)),
-  ]);
-  return { sourceId: id, sourceName: (_registry.find((e) => e.id === id) || {}).name || id, result };
+  if (!_loadedIds.has(id)) throw new Error('音源未加载');
+  return requestInWorker(id, (_registry.find((e) => e.id === id) || {}).name || id, action, payload.source, payload.info, timeoutMs);
 }
 
 module.exports = { init, list, importFromPath, remove, setEnabled, hasActiveSource, handleRequest, handleRequestById };

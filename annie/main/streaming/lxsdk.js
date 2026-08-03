@@ -56,9 +56,13 @@ function deriveId(source, info) {
   }
 }
 
-/** CDN 封面统一升级为 https：页面 CSP img-src 仅放行 https，http 图（酷狗/网易）会被浏览器拦截 */
+/** CDN 封面统一升级为 https：页面 CSP img-src 仅放行 https，http 图（酷狗/网易）会被浏览器拦截。
+ * 例外：kwcdn.kuwo.cn 的 https 证书无效（TLS 握手失败，实测），只能走 http——
+ * 渲染层会经主进程 coverProxy 转 dataURL 加载（CSP 放行 data:）。 */
 function httpsCover(url) {
-  return String(url || '').replace(/^http:\/\//i, 'https://');
+  const s = String(url || '');
+  if (/kwcdn\.kuwo\.cn/i.test(s)) return s; // 酷我封面：https 打不开，保留 http 由代理转
+  return s.replace(/^http:\/\//i, 'https://');
 }
 
 /** LX musicInfo → 安妮流媒体歌曲对象（meta 完整透传，音源脚本需要原始字段） */

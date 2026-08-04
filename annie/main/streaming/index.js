@@ -142,9 +142,13 @@ async function download(params, onProgress) {
   }
   await new Promise((res) => out.end(res));
 
-  // V1.1.10：下载后写元数据——封面/标题/歌手/专辑/专辑艺术家/曲目号/碟号/发行时间 + 旁挂 .lrc 歌词。
+  // V1.1.10：下载后写元数据——封面/标题/歌手/专辑/专辑艺术家/曲目号/碟号/发行时间 + 歌词。
+  // 附加项受设置页开关控制：saveLrc（旁挂 .lrc + 嵌入）/ saveCover（嵌入封面）。
   // 全部尽力而为：任何一步失败都不阻塞下载成功返回。
-  const tagged = await writeDownloadedTags(dest, song, params.provider).catch(() => false);
+  const tagged = await writeDownloadedTags(dest, song, params.provider, {
+    saveLrc: params.saveLrc !== false,
+    saveCover: params.saveCover !== false,
+  }).catch(() => false);
 
   return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType, tagged: !!tagged };
 }
@@ -154,23 +158,31 @@ async function download(params, onProgress) {
  * 元数据来源：song 已有字段（标题/歌手/专辑）+ 专辑详情接口补全（曲目号/碟号/发行时间/专辑艺术家）+ 歌词接口。
  * @returns {Promise<boolean>} 是否成功写入标签
  */
-async function writeDownloadedTags(dest, song, provider) {
+async function writeDownloadedTags(dest, song, provider, opts) {
+  opts = opts || {};
+  const wantLrc = opts.saveLrc !== false;
+  const wantCover = opts.saveCover !== false;
   try {
     // 1) 补全专辑详情元数据（尽力而为，接口失败返回空字段）
     const detail = await lxsdk.albumDetail({ provider, song }).catch(() => ({}));
-    // 2) 拉歌词（原始 LRC + 翻译）
+    // 2) 拉歌词（仅 saveLrc 开启时；关闭则跳过歌词获取/嵌入/旁挂）
     let lrc = '';
-    try {
-      const lr = await lxsdk.lyric({ provider, song });
-      if (lr && lr.lrc) lrc = lr.lrc;
-    } catch { }
-    // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全
-    let coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
-    if (!coverUrl) {
+    if (wantLrc) {
       try {
-        const pc = await lxsdk.getPic({ provider, song });
-        if (pc && pc.url) coverUrl = pc.url;
+        const lr = await lxsdk.lyric({ provider, song });
+        if (lr && lr.lrc) lrc = lr.lrc;
       } catch { }
+    }
+    // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全（仅 saveCover 开启时）
+    let coverUrl = '';
+    if (wantCover) {
+      coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
+      if (!coverUrl) {
+        try {
+          const pc = await lxsdk.getPic({ provider, song });
+          if (pc && pc.url) coverUrl = pc.url;
+        } catch { }
+      }
     }
     // 4) 写标签：专辑/专辑艺术家优先取渲染层 song（正确 UTF-8），detail 仅作回退补全；
     //    歌词嵌入音频文件（FLAC LYRICS / MP3 USLT，V1.1.10）
@@ -183,11 +195,11 @@ async function writeDownloadedTags(dest, song, provider) {
       track: detail && detail.track,
       disc: detail && detail.disc,
       date: detail && detail.date,
-      lyrics: lrc,
+      lyrics: wantLrc ? lrc : '',
       coverUrl,
     }).catch(() => ({ ok: false }));
-    // 5) 旁挂 .lrc（有歌词才写）
-    if (lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric: '' });
+    // 5) 旁挂 .lrc（仅 saveLrc 开启且有歌词时）
+    if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric: '' });
     return tagRes && tagRes.ok;
   } catch (e) {
     console.warn('[streaming] 写下载元数据失败(不阻塞):', e && e.message);

@@ -514,6 +514,9 @@ async function downloadStreamAt(gi, btn) {
       quality: currentQuality(),
       song,
       _dlKey: key,
+      // V1.1.10：下载附加项开关（设置页"下载设置"卡片右下角）
+      saveLrc: !window.annieSettings || annieSettings.ui.saveLrc !== false,
+      saveCover: !window.annieSettings || annieSettings.ui.saveCover !== false,
     });
     dlJobs.delete(key);
     if (r && r.ok) {

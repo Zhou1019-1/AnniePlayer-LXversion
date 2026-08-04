@@ -27,7 +27,9 @@
     crossfadeSec: 0.5,       // 交叉淡入 0–10s（0=关闭）
     loudMode: 'off',        // 响度均衡：off | track | album
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
-    downloadDir: ''
+    downloadDir: '',
+    saveLrc: true,         // 下载时保存歌词：旁挂 .lrc + 嵌入音频标签
+    saveCover: true        // 下载时保存封面：嵌入音频标签
   };
   var ui = Object.assign({}, DEFAULTS);
   var saveTimer = null;
@@ -217,26 +219,42 @@
     // 这里提供展示 + 更改/默认入口，改动即时同步到流媒体面板。
     var s0 = section('下载设置');
     (function () {
-      // 行：左侧 label + hint，右侧控件组（与音质链路分类同款布局）
+      // 行：左侧 label + hint，右侧卡片（路径 + 按钮 + 右下角开关）
       var row = el('div', 'set-row');
       var lab = el('div');
       lab.appendChild(el('div', '', '下载目录'));
       lab.appendChild(el('div', 'set-hint', '流媒体下载的保存位置，与流媒体面板的下载目录同步'));
       row.appendChild(lab);
-      var ctrl = el('div', 'set-ctrl');
-      ctrl.style.cssText = 'flex-direction: column; align-items: stretch; min-width: 240px; gap: 6px;';
+      // 路径卡片：带边框容器，右下角为歌词/封面保存开关
+      var card = el('div', 'set-dl-card');
       var dirVal = el('div', 'set-dl-dir', '读取中…');
-      var btnRow = el('div');
-      btnRow.style.cssText = 'display: flex; gap: 8px;';
+      card.appendChild(dirVal);
+      var foot = el('div', 'set-dl-foot');
+      var btnRow = el('div', 'set-dl-btns');
       var btnChange = el('button', 'eq-preset', '更改');
       var btnReset = el('button', 'eq-preset', '默认');
       btnChange.style.cssText = 'border-radius: 7px; padding: 4px 12px; font-size: 12px; border: 1px solid var(--line); background: var(--bg3); color: var(--text); cursor: pointer;';
       btnReset.style.cssText = btnChange.style.cssText;
       btnRow.appendChild(btnChange);
       btnRow.appendChild(btnReset);
-      ctrl.appendChild(dirVal);
-      ctrl.appendChild(btnRow);
-      row.appendChild(ctrl);
+      foot.appendChild(btnRow);
+      // 右下角：保存歌词 / 保存封面 两个开关
+      var opts = el('div', 'set-dl-opts');
+      var mkOpt = function (key, label) {
+        var l = el('label', 'set-dl-opt');
+        var c = document.createElement('input');
+        c.type = 'checkbox'; c.checked = !!ui[key]; c.dataset.key = key;
+        c.onchange = function () { ui[key] = c.checked; save(); };
+        l.appendChild(c);
+        l.appendChild(el('span', '', label));
+        opts.appendChild(l);
+        return l;
+      };
+      mkOpt('saveLrc', '歌词');
+      mkOpt('saveCover', '封面');
+      foot.appendChild(opts);
+      card.appendChild(foot);
+      row.appendChild(card);
       s0.appendChild(row);
       // 异步读取当前目录（主进程默认：系统音乐文件夹/AnniePlayerSVLX Downloads）
       if (window.mine && window.mine.streamDownloadDir) {

@@ -314,10 +314,11 @@ async function playStreamAt(i) {
   streamState.index = i;
   renderResults();
   const pname = PLATFORMS[song.provider] || song.provider;
-  // V1.1.4：点击切歌立即停止当前音频——不再等新歌 URL 解析完成才停旧曲
-  // （否则解析期间上一首会继续播放，产生"切歌后还接着播上一首"的体验）
-  // 只在播放中才发 stop：快速连点时后续点击引擎已停止，避免 stop 请求堆积
-  if (typeof state !== 'undefined' && state.playing) window.mine.engine('stop').catch(() => { });
+  // V1.1.9：不再先发 engine('stop')——stop 会递增播放代际并停设备（设备开关）。
+  // 直接让 annieStreamPlay 走 play.crossfade：引擎内 mixer FadeTo 旧曲淡出新曲淡入，
+  // 设备保持打开（同采样率）；跨采样率时引擎自动回退快速播放（一次设备开关）。
+  // 旧实现在等待 URL 期间旧曲会继续播（V1.1.4 曾用 stop 解决），但 stop 本身
+  // 造成每次流媒体切歌都设备开关 + 打断 crossfade——得不偿失。
   setStreamStatus(`正在获取播放地址：${song.name}…`);
 
   let r, ly;

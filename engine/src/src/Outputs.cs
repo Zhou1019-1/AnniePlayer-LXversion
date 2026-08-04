@@ -263,12 +263,14 @@ public sealed class IntPcmConverter : IWaveProvider
     }
 }
 
-/// <summary>WASAPI 独占输出。格式尝试顺序：原生率 float32 → int32 → int24 → int16；全部失败则返回候选采样率请求重采样。</summary>
+/// <summary>WASAPI 输出（独占或共享）。独占：格式尝试顺序原生率 24/16/32bit，失败返回候选采样率重采样；
+/// 共享：系统混音器统一格式，直接按请求率打开（设备自动重采样），不切设备、不冲突。</summary>
 public sealed class WasapiExclusiveBackend : IOutputBackend
 {
     private static readonly int[] FallbackRates = { 384000, 352800, 192000, 176400, 96000, 88200, 48000, 44100 };
 
     private readonly MMDevice _device;
+    private readonly AudioClientShareMode _shareMode; // V1.1.9：Exclusive（默认）| Shared
     private WasapiOut? _out;
     private IWaveProvider? _source;
 
@@ -279,10 +281,13 @@ public sealed class WasapiExclusiveBackend : IOutputBackend
     public int RequestedRate { get; private set; }
     /// <summary>Pro：独占缓冲长度（ms，50–500，默认 50，由 buffer.set 配置）。</summary>
     public int BufferMs = 50;
+    /// <summary>V1.1.9：是否独占模式（false = 共享，系统混音器自动重采样）。</summary>
+    public bool IsExclusive => _shareMode == AudioClientShareMode.Exclusive;
 
-    public WasapiExclusiveBackend(MMDevice device)
+    public WasapiExclusiveBackend(MMDevice device, bool exclusive = true)
     {
         _device = device;
+        _shareMode = exclusive ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared;
         DeviceName = device.FriendlyName;
     }
 
@@ -322,7 +327,27 @@ public sealed class WasapiExclusiveBackend : IOutputBackend
         _source = source;
         RequestedRate = requestedRate;
 
-        // 1) 原生采样率，按位深优先级尝试
+        // V1.1.9：共享模式——系统混音器统一格式，直接按请求率打开（设备侧自动重采样），
+        // 永不返回重采样请求、不切设备、不与其他程序冲突。
+        if (_shareMode == AudioClientShareMode.Shared)
+        {
+            foreach (int bits in new[] { 24, 16, 32 })
+            {
+                var fmt = bits == 32
+                    ? WaveFormat.CreateIeeeFloatWaveFormat(requestedRate, channels)
+                    : new WaveFormat(requestedRate, bits, channels);
+                try
+                {
+                    StartOut(source, fmt, bits);
+                    Resampled = false;
+                    return null;
+                }
+                catch (COMException) { continue; } // 该位深不被混音器接受，试下一种
+            }
+            throw new InvalidOperationException($"设备 [{DeviceName}] 共享模式不接受任何常见格式。");
+        }
+
+        // 1) 独占：原生采样率，按位深优先级尝试
         // V1.1.4：24bit 优先（用户要求默认 24bit——bit-perfect 输出精度；白噪时改回 16bit 优先）
         foreach (int bits in new[] { 24, 16, 32 })
         {
@@ -364,7 +389,7 @@ public sealed class WasapiExclusiveBackend : IOutputBackend
         {
             try
             {
-                _out = new WasapiOut(_device, AudioClientShareMode.Exclusive, true, Math.Clamp(BufferMs, 50, 500));
+                _out = new WasapiOut(_device, _shareMode, true, Math.Clamp(BufferMs, 50, 500));
                 _out.Init(provider);
                 ActiveFormat = fmt;
                 return;

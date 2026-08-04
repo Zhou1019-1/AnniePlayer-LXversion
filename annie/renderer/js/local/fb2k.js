@@ -704,6 +704,12 @@
     var list = deco.map(function (d) { return d.t; });
     S.rows = rows;
     S.tracks = list;
+    // beta0.0.3 移植：路径 → 行号 O(1) 索引（定位播放行时替代线性扫描）
+    var pIdx = new Map();
+    for (var ri = 0; ri < rows.length; ri++) {
+      if (rows[ri].type === 'track') pIdx.set(rows[ri].t.path, ri);
+    }
+    S.rowPathIdx = pIdx;
     // 播放中不覆写 PlayerCore 队列（双击/ transport 会钉住队列快照）；
     // 覆写会导致队列顺序与播放索引错位（显示一首、播放另一首）
     if (!state.currentPath) state.queue = list;
@@ -1365,24 +1371,38 @@
   window.annieFb2kDark = { toggle: function () { setDarkMode(!S.dark); } };
 
   /* V1.1.1：切回 FB2K 主题时，树展开并选中播放文件所在文件夹，列表滚动到播放行；
-   * 流媒体曲目不入库则保持当前视图 */
+   * 流媒体曲目不入库则保持当前视图
+   * beta0.0.3 移植：O(1) 行索引 + 平滑滚动 + 播放行高亮闪烁 */
   var normP = function (p) { return String(p || '').replace(/\//g, '\\').toLowerCase(); };
-  /* 滚动列表到指定路径行（虚拟滚动：直接按行号定位 scrollTop） */
-  function scrollToRowPath(cp) {
-    for (var i = 0; i < S.rows.length; i++) {
-      var r = S.rows[i];
-      if (r.type === 'track' && r.t.path === cp) {
-        R.list.scrollTop = Math.max(0, i * S.rowH - R.list.clientHeight / 2);
-        renderVisible();
-        return true;
-      }
-    }
-    return false;
+  /* 滚动列表到指定路径行（虚拟滚动：按行号定位 scrollTop） */
+  function scrollToRowPath(cp, smooth) {
+    var i = S.rowPathIdx ? S.rowPathIdx.get(cp) : undefined;
+    if (i === undefined) return false;
+    var top = Math.max(0, i * S.rowH - R.list.clientHeight / 2);
+    if (smooth && R.list.scrollTo) R.list.scrollTo({ top: top, behavior: 'smooth' });
+    else R.list.scrollTop = top;
+    renderVisible();
+    if (smooth) setTimeout(function () { flashPlayingRowFb2k(0); }, 350);
+    return true;
   }
-  function locatePlayingFb2k() {
+  /* 播放行高亮闪烁（2 次脉冲动画，最多重试 4 次等待行渲染） */
+  function flashPlayingRowFb2k(attempts) {
+    var node = R.rows && R.rows.querySelector('.f2-row.playing');
+    if (node) {
+      node.classList.remove('locate-flash');
+      void node.offsetWidth; // 重启动画
+      node.classList.add('locate-flash');
+      setTimeout(function () { node.classList.remove('locate-flash'); }, 2000);
+    } else if ((attempts || 0) < 4) {
+      setTimeout(function () { flashPlayingRowFb2k((attempts || 0) + 1); }, 300);
+    }
+  }
+  function locatePlayingFb2k(smooth) {
     var cp = state.currentPath;
     if (!cp) return;
-    if (!state.library.tracks.some(function (t) { return t.path === cp; })) return;
+    var inLib = (typeof libHas === 'function') ? libHas(cp)
+      : state.library.tracks.some(function (t) { return t.path === cp; });
+    if (!inLib) return;
     var dir = cp.replace(/[\\/][^\\/]+$/, '');
     var nd = normP(dir);
     var targetPath = null;
@@ -1403,10 +1423,13 @@
     rebuildRows();
     updateRight();
     updateTitle();
-    scrollToRowPath(cp);
+    scrollToRowPath(cp, smooth);
     // 大列表走 Worker 异步排序时，行模型稍后才就绪，补一次定位
-    setTimeout(function () { scrollToRowPath(cp); }, 450);
+    if (smooth) setTimeout(function () { scrollToRowPath(cp, true); }, 450);
+    else setTimeout(function () { scrollToRowPath(cp); }, 450);
   }
+  /* beta0.0.3 移植：一键定位入口（平滑滚动 + 高亮） */
+  window.annieFb2kLocate = function () { locatePlayingFb2k(true); };
   document.addEventListener('annie-theme-changed', function (e) {
     if (e.detail && e.detail.theme === 'fb2k') locatePlayingFb2k();
   });

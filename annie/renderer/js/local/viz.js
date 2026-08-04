@@ -31,6 +31,8 @@ const vizState = {
 };
 
 const SPEC_BANDS = 192;
+// V1.1.9：频谱离屏画布宽度上限（8 分钟 × 8px/s = 3840px）——长音频不再无限膨胀
+const MAX_SPEC_W = 3840;
 
 /* ---------------- Spek 风格调色板（黑→紫→红→橙→黄→白） ---------------- */
 const PALETTE = (() => {
@@ -264,13 +266,18 @@ function drawWaveProgress() {
   drawWaveProgressLine(ctx, W, H, progress, wf, mid, barW, n);
 }
 
-// 进度线：先擦除旧线所在列的柱（恢复该处正确颜色），再画新线——避免增量绘制残留
+// 进度线：先擦除旧线所在列（V1.1.9：整列清背景再重画柱——旧实现只重画柱区域，
+// 进度线画满全高，超出柱高的上下留白永不擦除 → 拉进度条后残留黄色竖线），再画新线。
 function drawWaveProgressLine(ctx, W, H, progress, wf, mid, barW, n) {
   const oldX = vizState._waveOldX;
   vizState._waveOldX = -1;
   if (oldX >= 0 && wf) {
-    const i0 = Math.max(0, Math.floor(oldX / barW));
-    const i1 = Math.min(n - 1, Math.floor((oldX + 2) / barW));
+    // 整列清为背景色（2px + 柱间隙余量）
+    ctx.fillStyle = '#07080c';
+    ctx.fillRect(Math.max(0, oldX - 1), 0, 4, H);
+    // 重画该列覆盖到的柱
+    const i0 = Math.max(0, Math.floor((oldX - 1) / barW));
+    const i1 = Math.min(n - 1, Math.floor((oldX + 3) / barW));
     for (let i = i0; i <= i1; i++) {
       const x = i * barW;
       const h = Math.max(1, wf[i] * (H - 6));
@@ -292,10 +299,13 @@ function renderWave() {
   renderWaveFull();
 }
 
-/* ---------------- 频谱渲染 ---------------- */
+/* ---------------- 频谱渲染 ----------------
+ * V1.1.9：全轨一次分析（波形完整），频谱画布封顶 MAX_SPEC_W（8 分钟 × 8px/s）。
+ * 长音频不再分配数万像素画布（旧实现 1.5h = 43200px ≈ 33MB，fillRect/扩容/拷贝
+ * 全是同步重活 → 切歌卡）。超出 8 分钟部分忽略（频谱展示前 8 分钟，波形不受影响）。 */
 function resetSpec() {
   vizState.specCanvas = document.createElement('canvas');
-  vizState.specCanvas.width = Math.max(1, Math.ceil((vizState.specDur || 240) * 8)); // 预估宽度，不足再扩
+  vizState.specCanvas.width = Math.max(1, Math.min(MAX_SPEC_W, Math.ceil((vizState.specDur || 240) * 8)));
   vizState.specCanvas.height = SPEC_BANDS;
   vizState.specCtx = vizState.specCanvas.getContext('2d');
   vizState.specCtx.fillStyle = '#000';
@@ -305,11 +315,15 @@ function resetSpec() {
 
 function appendSpecFrames(frames, count) {
   if (!vizState.specCtx) resetSpec();
-  // 预估宽度不足时扩容
+  // 预估宽度不足时扩容（封顶 MAX_SPEC_W，超出忽略）
   if (vizState.specFrames + count > vizState.specCanvas.width) {
+    if (vizState.specCanvas.width >= MAX_SPEC_W) {
+      vizState.specFrames += count; // 计数推进，画面定格在 8 分钟
+      return;
+    }
     const old = vizState.specCanvas;
     const bigger = document.createElement('canvas');
-    bigger.width = Math.max(old.width * 2, vizState.specFrames + count + 256);
+    bigger.width = Math.min(MAX_SPEC_W, Math.max(old.width * 2, vizState.specFrames + count + 256));
     bigger.height = SPEC_BANDS;
     const bctx = bigger.getContext('2d');
     bctx.drawImage(old, 0, 0);
@@ -365,31 +379,20 @@ function renderSpecFull() {
   drawSpecProgressLine(ctx, W, H, progress);
 }
 
-// 10Hz：只画/移动频谱进度线（旧实现每次 drawImage 整幅频谱 + 重画刻度）
+// 10Hz：进度线移动——改为调度全量重绘（rAF 合并）。
+// V1.1.9：旧实现"擦除旧线列"用源画布单列重贴，进度线半透明金色叠在频谱上，
+// 擦除取整误差累积 → 走过的区域逐渐染黄。全量重绘（黑底→底图→画线）旧线必然消失。
 function drawSpecProgress() {
-  const cv = $v('#spec-canvas');
-  const { w: W, h: H } = ensureVizSize('spec');
-  if (!W || !H || !vizState.specFrames) return;
-  const ctx = cv.getContext('2d');
-  const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
-  drawSpecProgressLine(ctx, W, H, progress);
+  scheduleSpecRender();
 }
 
-// 频谱进度线：擦除旧线列（背景黑 + 该列频谱重贴），再画新线
+// 频谱进度线（V1.1.9：由 renderSpecFull 全量重绘调用，黑底已清旧线，只画新线；
+// 不透明纯色，杜绝半透明叠加累积染黄）
 function drawSpecProgressLine(ctx, W, H, progress) {
-  const oldX = vizState._specOldX;
-  vizState._specOldX = -1;
-  if (oldX >= 0 && vizState.specCanvas && vizState.specFrames > 0) {
-    // V1.1.7：只重贴旧线那一列源像素（2px 显示宽 ≈ 1 源列），而非整幅 drawImage——
-    // 进度插值后本函数被 rAF 每帧调用，整幅重贴会重新引入卡顿。
-    const sx = Math.max(0, Math.min(vizState.specFrames - 1, Math.floor(oldX / W * vizState.specFrames)));
-    ctx.drawImage(vizState.specCanvas, sx, 0, 1, SPEC_BANDS, oldX, 0, 2, H);
-  }
   if (progress > 0) {
     const px = Math.round(progress * W) - 1;
-    ctx.fillStyle = 'rgba(250,201,0,.85)';
+    ctx.fillStyle = '#fac900';
     ctx.fillRect(px, 0, 2, H);
-    vizState._specOldX = px;
   }
 }
 
@@ -417,12 +420,24 @@ function renderLossless(r) {
 }
 
 /* ---------------- 分析事件 ---------------- */
+// V1.1.9：分析帧渲染节流——长音频全轨分析期间主进程高速推送 frames 事件，
+// 旧实现每批都同步 renderSpec（全量 drawImage），渲染主线程被 IPC 频率拖着跑。
+// 现在：数据立即入离屏画布（putImageData 轻），画面重绘合并到 rAF——每帧最多一次。
+let _specRaf = 0;
+function scheduleSpecRender() {
+  if (_specRaf) return;
+  _specRaf = requestAnimationFrame(() => {
+    _specRaf = 0;
+    if (vizState.analyzing || vizState.specFrames) renderSpecFull();
+  });
+}
+
 window.mine.onAnalyzeEvent((p) => {
   if (p.gen !== vizState.gen) return; // 过期分析结果丢弃
   if (p.type === 'frames') {
     appendSpecFrames(new Uint8Array(p.frames), p.count);
     $v('#viz-status').textContent = '分析中… ' + (vizState.specFrames / 8).toFixed(0) + 's';
-    renderSpec();
+    scheduleSpecRender(); // V1.1.9：合并到 rAF，不再每批全量重绘
   } else if (p.type === 'done') {
     vizState.analyzing = false;
     vizState.waveform = p.waveform && p.waveform.length ? new Float32Array(p.waveform) : null;

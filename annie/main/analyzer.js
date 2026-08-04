@@ -152,7 +152,11 @@ function startAnalyze(win, input, headers, gen, forcedLossless) {
     args.push('-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5', '-rw_timeout', '15000000');
     if (headers) args.push('-headers', headers);
   }
-  args.push('-i', input, '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', '-acodec', 'pcm_s16le', 'pipe:1');
+  args.push('-i', input, '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', '-acodec', 'pcm_s16le');
+  // V1.1.9：分析限时 5 分钟（-t 必须在输出文件 pipe:1 之前，否则不生效）——
+  // 长音频全轨 FFT 持续占满主进程 CPU，切歌/播放 IPC 被拖慢（实测 38 分钟歌切歌 35s）。
+  // 波形/频谱只覆盖前 5 分钟。
+  args.push('-t', '300', 'pipe:1');
 
   const proc = spawn(resolveTool('ffmpeg.exe'), args, { windowsHide: true });
   const session = { proc, gen, cancelled: false };
@@ -184,28 +188,36 @@ function startAnalyze(win, input, headers, gen, forcedLossless) {
   // FFT 分批处理：一次 data 事件可能携带大量 PCM（ffmpeg 全速解码），
   // 若在事件循环内同步处理全部帧（4 分钟歌 5000+ 帧 4096 点 FFT），
   // 主进程会被长时间阻塞，导致切歌/播放等 IPC 全部延迟（界面卡顿）。
-  // 每批最多处理 64 帧（约 3 秒音频）就通过 setImmediate 让出事件循环。
-  const BATCH_MAX = 64;
+  // 每批最多处理 128 帧就通过 setImmediate 让出事件循环。
+  // V1.1.9：游标（byteOff）读取，避免每帧 Buffer.concat 全队列拷贝（O(n²)——
+  // 大队列时首批帧延迟数秒且随机波动，WENDY 频谱"渐进 vs 从无到有"差异根因）。
+  const BATCH_MAX = 128;
   let processing = false;
+  let byteOff = 0; // 已消费字节偏移
 
   function drainFrames() {
     let processed = 0;
-    while (queued >= FFT_SIZE * 2 && processed < BATCH_MAX) {
-      // 拼出 8192 字节
-      const frameBuf = Buffer.concat(byteQueue);
-      const consumed = HOP * 2; // 每次前进 HOP 个采样
-      processFrame(frameBuf);
-      const rest = frameBuf.subarray(consumed);
-      byteQueue.length = 0;
-      if (rest.length) byteQueue.push(rest);
-      queued = rest.length;
-      processed++;
+    if (queued - byteOff >= FFT_SIZE * 2) {
+      // 整队列 concat 一次（每批一次），游标取当前帧——避免每帧全队列拷贝
+      const buf = Buffer.concat(byteQueue);
+      while (queued - byteOff >= FFT_SIZE * 2 && processed < BATCH_MAX) {
+        processFrame(buf.subarray(byteOff, byteOff + FFT_SIZE * 2));
+        byteOff += HOP * 2;
+        processed++;
+      }
     }
-    if (queued >= FFT_SIZE * 2) {
+    // 队列消费完毕或积压过大时重整：丢弃已消费部分
+    if (byteOff > 0 && (byteOff >= queued || byteOff >= (1 << 20))) {
+      const keep = Buffer.concat(byteQueue).subarray(byteOff);
+      byteQueue.length = 0;
+      byteQueue.push(keep);
+      queued = keep.length;
+      byteOff = 0;
+    }
+    if (queued - byteOff >= FFT_SIZE * 2) {
       setImmediate(drainFrames); // 还有剩余：让出事件循环后继续
     } else {
       processing = false;
-      if (queued > 0) { /* 不足一帧的残余，等下一批 */ }
     }
   }
 

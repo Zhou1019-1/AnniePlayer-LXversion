@@ -195,6 +195,8 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
     <div class="ctl-group tools">
       <button id="btn-fav-cur" class="ctl" title="收藏当前曲目">♡</button>
       <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板">📊</button>
+      <!-- beta0.0.3 移植：一键定位当前播放文件（滚动到列表位置并高亮） -->
+      <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）">◎</button>
       <!-- EQ 按钮由 eq.js 注入本组 -->
     </div>
     <div class="ctl-group sys">
@@ -233,8 +235,9 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 <script src="js/local/settings.js"></script>
 <script src="js/local/viz.js"></script>
 <script src="js/local/streaming.js"></script>
-<script src="js/local/eq.js"></script>
-<script src="js/local/player.js"></script>
+  <script src="js/local/eq.js"></script>
+  <script src="js/local/exclusive.js"></script>
+  <script src="js/local/player.js"></script>
 <script src="js/local/pro.js"></script>
 <script src="js/local/proUi.js"></script>
 <script src="js/local/theme.js"></script>

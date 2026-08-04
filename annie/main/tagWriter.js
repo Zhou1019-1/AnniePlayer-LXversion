@@ -52,8 +52,8 @@ function coverExt(buf) {
 }
 
 /**
- * 给已下载的音频文件写标签 + 封面。
- * @param {object} opts { dest, title, artist, album, albumArtist, track, disc, date, coverUrl, coverBytes, provider }
+ * 给已下载的音频文件写标签 + 封面 + 嵌入歌词。
+ * @param {object} opts { dest, title, artist, album, albumArtist, track, disc, date, coverUrl, coverBytes, lyrics, provider }
  * @returns {Promise<{ok:boolean, tagged?:boolean, cover?:boolean, reason?:string}>}
  */
 async function writeTags(opts) {
@@ -94,6 +94,13 @@ async function writeTags(opts) {
   };
   for (const k of ['title', 'artist', 'album', 'album_artist', 'track', 'disc', 'date']) {
     if (meta[k]) args.push('-metadata', `${k}=${meta[k]}`);
+  }
+  // V1.1.10：嵌入歌词——FLAC 用大写 LYRICS（Vorbis comment），MP3 用小写 lyrics（ID3 USLT）。
+  // 实测：flac + LYRICS 有效；mp3 + lyrics 有效（写成 ID3 标签，播放器/ffprobe 可读）。
+  const lrc = metaValue(opts.lyrics);
+  if (lrc) {
+    const lyricKey = ext === 'flac' ? 'LYRICS' : 'lyrics';
+    args.push('-metadata', `${lyricKey}=${lrc}`);
   }
   if (coverFile) {
     args.push('-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)');

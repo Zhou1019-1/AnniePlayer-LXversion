@@ -172,7 +172,8 @@ async function writeDownloadedTags(dest, song, provider) {
         if (pc && pc.url) coverUrl = pc.url;
       } catch { }
     }
-    // 4) 写标签：专辑/专辑艺术家优先取渲染层 song（正确 UTF-8），detail 仅作回退补全
+    // 4) 写标签：专辑/专辑艺术家优先取渲染层 song（正确 UTF-8），detail 仅作回退补全；
+    //    歌词嵌入音频文件（FLAC LYRICS / MP3 USLT，V1.1.10）
     const tagRes = await tagWriter.writeTags({
       dest,
       title: song && (song.name || (song.meta && song.meta.name)),
@@ -182,6 +183,7 @@ async function writeDownloadedTags(dest, song, provider) {
       track: detail && detail.track,
       disc: detail && detail.disc,
       date: detail && detail.date,
+      lyrics: lrc,
       coverUrl,
     }).catch(() => ({ ok: false }));
     // 5) 旁挂 .lrc（有歌词才写）

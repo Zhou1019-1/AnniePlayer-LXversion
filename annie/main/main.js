@@ -174,6 +174,8 @@ function createWindow() {
 // ---------- 系统托盘（Pro beat0.0.1：含迷你模式 / 桌面歌词入口） ----------
 let tray = null;
 function createTray() {
+  // SVLX 融合：src/main.js 已创建托盘（图标路径已修），此处跳过避免通知栏双图标
+  if (global.__svlxBoot) return;
   try {
     const { Tray, Menu, nativeImage } = require('electron');
     const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'build', 'icon.png'));

@@ -38,7 +38,8 @@ app.on('second-instance', () => {
 let tray = null;
 function createTray() {
   try {
-    const iconPath = path.join(ROOT, 'build', 'icon.png');
+    // 项目根 build/ 只有 icon.ico；托盘需要 png——用 annie/build/icon.png（真实存在的图标）
+    const iconPath = path.join(ROOT, 'annie', 'build', 'icon.png');
     const icon = nativeImage.createFromPath(iconPath);
     tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
     tray.setToolTip('AnniePlayer SVLX');

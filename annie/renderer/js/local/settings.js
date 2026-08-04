@@ -28,8 +28,8 @@
     loudMode: 'off',        // 响度均衡：off | track | album
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
     downloadDir: '',
-    saveLrc: true,         // 下载时保存歌词：旁挂 .lrc + 嵌入音频标签
-    saveCover: true        // 下载时保存封面：嵌入音频标签
+    saveLrc: true,         // 下载时在目录生成旁挂 .lrc 歌词文件（嵌入标签始终做）
+    saveCover: true        // 下载时在目录生成封面图片文件（嵌入标签始终做）
   };
   var ui = Object.assign({}, DEFAULTS);
   var saveTimer = null;

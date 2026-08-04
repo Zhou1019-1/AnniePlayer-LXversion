@@ -160,32 +160,29 @@ async function download(params, onProgress) {
  */
 async function writeDownloadedTags(dest, song, provider, opts) {
   opts = opts || {};
-  const wantLrc = opts.saveLrc !== false;
-  const wantCover = opts.saveCover !== false;
+  const wantLrc = opts.saveLrc !== false;     // 是否生成旁挂 .lrc 文件
+  const wantCover = opts.saveCover !== false; // 是否生成独立封面图片文件
   try {
     // 1) 补全专辑详情元数据（尽力而为，接口失败返回空字段）
     const detail = await lxsdk.albumDetail({ provider, song }).catch(() => ({}));
-    // 2) 拉歌词（仅 saveLrc 开启时；关闭则跳过歌词获取/嵌入/旁挂）
+    // 2) 拉歌词（嵌入标签始终做；旁挂 .lrc 受 saveLrc 控制）
     let lrc = '';
-    if (wantLrc) {
+    try {
+      const lr = await lxsdk.lyric({ provider, song });
+      if (lr && lr.lrc) lrc = lr.lrc;
+    } catch { }
+    // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全（嵌入始终做）
+    let coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
+    if (!coverUrl) {
       try {
-        const lr = await lxsdk.lyric({ provider, song });
-        if (lr && lr.lrc) lrc = lr.lrc;
+        const pc = await lxsdk.getPic({ provider, song });
+        if (pc && pc.url) coverUrl = pc.url;
       } catch { }
     }
-    // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全（仅 saveCover 开启时）
-    let coverUrl = '';
-    if (wantCover) {
-      coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
-      if (!coverUrl) {
-        try {
-          const pc = await lxsdk.getPic({ provider, song });
-          if (pc && pc.url) coverUrl = pc.url;
-        } catch { }
-      }
-    }
-    // 4) 写标签：专辑/专辑艺术家优先取渲染层 song（正确 UTF-8），detail 仅作回退补全；
-    //    歌词嵌入音频文件（FLAC LYRICS / MP3 USLT，V1.1.10）
+    // 封面字节：既用于嵌入，也用于 saveCover 时落盘独立文件
+    let coverBuf = null;
+    if (coverUrl) coverBuf = await tagWriter.fetchCoverBytes(coverUrl).catch(() => null);
+    // 4) 写标签：嵌入歌词（FLAC LYRICS / MP3 USLT）+ 嵌入封面（attached_pic），始终执行
     const tagRes = await tagWriter.writeTags({
       dest,
       title: song && (song.name || (song.meta && song.meta.name)),
@@ -195,11 +192,15 @@ async function writeDownloadedTags(dest, song, provider, opts) {
       track: detail && detail.track,
       disc: detail && detail.disc,
       date: detail && detail.date,
-      lyrics: wantLrc ? lrc : '',
+      lyrics: lrc,
       coverUrl,
+      coverBytes: coverBuf,
     }).catch(() => ({ ok: false }));
-    // 5) 旁挂 .lrc（仅 saveLrc 开启且有歌词时）
+    // 5) 独立文件（受开关控制）：
+    //    - saveLrc   → 旁挂同名 .lrc
+    //    - saveCover → 独立封面图片文件（同名 .jpg/.png）
     if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric: '' });
+    if (wantCover && coverBuf) tagWriter.writeCoverFile({ dest, coverBytes: coverBuf });
     return tagRes && tagRes.ok;
   } catch (e) {
     console.warn('[streaming] 写下载元数据失败(不阻塞):', e && e.message);

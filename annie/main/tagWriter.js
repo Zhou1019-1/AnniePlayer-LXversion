@@ -150,4 +150,22 @@ function writeLyric(opts) {
   } catch (e) { return { ok: false, reason: e.message }; }
 }
 
-module.exports = { writeTags, writeLyric, fetchCoverBytes, resolveTool };
+/**
+ * 把封面字节保存为独立图片文件（与音频同目录同名 .jpg/.png）。
+ * 仅"保存封面到本地"开关开启时调用；嵌入标签由 writeTags 独立完成。
+ * @param {object} opts { dest, coverBytes }
+ */
+function writeCoverFile(opts) {
+  const dest = opts && opts.dest;
+  if (!dest) return { ok: false, reason: 'no-dest' };
+  const buf = opts.coverBytes;
+  if (!buf || !buf.length) return { ok: false, reason: 'no-cover-bytes' };
+  const ext = coverExt(buf);
+  const coverPath = dest.replace(/\.[^.]+$/, '') + '.' + ext;
+  try {
+    fs.writeFileSync(coverPath, buf);
+    return { ok: true, path: coverPath };
+  } catch (e) { return { ok: false, reason: e.message }; }
+}
+
+module.exports = { writeTags, writeLyric, writeCoverFile, fetchCoverBytes, resolveTool };

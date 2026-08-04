@@ -217,36 +217,42 @@
     // 这里提供展示 + 更改/默认入口，改动即时同步到流媒体面板。
     var s0 = section('下载设置');
     (function () {
+      // 行：左侧 label + hint，右侧控件组（与音质链路分类同款布局）
       var row = el('div', 'set-row');
-      var head = el('div', 'set-row-head');
-      var lbl = el('span', 'set-label', '下载目录');
-      var val = el('span', 'set-val', '读取中…');
-      head.appendChild(lbl);
-      head.appendChild(val);
-      row.appendChild(head);
+      var lab = el('div');
+      lab.appendChild(el('div', '', '下载目录'));
+      lab.appendChild(el('div', 'set-hint', '流媒体下载的保存位置，与流媒体面板的下载目录同步'));
+      row.appendChild(lab);
       var ctrl = el('div', 'set-ctrl');
-      var btnChange = el('button', 'btn-ghost', '更改');
-      var btnReset = el('button', 'btn-ghost', '默认');
-      ctrl.appendChild(btnChange);
-      ctrl.appendChild(btnReset);
+      ctrl.style.cssText = 'flex-direction: column; align-items: stretch; min-width: 240px; gap: 6px;';
+      var dirVal = el('div', 'set-dl-dir', '读取中…');
+      var btnRow = el('div');
+      btnRow.style.cssText = 'display: flex; gap: 8px;';
+      var btnChange = el('button', 'eq-preset', '更改');
+      var btnReset = el('button', 'eq-preset', '默认');
+      btnChange.style.cssText = 'border-radius: 7px; padding: 4px 12px; font-size: 12px; border: 1px solid var(--line); background: var(--bg3); color: var(--text); cursor: pointer;';
+      btnReset.style.cssText = btnChange.style.cssText;
+      btnRow.appendChild(btnChange);
+      btnRow.appendChild(btnReset);
+      ctrl.appendChild(dirVal);
+      ctrl.appendChild(btnRow);
       row.appendChild(ctrl);
       s0.appendChild(row);
-      s0.appendChild(el('div', 'set-hint', '流媒体下载的保存位置，与流媒体面板的下载目录同步'));
       // 异步读取当前目录（主进程默认：系统音乐文件夹/AnniePlayerSVLX Downloads）
       if (window.mine && window.mine.streamDownloadDir) {
-        window.mine.streamDownloadDir().then(function (dir) { val.textContent = dir || '（默认）'; val.title = dir; }).catch(function () { val.textContent = '（读取失败）'; });
+        window.mine.streamDownloadDir().then(function (dir) { dirVal.textContent = dir || '（默认）'; dirVal.title = dir; }).catch(function () { dirVal.textContent = '（读取失败）'; });
       }
       btnChange.onclick = async function () {
         try {
           var r = await window.mine.streamSetDownloadDir();
           if (!r || r.canceled) return;
-          val.textContent = r.dir; val.title = r.dir;
-        } catch (e) { val.textContent = '（失败：' + (e && e.message || e) + '）'; }
+          dirVal.textContent = r.dir; dirVal.title = r.dir;
+        } catch (e) { dirVal.textContent = '（失败：' + (e && e.message || e) + '）'; }
       };
       btnReset.onclick = async function () {
         try {
           var dir = await window.mine.streamResetDownloadDir();
-          val.textContent = dir; val.title = dir;
+          dirVal.textContent = dir; dirVal.title = dir;
         } catch { }
       };
     })();

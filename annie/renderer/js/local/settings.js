@@ -25,7 +25,9 @@
     bufferMs: 150,        // 独占缓冲 50–500ms（默认 150ms：50ms 过小，快速操作时易欠载爆音）
     preload: false,        // 整轨预载到内存
     crossfadeSec: 0.5,       // 交叉淡入 0–10s（0=关闭）
-    loudMode: 'off'        // 响度均衡：off | track | album
+    loudMode: 'off',        // 响度均衡：off | track | album
+    // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
+    downloadDir: ''
   };
   var ui = Object.assign({}, DEFAULTS);
   var saveTimer = null;
@@ -209,6 +211,45 @@
     close.onclick = function () { togglePanel(false); };
     head.appendChild(close);
     panel.appendChild(head);
+
+    // —— 下载设置 ——
+    // 与流媒体面板下载目录同一份配置（主进程 stream-settings.json）；
+    // 这里提供展示 + 更改/默认入口，改动即时同步到流媒体面板。
+    var s0 = section('下载设置');
+    (function () {
+      var row = el('div', 'set-row');
+      var head = el('div', 'set-row-head');
+      var lbl = el('span', 'set-label', '下载目录');
+      var val = el('span', 'set-val', '读取中…');
+      head.appendChild(lbl);
+      head.appendChild(val);
+      row.appendChild(head);
+      var ctrl = el('div', 'set-ctrl');
+      var btnChange = el('button', 'btn-ghost', '更改');
+      var btnReset = el('button', 'btn-ghost', '默认');
+      ctrl.appendChild(btnChange);
+      ctrl.appendChild(btnReset);
+      row.appendChild(ctrl);
+      s0.appendChild(row);
+      s0.appendChild(el('div', 'set-hint', '流媒体下载的保存位置，与流媒体面板的下载目录同步'));
+      // 异步读取当前目录（主进程默认：系统音乐文件夹/AnniePlayerSVLX Downloads）
+      if (window.mine && window.mine.streamDownloadDir) {
+        window.mine.streamDownloadDir().then(function (dir) { val.textContent = dir || '（默认）'; val.title = dir; }).catch(function () { val.textContent = '（读取失败）'; });
+      }
+      btnChange.onclick = async function () {
+        try {
+          var r = await window.mine.streamSetDownloadDir();
+          if (!r || r.canceled) return;
+          val.textContent = r.dir; val.title = r.dir;
+        } catch (e) { val.textContent = '（失败：' + (e && e.message || e) + '）'; }
+      };
+      btnReset.onclick = async function () {
+        try {
+          var dir = await window.mine.streamResetDownloadDir();
+          val.textContent = dir; val.title = dir;
+        } catch { }
+      };
+    })();
 
     // —— 视觉预设 ——
     var s1 = section('视觉预设');

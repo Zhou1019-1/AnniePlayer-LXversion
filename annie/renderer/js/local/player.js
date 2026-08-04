@@ -293,10 +293,42 @@ function updateLibNav() {
 }
 
 /* V1.1.1：切回粒子舞台时，索引自动定位到正在播放的文件
- * （进入其所在文件夹的曲目视图，并滚动到播放行）；流媒体曲目不入库则保持现状 */
+ * （进入其所在文件夹的曲目视图，并滚动到播放行）；流媒体曲目不入库则保持现状
+ * beta0.0.3 移植：O(1) 索引查找；网格视图自动切换为平铺视图；平滑滚动 + 高亮闪烁 */
+
+// beta0.0.3 移植：曲库路径索引（path → track），O(1) 查找，替代全表线性扫描。
+// 在 tracks 变更点增量维护；size 不一致时惰性重建兜底。
+state.libIndex = new Map();
+function rebuildLibIndex() {
+  state.libIndex.clear();
+  const ts = state.library.tracks || [];
+  for (let i = 0; i < ts.length; i++) state.libIndex.set(ts[i].path, ts[i]);
+}
+function libHas(path) {
+  if (state.libIndex.size !== (state.library.tracks || []).length) rebuildLibIndex();
+  return state.libIndex.has(path);
+}
+
+function flashPlayingRowLegacy(attempts) {
+  const box = $('#track-list');
+  const row = box && box.querySelector('.track-row[data-path="' + String(state.currentPath).replace(/"/g, '\\"') + '"]');
+  if (row) {
+    row.classList.remove('locate-flash');
+    void row.offsetWidth; // 重启动画
+    row.classList.add('locate-flash');
+    setTimeout(() => row.classList.remove('locate-flash'), 2000);
+  } else if ((attempts || 0) < 4) {
+    setTimeout(() => flashPlayingRowLegacy((attempts || 0) + 1), 300);
+  }
+}
+
 async function locatePlayingLegacy() {
-  if (!state.currentPath || state.viewMode === 'grid') return;
-  if (!state.library.tracks.some(t => t.path === state.currentPath)) return;
+  if (!state.currentPath) return false;
+  if (!libHas(state.currentPath)) return false; // O(1) 索引
+  if (state.viewMode === 'grid') { // 网格视图无曲目列表，切到平铺视图再定位
+    state.viewMode = 'tree';
+    if (window.annieSettings) { annieSettings.ui.viewMode = 'tree'; annieSettings.save(); }
+  }
   const dir = state.currentPath.replace(/[\\/][^\\/]+$/, '');
   state.libNav.mode = 'tracks';
   state.libNav.folder = dir;
@@ -304,17 +336,29 @@ async function locatePlayingLegacy() {
   await renderTracks();
   updateLibNav();
   if (lv) {
-    const i = lv.rows.findIndex(r => r.type === 'track' && r.t.path === state.currentPath);
-    if (i >= 0) {
+    const i = lv.pathIdx.get(state.currentPath); // O(1) 索引
+    if (i !== undefined) {
       const box = $('#track-list');
-      box.scrollTop = Math.max(0, lv.pos[i] - box.clientHeight / 2);
+      box.scrollTo({ top: Math.max(0, lv.pos[i] - box.clientHeight / 2), behavior: 'smooth' });
       renderVirtualWindow();
+      setTimeout(() => flashPlayingRowLegacy(0), 350);
     }
   }
+  return true;
 }
 document.addEventListener('annie-theme-changed', (e) => {
   if (e.detail && e.detail.theme === 'legacy') locatePlayingLegacy();
 });
+
+/* beta0.0.3 移植：一键定位当前播放文件（双主题分发）。
+ * FB2K 主题走 annieFb2kLocate（树展开+列表定位），粒子舞台走本文件 locatePlayingLegacy。 */
+window.annieLocatePlaying = () => {
+  if (!state.currentPath) return;
+  if (window.annieTheme && annieTheme.current === 'fb2k' && window.annieFb2kLocate) window.annieFb2kLocate();
+  else locatePlayingLegacy();
+};
+const btnLocate = $('#btn-locate');
+if (btnLocate) btnLocate.onclick = () => window.annieLocatePlaying();
 
 function renderFolderGrid() {
   const roots = buildFolderTree();
@@ -579,6 +623,10 @@ function virtualRenderList(rows) {
     });
   }
   lv.rows = rows;
+  // beta0.0.3 移植：路径 → 行号 O(1) 索引（定位播放行时替代 findIndex 线性扫描）
+  const pIdx = new Map();
+  for (let ri = 0; ri < rows.length; ri++) if (rows[ri].type === 'track') pIdx.set(rows[ri].t.path, ri);
+  lv.pathIdx = pIdx;
   lv.pos = new Float64Array(rows.length + 1);
   let y = 0;
   for (let i = 0; i < rows.length; i++) { lv.pos[i] = y; y += rows[i].type === 'group' ? LV_GROUP_H : LV_ROW_H; }
@@ -849,14 +897,24 @@ function updateBpChip(d) {
   const chip = document.getElementById('bp-chip');
   if (!chip) return;
   chip.classList.remove('hidden');
+  // V1.1.9：共享模式（独占开关熄灭）下物理上不可能 bit-perfect——系统混音器必然重采样，
+  // 引擎的 bitPerfect 只代表"引擎自身未重采样"：圆点熄灭（灰、无发光）+ 文字标注共享。
+  const isShared = !(typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true);
   const isDsd = (d.codec || '').toLowerCase().includes('dsd') || d.bitDepth === 1;
   const inFmt = isDsd
     ? `DSD ${(d.requestedRate / 2822400).toFixed(0)}x`
     : `${d.requestedRate / 1000}kHz/${d.bitDepth || '?'}bit`;
-  document.getElementById('bp-text').textContent = `${inFmt} → ${d.outFormat}`;
-  chip.classList.toggle('ok', !!d.bitPerfect);
-  chip.classList.toggle('warn', !d.bitPerfect);
-  chip.title = d.bitPerfect ? 'Bit-perfect 源码率直通（无重采样）' : (d.reason || '非直通');
+  const bp = isShared ? false : !!d.bitPerfect; // 共享模式一律非直通
+  chip.classList.toggle('ok', bp);
+  chip.classList.toggle('warn', !bp && !isShared); // 共享模式：两态都不亮（灰点熄灭）
+  chip.classList.toggle('off', isShared); // V1.1.9：共享模式熄灭态
+  // 文字：共享模式显式标注（旧实现只有 inFmt→outFormat，看不出直通状态）
+  document.getElementById('bp-text').textContent = isShared
+    ? `共享 · ${inFmt} → ${d.outFormat}`
+    : `${inFmt} → ${d.outFormat}`;
+  chip.title = isShared
+    ? '共享输出（非直通）：系统混音器会重采样到设备格式；如需 bit-perfect 请点亮独占开关'
+    : (bp ? 'Bit-perfect 源码率直通（无重采样）' : (d.reason || '非直通'));
 }
 
 /* ---------------- 播放 ---------------- */
@@ -908,8 +966,14 @@ async function playAt(i, offsetSec = 0) {
     setFormatChips([{ text: '播放失败: ' + e.message, cls: 'warn' }]);
   }
   showMeta(t.path);
-  // 触发可视化分析（波形 / 频谱 / 无损检测）
-  if (window.annieViz) window.annieViz.analyze(playPath, null);
+  // 触发可视化分析（波形 / 频谱 / 无损检测）。
+  // V1.1.9：延后 1.2s 启动——切歌瞬间引擎 ffmpeg 解码与分析 ffmpeg 同时全速解码会
+  // 抢磁盘/CPU，导致分析首批帧延迟随机波动（频谱"渐进 vs 从无到有"差异根因）。
+  // 延后等引擎解码进入稳态后，分析稳定快速启动。
+  if (window.annieViz) {
+    const _p = playPath;
+    setTimeout(() => { if (state.currentPath === _p || state.currentStream?.url === _p) window.annieViz.analyze(_p, null); }, 1200);
+  }
 }
 
 /* ---------------- 流媒体播放入口（由 streaming.js 调用） ---------------- */
@@ -964,8 +1028,11 @@ window.annieStreamPlay = async function (track) {
     } else $('#thumb-cover').src = track.cover;
   }
   if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
-  // 可视化分析（ffmpeg 拉流解码）
-  if (window.annieViz) window.annieViz.analyze(track.url, track.headers);
+  // 可视化分析（ffmpeg 拉流解码）——V1.1.9：延后 1.2s（同 playAt，避免双 ffmpeg 抢资源）
+  if (window.annieViz) {
+    const _u = track.url;
+    setTimeout(() => { if (state.currentStream?.url === _u) window.annieViz.analyze(_u, track.headers); }, 1200);
+  }
 };
 
 async function showMeta(p) {
@@ -1040,23 +1107,33 @@ window.mine.onEngineEvent((event, d) => {
       break;
     case 'format': {
       state.backendKind = d.backend;
+      // V1.1.9：共享模式（独占开关熄灭）下系统混音器必然重采样，不显示"源码率直通"
+      const isShared = !(typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true);
       const chips = [
         { text: `${d.codec || '?'} ${d.bitDepth ? d.bitDepth + 'bit' : ''}`.trim(), cls: '' },
         { text: `${d.requestedRate / 1000}kHz`, cls: 'gold' },
-        { text: `${d.backend === 'asio' ? 'ASIO' : 'WASAPI 独占'}`, cls: 'gold' },
+        { text: `${d.backend === 'asio' ? 'ASIO' : (isShared ? 'WASAPI 共享' : 'WASAPI 独占')}`, cls: 'gold' },
         { text: d.device || '', cls: '' },
       ];
-      if (d.resampled) chips.push({ text: `已重采样到 ${d.sampleRate / 1000}kHz`, cls: 'warn' });
+      if (isShared) chips.push({ text: '共享模式（系统重采样）', cls: 'warn' });
+      else if (d.resampled) chips.push({ text: `已重采样到 ${d.sampleRate / 1000}kHz`, cls: 'warn' });
       else chips.push({ text: '源码率直通', cls: 'gold' });
       setFormatChips(chips);
       updateBpChip(d); // Pro：Bit-perfect 直通状态
       window.__lastFormat = d; // Pro：Now Playing 技术信息复用
-      $('#tb-backend').textContent = `${d.backend === 'asio' ? 'ASIO' : 'WASAPI 独占'} · ${d.device || ''}`;
-      $('#tb-backend').classList.add('live');
+      // V1.1.9：徽章联动独占开关——独占点亮（金黄 live）、共享熄灭（灰色）
+      const isExcl = typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true;
+      $('#tb-backend').textContent = `${d.backend === 'asio' ? 'ASIO' : (isExcl ? 'WASAPI 独占' : 'WASAPI 共享')} · ${d.device || ''}`;
+      $('#tb-backend').classList.toggle('live', isExcl);
       break;
     }
     case 'backend':
-      $('#tb-backend').textContent = `${d.kind === 'asio' ? 'ASIO' : 'WASAPI 独占'} · ${d.device || ''}`;
+      // V1.1.9：徽章联动独占开关
+      {
+        const isExcl = typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true;
+        $('#tb-backend').textContent = `${d.kind === 'asio' ? 'ASIO' : (isExcl ? 'WASAPI 独占' : 'WASAPI 共享')} · ${d.device || ''}`;
+        $('#tb-backend').classList.toggle('live', isExcl);
+      }
       break;
     case 'engine-dead':
       $('#tb-backend').textContent = '引擎已退出';

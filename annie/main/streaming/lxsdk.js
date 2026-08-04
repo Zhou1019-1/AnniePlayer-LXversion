@@ -149,8 +149,90 @@ async function verifyUrlFormat(url, type) {
 
 /* ---------------- 对外 API ---------------- */
 
+/** tx 免签搜索：洛雪内置的 DoSearchForQQMusicMobile 已被 QQ 风控（req.code=2001 反复重试后"搜索失败"）。
+ * 改用老版免签接口 c.y.qq.com/soso/fcgi-bin/client_search_cp（实测可用，含 size128/320/flac 与 songmid/media_mid）。 */
+async function txSearchFallback(keywords, page, limit) {
+  const url = 'https://c.y.qq.com/soso/fcgi-bin/client_search_cp' +
+    '?format=json&p=' + (page || 1) + '&n=' + (limit || 30) +
+    '&w=' + encodeURIComponent(keywords) +
+    '&cr=1&g_tk=5381&loginUin=0&hostUin=0&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq&needNewCode=0&remoteplace=txt.yqq.center';
+  const { httpFetch } = require('./lx-http');
+  const resp = await httpFetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Referer': 'https://y.qq.com/' },
+  }).promise;
+  const body = resp && resp.body;
+  if (!body || body.code !== 0 || !body.data || !body.data.song || !body.data.song.list) {
+    throw new Error('tx 搜索失败: ' + ((body && body.code) || 'no-data'));
+  }
+  const rawList = body.data.song.list || [];
+  const list = [];
+  for (const item of rawList) {
+    if (!item.songmid || !item.strMediaMid || !item.media_mid) continue;
+    const types = [];
+    const _types = {};
+    const file = {
+      size_128mp3: item.size128 || 0,
+      size_320mp3: item.size320 || 0,
+      size_flac: item.sizeflac || 0,
+      size_hires: item.sizehires || 0,
+      media_mid: item.strMediaMid || item.media_mid,
+    };
+    if (file.size_128mp3 != 0) { types.push({ type: '128k', size: fmtSize(file.size_128mp3) }); _types['128k'] = { size: fmtSize(file.size_128mp3) }; }
+    if (file.size_320mp3 != 0) { types.push({ type: '320k', size: fmtSize(file.size_320mp3) }); _types['320k'] = { size: fmtSize(file.size_320mp3) }; }
+    if (file.size_flac != 0) { types.push({ type: 'flac', size: fmtSize(file.size_flac) }); _types.flac = { size: fmtSize(file.size_flac) }; }
+    if (file.size_hires != 0) { types.push({ type: 'flac24bit', size: fmtSize(file.size_hires) }); _types.flac24bit = { size: fmtSize(file.size_hires) }; }
+    const singers = (item.singer || []).map(s => s.name).filter(Boolean);
+    const albumMid = item.albummid || '';
+    const albumName = item.albumname || '';
+    list.push({
+      singer: singers.join(','),
+      name: item.songname || '',
+      albumName,
+      albumId: albumMid,
+      source: 'tx',
+      interval: fmtInterval(item.interval),
+      songId: item.songid != null ? String(item.songid) : '',
+      albumMid,
+      strMediaMid: file.media_mid,
+      songmid: item.songmid,
+      img: albumMid ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg` : '',
+      types, _types, typeUrl: {},
+      // 附加：碟号/曲目号/发行时间（免签接口独有，写下载标签用）
+      belongCD: item.belongCD != null ? String(item.belongCD) : '',
+      cdIdx: item.cdIdx != null ? String(item.cdIdx) : '',
+      pubtime: item.pubtime || 0,
+    });
+  }
+  const total = body.data.song.totalnum || list.length;
+  return { list, total, allPage: Math.ceil(total / (limit || 30)) || 1 };
+}
+
+function fmtSize(bytes) {
+  if (!bytes || bytes <= 0) return '0B';
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(2) + 'MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + 'KB';
+  return bytes + 'B';
+}
+
+function fmtInterval(sec) {
+  sec = Number(sec) || 0;
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+
 async function search({ provider, keywords, page = 1, limit = 30 }) {
   if (!PROVIDERS.includes(provider)) throw new Error('未知平台: ' + provider);
+  if (provider === 'tx') {
+    // V1.1.10：tx 内置搜索被风控 → 免签接口替代
+    const r = await txSearchFallback(keywords, page, limit);
+    return {
+      provider,
+      songs: (r.list || []).map((info) => normalize(provider, info)),
+      total: r.total || 0,
+      allPage: r.allPage || 1,
+      page,
+    };
+  }
   const sdk = await loadSdk();
   const mod = sdk[provider];
   const r = await mod.musicSearch.search(keywords, page, limit);
@@ -269,4 +351,139 @@ async function hotSearch({ provider }) {
   } catch { return { provider, list: [] }; }
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, normalize };
+/* ---------------- 专辑详情（写下载元数据用） ----------------
+ * 下载后写标签需要曲目号/碟号/发行时间/专辑艺术家。搜索结果的 musicInfo 不含这些字段，
+ * 需调各平台专辑详情接口补全。此处尽力而为：取不到就返回空字段，绝不抛错阻塞下载。
+ * 字段映射（实测各平台专辑详情接口）：
+ *   - kg   getAlbumInfo → publish_date；专辑歌曲列表有序 → track = index+1
+ *   - kw   albuminfo → musiclist 有序 → track；body 顶层含 album 名/artist
+ *   - mg   queryAlbumSong → songList 有序 → track；getAlbumInfo → singer
+ *   - tx   musicu.fcg get_album_detail → 歌曲列表 + 专辑信息
+ *   - wy   weapi/v3/song/detail → songs[0] 的 no/cd/publishTime 直接可用（无需专辑接口）
+ */
+async function albumDetail({ provider, song }) {
+  const meta = (song && song.meta) || song || {};
+  const out = { provider, track: '', disc: '', date: '', albumArtist: '', albumId: '', albumName: '' };
+  try {
+    switch (provider) {
+      case 'wy': return await wyAlbumDetail(meta, out);
+      case 'tx': return await txAlbumDetail(meta, out);
+      case 'kg': return await kgAlbumDetail(meta, out);
+      case 'kw': return await kwAlbumDetail(meta, out);
+      case 'mg': return await mgAlbumDetail(meta, out);
+      default: return out;
+    }
+  } catch { return out; }
+}
+
+async function wyAlbumDetail(meta, out) {
+  // 网易：歌曲详情 raw songs[0] 直接含 no/cd/publishTime/al（musicInfo 未挂到 wy 模块，需直接 import）
+  const songmid = meta.songmid != null ? meta.songmid : meta.id;
+  if (songmid == null) return out;
+  const mod = await import(pathToFileURL(path.join(__dirname, 'lx-sdk/wy/musicInfo.js')).href);
+  const raw = await mod.default(songmid).promise;
+  if (raw && raw.no != null) out.track = String(raw.no);
+  if (raw && raw.cd != null) out.disc = String(raw.cd);
+  if (raw && raw.publishTime) out.date = new Date(raw.publishTime).toISOString().slice(0, 10);
+  if (raw && raw.al) { out.albumId = raw.al.id != null ? String(raw.al.id) : ''; out.albumName = raw.al.name || ''; }
+  return out;
+}
+
+async function txAlbumDetail(meta, out) {
+  // V1.1.10：新免签搜索接口的 meta 已带 cdIdx(曲目号)/belongCD(碟号)/pubtime(发行时间)——直接优先使用
+  if (meta.cdIdx != null) out.track = String(meta.cdIdx);
+  if (meta.belongCD != null) out.disc = String(meta.belongCD);
+  if (meta.pubtime) out.date = new Date(meta.pubtime * 1000).toISOString().slice(0, 10);
+  // QQ：musicu.fcg get_album_detail 拿专辑信息（专辑名/专辑艺术家——搜索 meta 已有 albumName，这里补 albumArtist/date）
+  const albumId = meta.albumId || meta.albumMid || meta.album?.mid;
+  if (!albumId) return out;
+  const { httpFetch } = require('./lx-http');
+  const resp = await httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+    method: 'post',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+    body: {
+      comm: { ct: '19', cv: '1859', uin: '0' },
+      req: { module: 'music.musichallAlbum.AlbumInfoServer', method: 'GetAlbumDetail', param: { albumMid: albumId } },
+    },
+  }).promise;
+  const data = resp && resp.body && resp.body.req && resp.body.req.data;
+  if (!data) return out;
+  if (data.albumInfo) {
+    out.albumName = data.albumInfo.name || out.albumName;
+    out.albumArtist = (data.albumInfo.singer && data.albumInfo.singer.map(s => s.name).join(', ')) || '';
+    out.date = out.date || data.albumInfo.aDate || data.albumInfo.time_public || '';
+    out.albumId = String(albumId);
+  }
+  return out;
+}
+
+async function kgAlbumDetail(meta, out) {
+  const albumId = meta.albumId || meta.album_id;
+  if (!albumId) return out;
+  const sdk = await loadSdk();
+  const album = (await import(pathToFileURL(path.join(__dirname, 'lx-sdk/kg/album.js')).href)).default;
+  const info = await album.getAlbumInfo(albumId);
+  if (info && info.name) out.albumName = info.name;
+  // 专辑歌曲列表（有序）定位当前歌 → 曲目号
+  const detail = await album.getAlbumDetail(albumId, 1, 500).catch(() => null);
+  if (detail && Array.isArray(detail.list)) {
+    const hash = meta.hash;
+    const idx = detail.list.findIndex(s => s.hash === hash);
+    if (idx >= 0) out.track = String(idx + 1);
+  }
+  return out;
+}
+
+async function kwAlbumDetail(meta, out) {
+  const albumId = meta.albumId || meta.albumid;
+  if (!albumId) return out;
+  const { httpFetch } = require('./lx-http');
+  const resp = await httpFetch(`http://search.kuwo.cn/r.s?pn=0&rn=1000&stype=albuminfo&albumid=${encodeURIComponent(albumId)}&show_copyright_off=0&encoding=utf&vipver=MUSIC_9.1.0`).promise;
+  // kw 响应是 GBK 编码（洛雪 decodeName 用 iconv 处理）。lx-http 保留 raw Buffer，直接按 GBK 解码。
+  const raw = resp && resp.raw;
+  if (!raw || !raw.length) return out;
+  // 实测：kw albuminfo 响应声明 charset=utf-8，原始字节已是 UTF-8（"周杰伦"=e591a8...）。
+  // 洛雪 decodeName 的 GBK 处理是针对旧接口；此接口直接按 UTF-8 解码即可。
+  const body = raw.toString('utf8');
+  try {
+    // 该接口返回类 JSON（单引号包裹）。宽松解析关键字段：
+    const mAlbum = body.match(/'album':'([^']*)'/);
+    const mArtist = body.match(/'artist':'([^']*)'/);
+    const mAlbumid = body.match(/'albumid':'([^']*)'/);
+    if (mAlbum) out.albumName = mAlbum[1];
+    if (mArtist) out.albumArtist = mArtist[1];
+    if (mAlbumid) out.albumId = mAlbumid[1];
+    // 歌曲列表（有序）定位当前歌 → 曲目号
+    const songmid = meta.songmid;
+    if (songmid != null) {
+      const mm = body.match(/'musiclist':\[(.*)\]/);
+      if (mm && mm[1]) {
+        const parts = mm[1].split('},{');
+        for (let i = 0; i < parts.length; i++) {
+          const idm = parts[i].match(/'id':'([^']*)'/);
+          if (idm && String(idm[1]) === String(songmid)) { out.track = String(i + 1); break; }
+        }
+      }
+    }
+  } catch { }
+  return out;
+}
+
+async function mgAlbumDetail(meta, out) {
+  const albumId = meta.albumId;
+  if (!albumId) return out;
+  const sdk = await loadSdk();
+  const album = (await import(pathToFileURL(path.join(__dirname, 'lx-sdk/mg/album.js')).href)).default;
+  const info = await album.getAlbumInfo(albumId).catch(() => null);
+  if (info && info.author) out.albumArtist = info.author;
+  if (info && info.name) out.albumName = info.name;
+  const detail = await album.getAlbumDetail(albumId, 1).catch(() => null);
+  if (detail && Array.isArray(detail.list)) {
+    const copyrightId = meta.copyrightId;
+    const idx = detail.list.findIndex(s => String(s.copyrightId) === String(copyrightId));
+    if (idx >= 0) out.track = String(idx + 1);
+  }
+  return out;
+}
+
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, normalize };

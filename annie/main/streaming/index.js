@@ -12,6 +12,7 @@ const path = require('path');
 const os = require('os');
 const sources = require('./sources');
 const lxsdk = require('./lxsdk');
+const tagWriter = require('../tagWriter');
 
 const PROVIDERS = lxsdk.PROVIDERS;
 
@@ -140,7 +141,56 @@ async function download(params, onProgress) {
     throw e;
   }
   await new Promise((res) => out.end(res));
-  return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType };
+
+  // V1.1.10：下载后写元数据——封面/标题/歌手/专辑/专辑艺术家/曲目号/碟号/发行时间 + 旁挂 .lrc 歌词。
+  // 全部尽力而为：任何一步失败都不阻塞下载成功返回。
+  const tagged = await writeDownloadedTags(dest, song, params.provider).catch(() => false);
+
+  return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType, tagged: !!tagged };
+}
+
+/**
+ * 下载后处理：写音频标签（含封面）+ 旁挂 .lrc 歌词。
+ * 元数据来源：song 已有字段（标题/歌手/专辑）+ 专辑详情接口补全（曲目号/碟号/发行时间/专辑艺术家）+ 歌词接口。
+ * @returns {Promise<boolean>} 是否成功写入标签
+ */
+async function writeDownloadedTags(dest, song, provider) {
+  try {
+    // 1) 补全专辑详情元数据（尽力而为，接口失败返回空字段）
+    const detail = await lxsdk.albumDetail({ provider, song }).catch(() => ({}));
+    // 2) 拉歌词（原始 LRC + 翻译）
+    let lrc = '';
+    try {
+      const lr = await lxsdk.lyric({ provider, song });
+      if (lr && lr.lrc) lrc = lr.lrc;
+    } catch { }
+    // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全
+    let coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
+    if (!coverUrl) {
+      try {
+        const pc = await lxsdk.getPic({ provider, song });
+        if (pc && pc.url) coverUrl = pc.url;
+      } catch { }
+    }
+    // 4) 写标签：专辑/专辑艺术家优先取渲染层 song（正确 UTF-8），detail 仅作回退补全
+    const tagRes = await tagWriter.writeTags({
+      dest,
+      title: song && (song.name || (song.meta && song.meta.name)),
+      artist: song && (song.artist || (song.meta && song.meta.singer)),
+      album: (song && (song.album || (song.meta && song.meta.albumName))) || (detail && detail.albumName),
+      albumArtist: (detail && detail.albumArtist) || (song && song.artist),
+      track: detail && detail.track,
+      disc: detail && detail.disc,
+      date: detail && detail.date,
+      coverUrl,
+    }).catch(() => ({ ok: false }));
+    // 5) 旁挂 .lrc（有歌词才写）
+    if (lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric: '' });
+    return tagRes && tagRes.ok;
+  } catch (e) {
+    console.warn('[streaming] 写下载元数据失败(不阻塞):', e && e.message);
+    return false;
+  }
 }
 
 module.exports = {

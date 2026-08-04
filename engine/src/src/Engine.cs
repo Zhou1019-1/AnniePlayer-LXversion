@@ -13,6 +13,7 @@ public sealed class Engine
     private IOutputBackend? _backend;
     private string _backendKind = "wasapi";
     private string? _backendDeviceId;   // wasapi: MMDevice ID；asio: 驱动名
+    private bool _exclusive = true;     // V1.1.9：WASAPI 独占（默认）/共享
 
     private TrackInfo? _track;
     private FfmpegPcmStream? _pcm;
@@ -21,6 +22,7 @@ public sealed class Engine
     private int _decodeRate;
     private bool _resampled;
     private bool _playing;
+    private bool _pausing;               // V1.1.9：淡出进行中（锁外等待，防 resume 竞争）
     private bool _ended;
     private float _gain = 1.0f;
     private double[] _eqGains = new double[EqChain.BandCount]; // EXP 7.28：15 段 EQ 增益（dB）
@@ -48,6 +50,9 @@ public sealed class Engine
     private string? _headers;          // 当前网络流的 HTTP 头（seek 重放时复用）
     private int _playGeneration;       // 播放代际：递增以识别新播放请求，防止竞态
     private readonly object _playGate = new(); // 播放互斥锁：串行化设备关键区（StopAll→打开→预缓冲→启动）
+    // V1.1.10：设备流是否处于暂停（Pause 已 SafeStop 但句柄保留）。PlayCrossfade 需要据此
+    // 恢复设备流——否则暂停后切歌 FadeTo 只换 mixer 源、不重启 WasapiOut → 无声但 UI 报 playing。
+    private bool _streamPaused;
 
     private readonly Timer _positionTimer;
 
@@ -87,7 +92,7 @@ public sealed class Engine
                 current = new { kind = _backendKind, id = _backendDeviceId }
             },
 
-            "devices.select" => SelectBackend(p["kind"]?.GetValue<string>() ?? "wasapi", p["id"]?.GetValue<string>()),
+            "devices.select" => SelectBackend(p["kind"]?.GetValue<string>() ?? "wasapi", p["id"]?.GetValue<string>(), p["exclusive"]?.GetValue<bool>() ?? true),
 
             "probe" => ProbeWithCache(Req(p, "path")),
 
@@ -137,7 +142,7 @@ public sealed class Engine
     private static string Req(JsonObject p, string key)
         => p[key]?.GetValue<string>() ?? throw new ArgumentException("缺少参数: " + key);
 
-    private object SelectBackend(string kind, string? id)
+    private object SelectBackend(string kind, string? id, bool exclusive = true)
     {
         StopAll(emitState: false);
         lock (_gate)
@@ -146,6 +151,7 @@ public sealed class Engine
             _backend = null;
             _backendKind = kind;
             _backendDeviceId = id;
+            _exclusive = exclusive; // V1.1.9：WASAPI 独占/共享（共享=系统混音器格式，不切设备）
 
             if (kind == "asio")
             {
@@ -158,12 +164,12 @@ public sealed class Engine
             {
                 var dev = (id is null ? WasapiExclusiveBackend.GetDefault() : WasapiExclusiveBackend.FindById(id))
                     ?? throw new InvalidOperationException("WASAPI 设备不存在: " + id);
-                _backend = new WasapiExclusiveBackend(dev);
+                _backend = new WasapiExclusiveBackend(dev, exclusive);
                 _backendDeviceId = dev.ID;
             }
         }
-        _rpc.Emit("backend", new { kind = _backendKind, device = _backend!.DeviceName });
-        return new { kind = _backendKind, id = _backendDeviceId };
+        _rpc.Emit("backend", new { kind = _backendKind, device = _backend!.DeviceName, exclusive });
+        return new { kind = _backendKind, id = _backendDeviceId, exclusive };
     }
 
     private IOutputBackend EnsureBackend()
@@ -437,6 +443,7 @@ public sealed class Engine
                     _track = info; _pcm = pcm; _source = source;
                     _offsetSec = offsetSec; _decodeRate = rate; _resampled = resampled;
                     _playing = true; _ended = false; _headers = headers;
+                    _streamPaused = false; // 新开设备流，暂停标志清除
                     ApplyDspLocked(); // Pro：挂载自动前级/限幅器/响度增益
                 }
                 PrebufferAndStart(backend, pcm, rate, channels, gen, quickStart);
@@ -543,6 +550,7 @@ public sealed class Engine
             _dsf = dsf; _dopSource = dop; _dopActive = true;
             _track = new TrackInfo(path, dsf.DurationSec, dsf.DsdRate, dsf.Channels, "dsd", 1);
             _offsetSec = offsetSec; _playing = true; _ended = false;
+            _streamPaused = false; // 新开设备流，暂停标志清除
         }
         wb.Play();
         _rpc.Emit("format", new
@@ -571,7 +579,9 @@ public sealed class Engine
     /// <summary>crossfade 切歌：设备流保持打开，旧曲淡出 + 新曲淡入。条件不满足时回退普通播放。</summary>
     private object PlayCrossfade(string path, string? headers, double loudGain)
     {
-        if (_mixer is null || _backend is null || !_playing || _dopActive
+        // V1.1.9：去掉 !_playing 条件——歌曲自然结束后 _playing=false 但 mixer/设备仍在，
+        // 此时切歌应继续走 crossfade（FadeTo 无缝衔接）；旧实现回退普通 Play 触发设备开关。
+        if (_mixer is null || _backend is null || _dopActive
             || DsfReader.IsDsf(path) || _crossfadeSec <= 0)
             return Play(path, 0, headers, loudGain);
         if (!FfmpegPcmStream.IsUrl(path) && !File.Exists(path)) throw new FileNotFoundException("文件不存在: " + path);
@@ -581,11 +591,13 @@ public sealed class Engine
         // V1.1.4：先探测；若与当前 mixer 采样率/声道不匹配则回退普通 Play——
         // mixer 重建后无法重绑后端设备（WasapiOut 绑定固定 provider），否则无声卡住
         //（流媒体 44.1k → 本地 96k 等跨采样率切歌会触发）
+        // V1.1.9：回退必须带 quickStart（150ms 预缓冲边播边缓冲）——旧实现走完整预缓冲
+        //（≥0.3s 起步，网络流更久），跨格式切歌"不跟手"的元凶之一。
         var info = FfmpegPcmStream.Probe(path, headers);
         if (info.SampleRate != _mixer!.WaveFormat.SampleRate || info.Channels != _mixer.Channels)
         {
-            Console.Error.WriteLine($"[engine] crossfade 格式不匹配({info.SampleRate}/{info.Channels} vs {_mixer.WaveFormat.SampleRate}/{_mixer.Channels})，回退普通播放");
-            return Play(path, 0, headers, loudGain, knownInfo: info);
+            Console.Error.WriteLine($"[engine] crossfade 格式不匹配({info.SampleRate}/{info.Channels} vs {_mixer.WaveFormat.SampleRate}/{_mixer.Channels})，回退快速播放");
+            return Play(path, 0, headers, loudGain, knownInfo: info, quickStart: true);
         }
 
         lock (_playGate)
@@ -611,9 +623,21 @@ public sealed class Engine
                 oldPcm = _pcm;
                 _pcm = pcm; _source = source; _track = info;
                 _offsetSec = 0; _decodeRate = mixRate; _ended = false; _headers = headers;
+                // V1.1.9：必须恢复 _playing=true——V1.1.9 让 ended 后 mixer 保留，但
+                // PlayCrossfade 漏设 _playing，导致：① 新歌播完 TickPosition 的 ended 判定
+                // （if (_playing && ...)）永不触发 → 不自动连播；② 反复点击时同一首/同一组歌
+                // 被反复播放（长音频自然结束后尤其明显）。OpenWithChannels/TryPlayDop 都有，
+                // 唯独此分支遗漏。
+                _playing = true;
                 ApplyDspLocked();
             }
             mixer.FadeTo(source, _crossfadeSec);
+            // V1.1.10：暂停后切歌——设备流已被 Pause SafeStop（句柄保留、流已停），
+            // FadeTo 只换 mixer 源不重启设备流 → 无声但 UI 已报 playing（用户实测：
+            // 暂停时切歌不播放，按钮却是播放状态，需再点播放键才恢复）。
+            // 与 Resume 同机制：Play() 从 Stopped 启动新线程重新 Start，干净恢复。
+            // 注意：必须先 FadeTo 再 Play——mixer 是新源唯一消费者，先起流会读旧源。
+            if (_streamPaused) { _streamPaused = false; _backend.Play(); }
             // 旧解码进程在淡入完成后释放（淡出期间仍在被读取）
             _ = Task.Run(async () => { await Task.Delay((int)(_crossfadeSec * 1000) + 1500); try { oldPcm?.Dispose(); } catch { } });
 
@@ -640,22 +664,34 @@ public sealed class Engine
         }
     }
 
+    private long _lastResumeAt; // V1.1.9：暂停/恢复节流时间戳（TickCount64）
+
     private object Pause()
     {
+        bool doPause = false;
         lock (_gate)
         {
             if (_playing && _backend is not null)
             {
-                // V1.1.7：先淡出再停流——瞬间静音会突兀爆音。淡出期间音频线程仍在读取，
-                // 完成后才停设备。
-                // V1.1.8：停流用 SafeStop(dispose:false)（WasapiOut.Stop 干净停流，保留设备句柄），
-                // 不能用真 Pause——独占+事件驱动下缓冲不被填充会下溢，恢复后音频卡顿。
+                // V1.1.7：先淡出再停流——瞬间静音会突兀爆音。淡出期间音频线程仍在读取。
+                // V1.1.9：不在锁内 Sleep——高频连点暂停时，持锁 Sleep(90ms)+SafeStop Wait 会
+                // 让 RPC 线程串行排队，且 SafeStop 的 Stop() 要 Join 音频线程，若音频线程
+                // 正阻塞在 Read（队列空/锁竞争）则持锁等待 = 死锁。改为：锁内只标记淡出，
+                // 锁外等待淡出完成 + 停流。
                 if (_source is not null) _source.BeginFade(0f, FadeMs);
-                Thread.Sleep(FadeMs + 30); // 等待淡出在音频线程完成（~90ms，低频操作可接受）
-                _backend.Pause();
-                _playing = false;
-                _rpc.Emit("state", new { state = "paused" });
+                _pausing = true;
+                doPause = true;
             }
+        }
+        if (doPause)
+        {
+            Thread.Sleep(FadeMs + 30); // 锁外等待淡出在音频线程完成（~90ms）
+            lock (_gate)
+            {
+                _pausing = false;
+                if (_playing) { _backend.Pause(); _playing = false; _streamPaused = true; }
+            }
+            _rpc.Emit("state", new { state = "paused" });
         }
         return new { ok = true };
     }
@@ -664,10 +700,18 @@ public sealed class Engine
     {
         lock (_gate)
         {
+            if (_pausing) return new { ok = true }; // 淡出未完成时忽略恢复（防连点竞争）
             if (!_playing && _backend is not null && _source is not null)
             {
+                // V1.1.9：恢复节流——高频连点暂停/恢复时，两次恢复间至少隔 120ms，
+                // 避免反复 Start/Stop 音频线程导致 WASAPI 事件驱动状态竞争（引擎卡死）
+                var now = Environment.TickCount64;
+                if (_lastResumeAt != 0 && now - _lastResumeAt < 120)
+                    return new { ok = true, throttled = true };
                 _backend.Play();
                 _playing = true;
+                _lastResumeAt = now;
+                _streamPaused = false;
                 // V1.1.7：恢复后淡入（从 0 渐到全增益），避免瞬间音量跳变
                 _source.BeginFade(1f, FadeMs);
                 _rpc.Emit("state", new { state = "playing" });
@@ -840,7 +884,12 @@ public sealed class Engine
             {
                 _playing = false;
                 _positionTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                try { _backend?.Stop(); } catch { }
+                // V1.1.9：crossfade 开启且 mixer 存在时，**保持设备流打开**（mixer 输出静音待命）——
+                // 旧实现歌曲结束就 _backend.Stop()，下一曲 PlayCrossfade 因 !_playing 回退普通 Play，
+                // 触发 StopAll → WASAPI 设备停+开。高频连点+自然结束交替时反复开关设备 = audiodg 假死根因。
+                // 现在：设备保持，下一曲 play.crossfade 直接 FadeTo 无缝衔接。
+                if (_crossfadeSec <= 0 || _mixer is null || _dopActive)
+                    try { _backend?.Stop(); } catch { }
             }
             _rpc.Emit("state", new { state = "ended" });
         }

@@ -308,6 +308,15 @@ function cleanLyric(text) {
 
 async function lyric({ provider, song }) {
   const meta = (song && song.meta) || song || {};
+  // V1.1.10：tx 特判——洛雪 SDK 的 tx.getLyric 只传 songmid 字符串，靠 getMusicInfo(songmid)
+  // 拿数字 songId；但该详情接口已被 QQ 风控（req.code!=0），歌词必失败。
+  // 我们的免签搜索 meta 已带数字 songId，直接用它调 GetPlayLyricInfo + SDK 的 parseLyric 解密。
+  if (provider === 'tx') {
+    try {
+      const lr = await txLyricBySongId(meta);
+      if (lr && lr.lrc) return lr;
+    } catch (e) { console.warn('[lxsdk] tx 歌词获取失败:', e && e.message); }
+  }
   const sdk = await loadSdk();
   const mod = sdk[provider];
   if (!mod) throw new Error('未知平台: ' + provider);
@@ -327,6 +336,33 @@ async function lyric({ provider, song }) {
     } catch { }
   }
   return { provider, lrc: '' };
+}
+
+/** tx 歌词：直接用数字 songId 调 GetPlayLyricInfo（绕过被风控的 getMusicInfo），复用 SDK parseLyric 解密 */
+async function txLyricBySongId(meta) {
+  const songId = meta.songId || meta.songid;
+  if (songId == null || songId === '') return { provider: 'tx', lrc: '' };
+  const { httpFetch } = require('./lx-http');
+  const resp = await httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+    method: 'post',
+    headers: { referer: 'https://y.qq.com', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 Chrome/86.0.4240.198 Safari/537.36' },
+    body: {
+      comm: { ct: '19', cv: '1859', uin: '0' },
+      req: { method: 'GetPlayLyricInfo', module: 'music.musichallSong.PlayLyricInfo', param: { format: 'json', crypt: 1, ct: 19, cv: 1873, interval: 0, lrc_t: 0, qrc: 1, qrc_t: 0, roma: 1, roma_t: 0, songID: Number(songId), trans: 1, trans_t: 0, type: -1 } },
+    },
+  }).promise;
+  const body = resp && resp.body;
+  if (!body || body.code !== 0 || !body.req || body.req.code !== 0) {
+    throw new Error('tx 歌词接口失败: ' + ((body && body.req && body.req.code) || (body && body.code) || 'no-data'));
+  }
+  const data = body.req.data || {};
+  // 复用洛雪 SDK 的 parseLyric（内含 qrc 解密：原生模块 → 纯 JS 3DES 降级）
+  const lyricMod = await import(pathToFileURL(path.join(__dirname, 'lx-sdk/tx/lyric.js')).href);
+  const parsed = await lyricMod.default.parseLyric(data.lyric, data.trans, data.roma);
+  const lrc = (parsed && parsed.lyric) || '';
+  const tlyric = (parsed && parsed.tlyric) || '';
+  if (!lrc && !tlyric) return { provider: 'tx', lrc: '' };
+  return { provider: 'tx', lrc: cleanLyric(lrc), tlyric: cleanLyric(tlyric), rlyric: cleanLyric((parsed && parsed.rlyric) || ''), lxlyric: cleanLyric((parsed && parsed.lxlyric) || '') };
 }
 
 async function getPic({ provider, song }) {

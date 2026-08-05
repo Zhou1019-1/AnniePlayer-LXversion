@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('mine', {
   streamSongUrl: (params) => ipcRenderer.invoke('stream:songUrl', params),
   streamLyric: (params) => ipcRenderer.invoke('stream:lyric', params),
   streamGetPic: (params) => ipcRenderer.invoke('stream:getPic', params),
+  streamCoverProxy: (url) => ipcRenderer.invoke('stream:coverProxy', url),
   streamHotSearch: (params) => ipcRenderer.invoke('stream:hotSearch', params),
 
   // 洛雪式音源管理

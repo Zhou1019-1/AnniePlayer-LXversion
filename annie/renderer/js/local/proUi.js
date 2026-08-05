@@ -40,15 +40,23 @@
 
   function miniTick() {
     if (!miniOn) return;
-    const t = state.queue[state.index];
-    $('#mini-title').textContent = t ? t.name.replace(/\.[^.]+$/, '') : '—';
-    $('#mini-sub').textContent = t ? t.dir : '';
+    const t = nowTrack();
+    // V1.1.10：实时 meta（title/artist/album）优先 state.metaCache——library.metaCache 无这些字段
+    const m = t && !t.url ? (state.metaCache.get(t.path) || {}) : {};
+    const title = m.title || (t && (t.title || (t.name ? t.name.replace(/\.[^.]+$/, '') : '—'))) || '—';
+    const sub = t ? (
+      (m.artist || m.album) ? [m.artist, m.album].filter(Boolean).join(' · ')
+        : (t.url ? [t.artist, t.album].filter(Boolean).join(' · ') : t.dir)
+    ) : '';
+    $('#mini-title').textContent = title;
+    $('#mini-sub').textContent = sub;
     const d = state.duration || 0;
     $('#mini-prog-fill').style.width = d > 0 ? Math.min(100, state.position / d * 100) + '%' : '0%';
     $('#mini-play').textContent = state.playing ? '⏸' : '▶';
-    const coverSrc = npfCoverCache.get(t ? t.path : '') || null;
+    const coverKey = t ? (t.path || t.url) : '';
+    const coverSrc = npfCoverCache.get(coverKey) || null;
     if (coverSrc) $('#mini-cover').src = coverSrc;
-    else if (t) npfLoadCover(t.path); // 触发加载（回填缓存后下轮 tick 生效）
+    else if (t) npfLoadCover(t); // 触发加载（回填缓存后下轮 tick 生效）
   }
 
   async function toggleMini(force) {
@@ -130,26 +138,41 @@
 
   /* ================== Now Playing 全屏信息页 ================== */
   let npf = null, npfOn = false;
-  /* 封面直读 meta（不依赖主题封面元素），按路径缓存 */
+  /* 封面直读 meta（本地）/ track.cover（流媒体），按 path|url 缓存 */
   const npfCoverCache = new Map();
-  function npfLoadCover(path) {
+  /* 当前曲目：流媒体优先（流媒体播放时 index=-1，queue[-1] 为 undefined） */
+  function nowTrack() {
+    return state.currentStream || state.queue[state.index];
+  }
+  function npfLoadCover(track) {
+    const path = track && (track.path || track.url);
     if (!path) return;
     const img = document.getElementById('npf-cover');
     const ph = document.getElementById('npf-cover-ph');
+    const apply = (c) => {
+      npfCoverCache.set(path, c);
+      const cur = nowTrack();
+      if (!npfOn || !cur || (cur.path || cur.url) !== path) return;
+      if (c) { img.src = c; img.style.display = ''; ph.style.display = 'none'; }
+      else { img.style.display = 'none'; ph.style.display = 'flex'; }
+    };
     if (npfCoverCache.has(path)) {
       const c = npfCoverCache.get(path);
       if (c) { img.src = c; img.style.display = ''; ph.style.display = 'none'; }
       else { img.style.display = 'none'; ph.style.display = 'flex'; }
       return;
     }
-    window.mine.meta(path).then(m => {
-      const c = m && m.cover ? m.cover : null;
-      npfCoverCache.set(path, c);
-      const cur = state.queue[state.index];
-      if (!npfOn || !cur || cur.path !== path) return;
-      if (c) { img.src = c; img.style.display = ''; ph.style.display = 'none'; }
-      else { img.style.display = 'none'; ph.style.display = 'flex'; }
-    }).catch(() => { npfCoverCache.set(path, null); });
+    if (track.url && track.cover) {
+      // 流媒体封面：http（kwcdn.kuwo.cn 等）需代理转 dataURL（CSP img-src 拦截）
+      if (/^https?:\/\//i.test(track.cover) && window.mine.streamCoverProxy) {
+        window.mine.streamCoverProxy(track.cover).then(r => apply(r && r.url ? r.url : null)).catch(() => apply(null));
+      } else apply(track.cover);
+    } else {
+      // 本地：优先实时 metaCache（showMeta 已填充 cover dataURL），未命中再 IPC
+      const cached = state.metaCache.get(path);
+      if (cached && cached.cover) { apply(cached.cover); return; }
+      window.mine.meta(path).then(m => apply(m && m.cover ? m.cover : null)).catch(() => apply(null));
+    }
   }
 
   function buildNpf() {
@@ -186,23 +209,30 @@
 
   function npfRefresh() {
     if (!npfOn) return;
-    const t = state.queue[state.index];
-    const mc = t ? (state.library.metaCache[t.path] || {}) : {};
+    const t = nowTrack();
+    // V1.1.10：实时 meta 在 state.metaCache（showMeta 播放时填充，含 title/artist/album/cover），
+    // state.library.metaCache 只有曲库扫描字段（loudness 等）——用错缓存导致全屏无元数据。
+    const mc = t && !t.url ? (state.metaCache.get(t.path) || state.library.metaCache[t.path] || {}) : {};
     const fmt = window.__lastFormat || {};
+    // V1.1.10：共享模式（独占开关熄灭）下后端显示"WASAPI 共享"、输出状态标注系统重采样
+    const isShared = !(typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true);
     const isDsd = fmt.bitDepth === 1;
     const inFmt = fmt.requestedRate ? (isDsd ? 'DSD ' + (fmt.requestedRate / 2822400).toFixed(0) + 'x' : (fmt.requestedRate / 1000) + 'kHz/' + (fmt.bitDepth || '?') + 'bit') : '-';
-    if (t) npfLoadCover(t.path);
+    if (t) npfLoadCover(t);
     else { document.getElementById('npf-cover').style.display = 'none'; document.getElementById('npf-cover-ph').style.display = 'flex'; }
-    $('#npf-title').textContent = mc.title || (t ? t.name.replace(/\.[^.]+$/, '') : '—');
-    $('#npf-artist').textContent = (mc.artist || '未知艺术家') + (mc.album ? ' · ' + mc.album : '');
-    const st = t ? (state.library.stats || {})[t.path] : null;
+    const title = mc.title || (t ? (t.title || (t.name ? t.name.replace(/\.[^.]+$/, '') : '')) : '') || '—';
+    const artist = mc.artist || t.artist || '未知艺术家';
+    const album = mc.album || t.album;
+    $('#npf-title').textContent = title;
+    $('#npf-artist').textContent = artist + (album ? ' · ' + album : '');
+    const st = t && !t.url ? (state.library.stats || {})[t.path] : null;
     const loud = mc.loudness;
     const beat = window.annieViz && window.annieViz.beatInfo ? window.annieViz.beatInfo() : null;
     const rows = [
-      ['文件', t ? t.path : '-'],
-      ['格式', (mc.codec || fmt.codec || '-').toString().toUpperCase() + (mc.bitrate ? ' · ' + Math.round(mc.bitrate / 1000) + 'kbps' : '')],
-      ['输出状态', inFmt + ' → ' + (fmt.outFormat || '-') + (fmt.bitPerfect ? '（Bit-perfect）' : fmt.reason ? '（' + fmt.reason + '）' : '')],
-      ['后端', fmt.backend ? (fmt.backend === 'asio' ? 'ASIO' : 'WASAPI 独占') + ' · ' + (fmt.device || '') : '-'],
+      ['文件', t ? (t.path || (t.url ? '流媒体' : '-')) : '-'],
+      ['格式', (mc.codec || fmt.codec || (t && t.quality) || '-').toString().toUpperCase() + (mc.bitrate ? ' · ' + Math.round(mc.bitrate / 1000) + 'kbps' : '')],
+      ['输出状态', inFmt + ' → ' + (fmt.outFormat || '-') + (isShared ? '（共享，系统重采样）' : fmt.bitPerfect ? '（Bit-perfect）' : fmt.reason ? '（' + fmt.reason + '）' : '')],
+      ['后端', fmt.backend ? (fmt.backend === 'asio' ? 'ASIO' : (isShared ? 'WASAPI 共享' : 'WASAPI 独占')) + ' · ' + (fmt.device || '') : '-'],
       ['响度', loud ? loud.i.toFixed(1) + ' LUFS · 真峰 ' + loud.tp.toFixed(1) + ' dBTP' : '未分析'],
       ['BPM / 调性', beat && beat.bpm ? beat.bpm.toFixed(0) + ' BPM' + (beat.key ? ' · ' + beat.key : '') : '-'],
       ['统计', st ? '播放 ' + st.count + ' 次 · 累计 ' + Math.round(st.totalSec / 60) + ' 分钟' : '-'],

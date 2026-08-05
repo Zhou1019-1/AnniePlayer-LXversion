@@ -32,6 +32,8 @@
 
   // 粒子总开关（设置面板可关；playTrack 淡入目标值以此为准）
   var particlesEnabled = true;
+  // 切歌时间戳：position 事件防护用（忽略切歌后短暂窗口内旧曲残留的时间校准）
+  var lastTrackSwitchAt = 0;
 
   // ================= 假 analyser（引擎电平 → 合成频谱） =================
   var BINS = 1024;
@@ -139,9 +141,19 @@
 
   function applyStageCover(dataUrl, trackKey, token) {
     if (!dataUrl) { clearStageCover(); return; }
-    // 流媒体封面是 HTTP URL 时，优先交给 Mineradio 原生的 loadCoverFromUrl
+    // 流媒体封面是 HTTP(S) URL 时，优先交给 Mineradio 原生的 loadCoverFromUrl
     // （内部已处理 Referer 注入、canvas 裁剪、粒子纹理更新）
     if (typeof dataUrl === 'string' && (dataUrl.startsWith('http://') || dataUrl.startsWith('https://'))) {
+      // V1.1.8：http 封面（如 kwcdn.kuwo.cn，其 https 证书无效且 CSP 拦 http）
+      // 直接经主进程代理转 dataURL，避免加载失败。
+      if (dataUrl.startsWith('http://') && window.mine.streamCoverProxy) {
+        window.mine.streamCoverProxy(dataUrl).then(function (r) {
+          if (token !== trackSwitchToken) return;
+          if (r && r.url) applyStageCover(r.url, trackKey, token); // dataURL 走下方 blob 分支
+          else clearStageCover();
+        }).catch(function () { clearStageCover(); });
+        return;
+      }
       if (typeof loadCoverFromUrl === 'function') {
         loadCoverFromUrl(dataUrl, {
           trackToken: token,
@@ -196,46 +208,57 @@
   }
 
   // ================= 歌词 =================
+  // 通用歌词注入：text 为空 → 清空；非空 → 解析 LRC 并激活歌词舞台
+  function applyLyricText(text, token) {
+    if (token !== trackSwitchToken) return;
+    if (!text) {
+      lyricsLines = [];
+      if (typeof invalidateStageLyricPayloadForNewLyrics === 'function') {
+        invalidateStageLyricPayloadForNewLyrics('annie-no-lyrics');
+      }
+      return;
+    }
+    var lines = parseLyricText(text);
+    if (token !== trackSwitchToken) return;
+    originalLyricsState = {
+      lines: lines,
+      hasNativeKaraoke: false,
+      timingSource: 'lrc',
+      translationLines: [],
+      translationSource: 'none'
+    };
+    lyricsLines = lines;
+    lyricsTimingSource = 'lrc';
+    // 激活歌词舞台（对齐上游 toggleLyricsPanel(true) 的开启序列）
+    try {
+      fx.particleLyrics = true;
+      if (typeof createLyricsParticles === 'function') createLyricsParticles();
+      lyricsVisible = true;
+    } catch (e) { console.warn('[stage] lyricsVisible', e); }
+    if (typeof invalidateStageLyricPayloadForNewLyrics === 'function') {
+      invalidateStageLyricPayloadForNewLyrics('annie-track-lyrics');
+    }
+    // 不启动全轨预热（scheduleStageLyricPrewarm / FullTrackWarmup）：协作式全轨构建
+    // 每步仅 4.2ms 预算、步间 6-24ms 延迟，数十行歌词要数秒~十几秒，期间
+    // tickLyricsParticles 的 stageLyricWarmupPending() 门控会一直拦截渲染，
+    // 导致歌词迟迟不显示/旧歌词长期保留。这里只留一个 ~120ms 的 warmup 窗口，
+    // 让 tick 尽快走"当前行同步/轻量构建"路径立即显示首行，后续行按需渐进补齐。
+    if (typeof requestStageLyricWarmup === 'function') requestStageLyricWarmup('annie-track', 120);
+  }
+
   async function applyStageLyrics(path, token) {
     try {
       var r = await window.mine.lyrics(path);
       if (token !== trackSwitchToken) return;
-      if (!r.ok || !r.text) {
-        lyricsLines = [];
-        if (typeof invalidateStageLyricPayloadForNewLyrics === 'function') {
-          invalidateStageLyricPayloadForNewLyrics('annie-no-lyrics');
-        }
-        return;
-      }
-      var lines = parseLyricText(r.text);
-      if (token !== trackSwitchToken) return;
-      originalLyricsState = {
-        lines: lines,
-        hasNativeKaraoke: false,
-        timingSource: 'lrc',
-        translationLines: [],
-        translationSource: 'none'
-      };
-      lyricsLines = lines;
-      lyricsTimingSource = 'lrc';
-      // 激活歌词舞台（对齐上游 toggleLyricsPanel(true) 的开启序列）
-      try {
-        fx.particleLyrics = true;
-        if (typeof createLyricsParticles === 'function') createLyricsParticles();
-        lyricsVisible = true;
-      } catch (e) { console.warn('[stage] lyricsVisible', e); }
-      if (typeof invalidateStageLyricPayloadForNewLyrics === 'function') {
-        invalidateStageLyricPayloadForNewLyrics('annie-track-lyrics');
-      }
-      if (typeof requestStageLyricWarmup === 'function') requestStageLyricWarmup('annie-track', 150);
-      if (typeof scheduleStageLyricPrewarm === 'function') scheduleStageLyricPrewarm('annie-track', 48);
-      if (typeof scheduleStageLyricFullTrackWarmup === 'function') scheduleStageLyricFullTrackWarmup('track-ready', 220);
+      applyLyricText((r && r.ok && r.text) ? r.text : '', token);
     } catch (e) { console.warn('[stage] lyrics', e); }
   }
 
   // ================= 节拍分析 =================
   async function applyStageBeatMap(path, durationSec, token, song) {
     try {
+      // 流媒体 URL 无法走本地文件读取（无本地字节），跳过节拍图（视觉照常）
+      if (/^https?:\/\//i.test(path)) return;
       var buf = await window.mine.readFile(path); // ArrayBuffer（主进程限制 64MB）
       if (token !== trackSwitchToken) return;
       var blobUrl = URL.createObjectURL(new Blob([buf]));
@@ -282,14 +305,25 @@
       annieAudio.paused = false;
       annieAudio.ended = false;
       lastPosSec = 0; lastPosAt = performance.now(); posPlaying = true;
+      lastTrackSwitchAt = performance.now(); // 开启 position 防护窗口
 
       try {
         if (typeof resetLyricsForTrackSwitch === 'function') resetLyricsForTrackSwitch();
         else { lyricsLines = []; }
       } catch (e) { console.warn('[stage] resetLyrics', e); try { lyricsLines = []; } catch (e2) { } }
+      // 立即清除上一首的歌词 mesh：reset 只清数据不清 mesh，
+      // 若不手动清，新歌词构建完成前旧歌词会一直保留（用户感知"歌词停在上一首"）。
+      try {
+        if (typeof clearStageLyrics === 'function') clearStageLyrics();
+      } catch (e) { console.warn('[stage] clearLyrics', e); }
 
       try { applyStageCover(meta.cover, 'annie|' + meta.path, token); } catch (e) { console.warn('[stage] cover', e); }
-      try { applyStageLyrics(meta.path, token); } catch (e) { console.warn('[stage] lyrics', e); }
+      // 流媒体 URL（http/https）没有本地 .lrc：跳过本地歌词读取，
+      // 避免其空结果异步到达后覆盖 streaming.js 通过 setLyricText 注入的在线歌词。
+      // 在线歌词由 streaming.js → streamLyric → annieStage.setLyricText 负责。
+      if (!/^https?:\/\//i.test(String(meta.path || ''))) {
+        try { applyStageLyrics(meta.path, token); } catch (e) { console.warn('[stage] lyrics', e); }
+      }
       try { applyStageBeatMap(meta.path, meta.duration, token, currentSong); } catch (e) { console.warn('[stage] beat', e); }
     },
 
@@ -321,7 +355,20 @@
         }
       } catch (e) { }
     },
-    getParticlesEnabled: function () { return particlesEnabled; }
+    getParticlesEnabled: function () { return particlesEnabled; },
+
+    // 流媒体在线歌词注入（由 streaming.js 异步回调调用；token 竞态由 applyLyricText 把关）
+    setLyricText: function (text) {
+      applyLyricText(text || '', trackSwitchToken);
+    },
+
+    // 流媒体封面补充注入（由 streaming.js 异步回调调用；URL 直接走 applyStageCover 的 HTTP 链路）
+    setCover: function (src) {
+      if (!src) return;
+      try {
+        applyStageCover(src, 'annie|' + (currentSong ? currentSong.id : 'cover'), trackSwitchToken);
+      } catch (e) { console.warn('[stage] setCover', e); }
+    }
   };
   window.annieStage = annieStage;
 
@@ -329,6 +376,12 @@
   window.mine.onEngineEvent(function (event, d) {
     switch (event) {
       case 'position':
+        // V1.1.4：seek 保护——引擎 seek 未完成时忽略旧曲 position 校准（歌词时间源防乱跳）
+        if (typeof state !== 'undefined' && state.seekPending) break;
+        // 切歌后 600ms 内的"大秒数"position 事件是旧曲残留（引擎 play 确认后
+        // 仍可能补发旧曲位置），会把歌词时间源钉在旧位置导致新歌词错位；
+        // 新曲首个 position 事件从 0 附近开始，不会被误杀。
+        if (performance.now() - lastTrackSwitchAt < 600 && Number(d.seconds || 0) > 3) break;
         lastPosSec = d.seconds || 0;
         lastPosAt = performance.now();
         if (d.duration) annieAudio.duration = d.duration;

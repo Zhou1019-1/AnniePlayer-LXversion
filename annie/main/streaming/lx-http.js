@@ -11,8 +11,14 @@ function httpFetch(url, options = {}) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let reqBody = body;
+  let bodyIsForm = false;
+  let bodyIsJson = false;
   if (reqBody == null && form != null) {
     reqBody = new URLSearchParams(form).toString();
+    bodyIsForm = true;
+  } else if (reqBody != null && typeof reqBody !== 'string') {
+    reqBody = JSON.stringify(reqBody);
+    bodyIsJson = true;
   }
 
   const init = {
@@ -20,9 +26,12 @@ function httpFetch(url, options = {}) {
     headers: { 'User-Agent': UA, ...optHeaders },
     signal: controller.signal,
   };
-  if (reqBody != null) init.body = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody);
-  if (typeof reqBody === 'string' && !init.headers['Content-Type']) {
-    init.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  if (reqBody != null) init.body = reqBody;
+  // Content-Type 推断：form 参数 → urlencoded；对象 body → application/json；字符串 body 且未显式指定 → application/json。
+  // 修复：此前只在 typeof reqBody === 'string' 时推断——对象 body 被 JSON.stringify 后漏设 Content-Type，
+  // 导致音源脚本 POST JSON 被服务器拒（HTTP 415 Unsupported Media Type，实测 Elite 音源 /api/encrypt）。
+  if (reqBody != null && !init.headers['Content-Type']) {
+    init.headers['Content-Type'] = bodyIsForm ? 'application/x-www-form-urlencoded' : 'application/json';
   }
 
   // cancel-ability

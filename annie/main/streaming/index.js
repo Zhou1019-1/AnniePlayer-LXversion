@@ -12,6 +12,7 @@ const path = require('path');
 const os = require('os');
 const sources = require('./sources');
 const lxsdk = require('./lxsdk');
+const tagWriter = require('../tagWriter');
 
 const PROVIDERS = lxsdk.PROVIDERS;
 
@@ -44,6 +45,31 @@ async function lyric(params) {
 
 async function getPic(params) {
   return lxsdk.getPic(params);
+}
+
+/**
+ * 封面代理：把 HTTP(S) 图片转成 dataURL 交给渲染层。
+ * 用途：kwcdn.kuwo.cn 的 https 证书无效、部分 CDN 图被 CSP 拦 http——
+ * 主进程 Node fetch 走系统 TLS/直连能取到，转 data: 后渲染层 img-src 放行。
+ * 带 10 秒超时 + 大小上限（8MB），失败返回空串由调用方回退。
+ */
+async function coverProxy(url) {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) return { url: '', error: 'bad-url' };
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 10000);
+    const resp = await fetch(u, { signal: ctrl.signal });
+    clearTimeout(to);
+    if (!resp.ok) return { url: '', error: 'http-' + resp.status };
+    const type = (resp.headers.get('content-type') || '').split(';')[0].trim();
+    if (!/^image\//i.test(type)) return { url: '', error: 'not-image:' + type };
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length > 8 * 1024 * 1024) return { url: '', error: 'too-large' };
+    return { url: `data:${type};base64,${buf.toString('base64')}` };
+  } catch (e) {
+    return { url: '', error: String((e && e.message) || e).slice(0, 80) };
+  }
 }
 
 async function hotSearch(params) {
@@ -115,11 +141,75 @@ async function download(params, onProgress) {
     throw e;
   }
   await new Promise((res) => out.end(res));
-  return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType };
+
+  // V1.1.10：下载后写元数据——封面/标题/歌手/专辑/专辑艺术家/曲目号/碟号/发行时间 + 歌词。
+  // 附加项受设置页开关控制：saveLrc（旁挂 .lrc + 嵌入）/ saveCover（嵌入封面）。
+  // 全部尽力而为：任何一步失败都不阻塞下载成功返回。
+  const tagged = await writeDownloadedTags(dest, song, params.provider, {
+    saveLrc: params.saveLrc !== false,
+    saveCover: params.saveCover !== false,
+  }).catch(() => false);
+
+  return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType, tagged: !!tagged };
+}
+
+/**
+ * 下载后处理：写音频标签（含封面）+ 旁挂 .lrc 歌词。
+ * 元数据来源：song 已有字段（标题/歌手/专辑）+ 专辑详情接口补全（曲目号/碟号/发行时间/专辑艺术家）+ 歌词接口。
+ * @returns {Promise<boolean>} 是否成功写入标签
+ */
+async function writeDownloadedTags(dest, song, provider, opts) {
+  opts = opts || {};
+  const wantLrc = opts.saveLrc !== false;     // 是否生成旁挂 .lrc 文件
+  const wantCover = opts.saveCover !== false; // 是否生成独立封面图片文件
+  try {
+    // 1) 补全专辑详情元数据（尽力而为，接口失败返回空字段）
+    const detail = await lxsdk.albumDetail({ provider, song }).catch(() => ({}));
+    // 2) 拉歌词（嵌入标签始终做；旁挂 .lrc 受 saveLrc 控制）
+    let lrc = '';
+    try {
+      const lr = await lxsdk.lyric({ provider, song });
+      if (lr && lr.lrc) lrc = lr.lrc;
+    } catch { }
+    // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全（嵌入始终做）
+    let coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
+    if (!coverUrl) {
+      try {
+        const pc = await lxsdk.getPic({ provider, song });
+        if (pc && pc.url) coverUrl = pc.url;
+      } catch { }
+    }
+    // 封面字节：既用于嵌入，也用于 saveCover 时落盘独立文件
+    let coverBuf = null;
+    if (coverUrl) coverBuf = await tagWriter.fetchCoverBytes(coverUrl).catch(() => null);
+    // 4) 写标签：嵌入歌词（FLAC LYRICS / MP3 USLT）+ 嵌入封面（attached_pic），始终执行
+    const tagRes = await tagWriter.writeTags({
+      dest,
+      title: song && (song.name || (song.meta && song.meta.name)),
+      artist: song && (song.artist || (song.meta && song.meta.singer)),
+      album: (song && (song.album || (song.meta && song.meta.albumName))) || (detail && detail.albumName),
+      albumArtist: (detail && detail.albumArtist) || (song && song.artist),
+      track: detail && detail.track,
+      disc: detail && detail.disc,
+      date: detail && detail.date,
+      lyrics: lrc,
+      coverUrl,
+      coverBytes: coverBuf,
+    }).catch(() => ({ ok: false }));
+    // 5) 独立文件（受开关控制）：
+    //    - saveLrc   → 旁挂同名 .lrc
+    //    - saveCover → 独立封面图片文件（同名 .jpg/.png）
+    if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric: '' });
+    if (wantCover && coverBuf) tagWriter.writeCoverFile({ dest, coverBytes: coverBuf });
+    return tagRes && tagRes.ok;
+  } catch (e) {
+    console.warn('[streaming] 写下载元数据失败(不阻塞):', e && e.message);
+    return false;
+  }
 }
 
 module.exports = {
-  init, search, songUrl, lyric, getPic, hotSearch, download, downloadDir, setDownloadDir,
+  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, download, downloadDir, setDownloadDir,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层
 };

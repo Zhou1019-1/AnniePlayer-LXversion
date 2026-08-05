@@ -20,9 +20,19 @@ const vizState = {
   duration: 0,
   // 电平（双声道）
   rmsL: 0, peakL: 0, rmsR: 0, peakR: 0, peakHoldL: 0, peakHoldR: 0,
+  // V1.1.5：canvas 尺寸缓存——渲染热路径（10Hz position/level）绝不读 clientWidth/
+  // clientHeight（读取会强制同步回流，是 UI 卡顿根源）；只在 resize/切 tab/面板显隐时重测。
+  size: { wave: { w: 0, h: 0 }, spec: { w: 0, h: 0 }, level: { w: 0, h: 0 } },
+  sizeDirty: { wave: true, spec: true, level: true },
+  _levelGrad: null,       // 电平渐变缓存（避免 11Hz 每次 createLinearGradient）
+  _levelGradH: 0,
+  // V1.1.5：波形进度增量渲染状态（仅重绘进度变化跨越的柱，而非每帧全量 1600 根）
+  waveLastIdx: -1,
 };
 
 const SPEC_BANDS = 192;
+// V1.1.9：频谱离屏画布宽度上限（8 分钟 × 8px/s = 3840px）——长音频不再无限膨胀
+const MAX_SPEC_W = 3840;
 
 /* ---------------- Spek 风格调色板（黑→紫→红→橙→黄→白） ---------------- */
 const PALETTE = (() => {
@@ -53,16 +63,44 @@ const PALETTE = (() => {
 
 const $v = (s) => document.querySelector(s);
 
+/* ---------------- V1.1.5：canvas 尺寸缓存 ----------------
+ * 渲染热路径（position 10Hz / level 11Hz）只读缓存；尺寸只在低频事件
+ * （resize / 切 tab / 面板显隐）时重测。读 clientWidth/clientHeight 会
+ * 强制同步回流——之前每 10Hz 读一次，是主线程周期性掉帧的直接原因。 */
+function ensureVizSize(key) {
+  const s = vizState.size[key];
+  if (!vizState.sizeDirty[key]) return s;
+  const cv = key === 'wave' ? $v('#wave-canvas') : key === 'spec' ? $v('#spec-canvas') : $v('#level-canvas');
+  const w = cv.clientWidth, h = cv.clientHeight;
+  s.w = w; s.h = h;
+  vizState.sizeDirty[key] = false;
+  return s;
+}
+function markVizSizeDirty() {
+  vizState.sizeDirty.wave = vizState.sizeDirty.spec = vizState.sizeDirty.level = true;
+}
+
 /* ---------------- 标签页切换（波形 / 频谱 / 无损，任意时刻仅显示其一） ---------------- */
+let autoSwitchedTab = false; // 分析中自动切到频谱页签的标记（分析完成后切回）
+
+function switchVizTab(tab) {
+  document.querySelectorAll('.viz-tab').forEach(b => b.classList.toggle('active', b.dataset.vtab === tab));
+  $v('#wave-canvas').classList.toggle('active', tab === 'wave');
+  $v('#spec-canvas').classList.toggle('active', tab === 'spec');
+  $v('#lossless-page').classList.toggle('active', tab === 'lossless');
+  renderWave();
+  renderSpec();
+}
+
+function currentVizTab() {
+  const active = document.querySelector('.viz-tab.active');
+  return active ? active.dataset.vtab : 'wave';
+}
+
 document.querySelectorAll('.viz-tab').forEach(btn => {
   btn.onclick = () => {
-    document.querySelectorAll('.viz-tab').forEach(b => b.classList.toggle('active', b === btn));
-    const tab = btn.dataset.vtab;
-    $v('#wave-canvas').classList.toggle('active', tab === 'wave');
-    $v('#spec-canvas').classList.toggle('active', tab === 'spec');
-    $v('#lossless-page').classList.toggle('active', tab === 'lossless');
-    renderWave();
-    renderSpec();
+    autoSwitchedTab = false; // 用户手动切换后不再自动切回
+    switchVizTab(btn.dataset.vtab);
   };
 });
 
@@ -75,6 +113,7 @@ function setVizBar(hidden, persist) {
     annieSettings.save();
   }
   // 恢复显示后画布尺寸从 0 恢复，需要重绘
+  markVizSizeDirty();
   renderWave();
   renderSpec();
 }
@@ -90,7 +129,7 @@ document.addEventListener('annie-settings-changed', applyVizPrefs);
 /* 双声道竖直电平柱：L/R 各一条 RMS 柱 + Peak 保持线 + dB 读数（dB 刻度 -60..0） */
 function drawLevel() {
   const cv = $v('#level-canvas');
-  const W = cv.clientWidth, H = cv.clientHeight;
+  const { w: W, h: H } = ensureVizSize('level');
   if (!W || !H) return;
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
   const ctx = cv.getContext('2d');
@@ -99,10 +138,16 @@ function drawLevel() {
 
   const toDb = (v) => v > 1e-6 ? 20 * Math.log10(v) : -60;
   const frac = (v) => Math.max(0, Math.min(1, (toDb(v) + 60) / 60));
-  const grad = ctx.createLinearGradient(0, H, 0, 0);
-  grad.addColorStop(0, '#008aff');
-  grad.addColorStop(0.65, '#fac900');
-  grad.addColorStop(0.92, '#e74c3c');
+  // V1.1.5：渐变缓存——11Hz 调用下旧实现每次 createLinearGradient 新建对象
+  if (!vizState._levelGrad || vizState._levelGradH !== H) {
+    const g = ctx.createLinearGradient(0, H, 0, 0);
+    g.addColorStop(0, '#008aff');
+    g.addColorStop(0.65, '#fac900');
+    g.addColorStop(0.92, '#e74c3c');
+    vizState._levelGrad = g;
+    vizState._levelGradH = H;
+  }
+  const grad = vizState._levelGrad;
 
   const meterH = H - 14;            // 底部留 dB 读数区
   const barW = Math.max(6, (W - 14) / 2);
@@ -141,9 +186,13 @@ window.mine.onEngineEvent((event, d) => {
 });
 
 /* ---------------- 波形渲染 ---------------- */
-function renderWave() {
+/* V1.1.5 性能拆分：
+ * renderWaveFull()  — 低频：绘制全部 1600 根柱（切歌/尺寸变化/分析完成时调用）
+ * drawWaveProgress() — 10Hz：只重绘进度跨过的柱（金↔蓝灰切换）+ 进度线
+ * 旧实现 setProgress 每 10Hz 全量重绘 1600 根 fillRect + 强制回流 = 卡顿根因。 */
+function renderWaveFull() {
   const cv = $v('#wave-canvas');
-  const W = cv.clientWidth, H = cv.clientHeight;
+  const { w: W, h: H } = ensureVizSize('wave');
   if (!W || !H) return; // 分区收起时尺寸为 0，跳过绘制
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
   const ctx = cv.getContext('2d');
@@ -156,32 +205,107 @@ function renderWave() {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(vizState.analyzing ? '波形分析中…' : '播放曲目后显示波形', W / 2, H / 2);
+    vizState.waveLastIdx = -1;
     return;
   }
 
   const mid = H / 2;
-  const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
   const n = wf.length;
   const barW = W / n;
+  const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
+  const curIdx = Math.floor(progress * n);
 
+  // 底图：全部画为未播放色（蓝灰），再覆盖已播放部分
+  ctx.fillStyle = '#3a4a6b';
   for (let i = 0; i < n; i++) {
     const x = i * barW;
     const h = Math.max(1, wf[i] * (H - 6));
-    ctx.fillStyle = (i / n) <= progress ? '#fac900' : '#3a4a6b'; // 播放过：金色；未播放：蓝灰
     ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
   }
+  ctx.fillStyle = '#fac900';
+  for (let i = 0; i <= curIdx && i < n; i++) {
+    const x = i * barW;
+    const h = Math.max(1, wf[i] * (H - 6));
+    ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+  }
+  vizState.waveLastIdx = curIdx;
+  drawWaveProgressLine(ctx, W, H, progress);
+}
 
-  // 进度线
+// 波形进度增量：仅把 [lastIdx+1, curIdx] 区间内的柱刷成金色（播放前进），
+// 或 [curIdx+1, lastIdx] 刷回蓝灰（seek 回退）。旧实现每次全量重绘 n 根。
+function drawWaveProgress() {
+  const cv = $v('#wave-canvas');
+  const { w: W, h: H } = ensureVizSize('wave');
+  const wf = vizState.waveform;
+  if (!W || !H || !wf || !wf.length || vizState.waveLastIdx < 0) return;
+  const ctx = cv.getContext('2d');
+  const mid = H / 2;
+  const n = wf.length;
+  const barW = W / n;
+  const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
+  const curIdx = Math.floor(progress * n);
+  if (curIdx !== vizState.waveLastIdx) {
+    if (curIdx > vizState.waveLastIdx) {
+      ctx.fillStyle = '#fac900';
+      for (let i = vizState.waveLastIdx + 1; i <= curIdx && i < n; i++) {
+        const x = i * barW;
+        const h = Math.max(1, wf[i] * (H - 6));
+        ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+      }
+    } else {
+      ctx.fillStyle = '#3a4a6b';
+      for (let i = curIdx + 1; i <= vizState.waveLastIdx && i < n; i++) {
+        const x = i * barW;
+        const h = Math.max(1, wf[i] * (H - 6));
+        ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+      }
+    }
+    vizState.waveLastIdx = curIdx;
+  }
+  drawWaveProgressLine(ctx, W, H, progress, wf, mid, barW, n);
+}
+
+// 进度线：先擦除旧线所在列（V1.1.9：整列清背景再重画柱——旧实现只重画柱区域，
+// 进度线画满全高，超出柱高的上下留白永不擦除 → 拉进度条后残留黄色竖线），再画新线。
+function drawWaveProgressLine(ctx, W, H, progress, wf, mid, barW, n) {
+  const oldX = vizState._waveOldX;
+  vizState._waveOldX = -1;
+  if (oldX >= 0 && wf) {
+    // 整列清为背景色（2px + 柱间隙余量）
+    ctx.fillStyle = '#07080c';
+    ctx.fillRect(Math.max(0, oldX - 1), 0, 4, H);
+    // 重画该列覆盖到的柱
+    const i0 = Math.max(0, Math.floor((oldX - 1) / barW));
+    const i1 = Math.min(n - 1, Math.floor((oldX + 3) / barW));
+    for (let i = i0; i <= i1; i++) {
+      const x = i * barW;
+      const h = Math.max(1, wf[i] * (H - 6));
+      ctx.fillStyle = i <= vizState.waveLastIdx ? '#fac900' : '#3a4a6b';
+      ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+    }
+  }
   if (progress > 0) {
+    const px = Math.round(progress * W) - 1;
     ctx.fillStyle = 'rgba(250,201,0,.9)';
-    ctx.fillRect(progress * W - 1, 0, 2, H);
+    ctx.fillRect(px, 0, 2, H);
+    vizState._waveOldX = px;
   }
 }
 
-/* ---------------- 频谱渲染 ---------------- */
+// 兼容旧接口（低频调用方：switchVizTab/setVizBar/analyze/resize）
+function renderWave() {
+  vizState._waveOldX = -1; // 全量重绘前重置旧线标记，避免残留
+  renderWaveFull();
+}
+
+/* ---------------- 频谱渲染 ----------------
+ * V1.1.9：全轨一次分析（波形完整），频谱画布封顶 MAX_SPEC_W（8 分钟 × 8px/s）。
+ * 长音频不再分配数万像素画布（旧实现 1.5h = 43200px ≈ 33MB，fillRect/扩容/拷贝
+ * 全是同步重活 → 切歌卡）。超出 8 分钟部分忽略（频谱展示前 8 分钟，波形不受影响）。 */
 function resetSpec() {
   vizState.specCanvas = document.createElement('canvas');
-  vizState.specCanvas.width = Math.max(1, Math.ceil((vizState.specDur || 240) * 8)); // 预估宽度，不足再扩
+  vizState.specCanvas.width = Math.max(1, Math.min(MAX_SPEC_W, Math.ceil((vizState.specDur || 240) * 8)));
   vizState.specCanvas.height = SPEC_BANDS;
   vizState.specCtx = vizState.specCanvas.getContext('2d');
   vizState.specCtx.fillStyle = '#000';
@@ -191,11 +315,15 @@ function resetSpec() {
 
 function appendSpecFrames(frames, count) {
   if (!vizState.specCtx) resetSpec();
-  // 预估宽度不足时扩容
+  // 预估宽度不足时扩容（封顶 MAX_SPEC_W，超出忽略）
   if (vizState.specFrames + count > vizState.specCanvas.width) {
+    if (vizState.specCanvas.width >= MAX_SPEC_W) {
+      vizState.specFrames += count; // 计数推进，画面定格在 8 分钟
+      return;
+    }
     const old = vizState.specCanvas;
     const bigger = document.createElement('canvas');
-    bigger.width = Math.max(old.width * 2, vizState.specFrames + count + 256);
+    bigger.width = Math.min(MAX_SPEC_W, Math.max(old.width * 2, vizState.specFrames + count + 256));
     bigger.height = SPEC_BANDS;
     const bctx = bigger.getContext('2d');
     bctx.drawImage(old, 0, 0);
@@ -219,9 +347,9 @@ function appendSpecFrames(frames, count) {
   vizState.specFrames += count;
 }
 
-function renderSpec() {
+function renderSpecFull() {
   const cv = $v('#spec-canvas');
-  const W = cv.clientWidth, H = cv.clientHeight;
+  const { w: W, h: H } = ensureVizSize('spec');
   if (!W || !H) return; // 分区收起时尺寸为 0，跳过绘制
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
   const ctx = cv.getContext('2d');
@@ -234,23 +362,43 @@ function renderSpec() {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(vizState.analyzing ? '频谱分析中…' : '播放曲目后显示频谱', W / 2, H / 2);
+    vizState._specOldX = -1;
     return;
   }
   ctx.drawImage(vizState.specCanvas, 0, 0, vizState.specFrames, SPEC_BANDS, 0, 0, W, H);
 
-  // 频率刻度（右缘）
+  // 频率刻度（右缘）——静态，仅全量重绘时画一次
   ctx.fillStyle = 'rgba(232,234,240,.55)';
   ctx.font = '9px sans-serif';
   ctx.textAlign = 'right';
   const marks = [[22, 0.04], [16, 0.22], [12, 0.36], [8, 0.52], [4, 0.68], [1, 0.87]];
   for (const [k, frac] of marks) ctx.fillText(k + 'k', W - 4, H * frac + 3);
 
-  // 播放进度线
   const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
+  vizState._specOldX = -1;
+  drawSpecProgressLine(ctx, W, H, progress);
+}
+
+// 10Hz：进度线移动——改为调度全量重绘（rAF 合并）。
+// V1.1.9：旧实现"擦除旧线列"用源画布单列重贴，进度线半透明金色叠在频谱上，
+// 擦除取整误差累积 → 走过的区域逐渐染黄。全量重绘（黑底→底图→画线）旧线必然消失。
+function drawSpecProgress() {
+  scheduleSpecRender();
+}
+
+// 频谱进度线（V1.1.9：由 renderSpecFull 全量重绘调用，黑底已清旧线，只画新线；
+// 不透明纯色，杜绝半透明叠加累积染黄）
+function drawSpecProgressLine(ctx, W, H, progress) {
   if (progress > 0) {
-    ctx.fillStyle = 'rgba(250,201,0,.85)';
-    ctx.fillRect(progress * W - 1, 0, 2, H);
+    const px = Math.round(progress * W) - 1;
+    ctx.fillStyle = '#fac900';
+    ctx.fillRect(px, 0, 2, H);
   }
+}
+
+// 兼容旧接口（低频调用方：switchVizTab/setVizBar/analyze/resize）
+function renderSpec() {
+  renderSpecFull();
 }
 
 /* ---------------- 无损检测报告 ---------------- */
@@ -272,12 +420,24 @@ function renderLossless(r) {
 }
 
 /* ---------------- 分析事件 ---------------- */
+// V1.1.9：分析帧渲染节流——长音频全轨分析期间主进程高速推送 frames 事件，
+// 旧实现每批都同步 renderSpec（全量 drawImage），渲染主线程被 IPC 频率拖着跑。
+// 现在：数据立即入离屏画布（putImageData 轻），画面重绘合并到 rAF——每帧最多一次。
+let _specRaf = 0;
+function scheduleSpecRender() {
+  if (_specRaf) return;
+  _specRaf = requestAnimationFrame(() => {
+    _specRaf = 0;
+    if (vizState.analyzing || vizState.specFrames) renderSpecFull();
+  });
+}
+
 window.mine.onAnalyzeEvent((p) => {
   if (p.gen !== vizState.gen) return; // 过期分析结果丢弃
   if (p.type === 'frames') {
     appendSpecFrames(new Uint8Array(p.frames), p.count);
     $v('#viz-status').textContent = '分析中… ' + (vizState.specFrames / 8).toFixed(0) + 's';
-    renderSpec();
+    scheduleSpecRender(); // V1.1.9：合并到 rAF，不再每批全量重绘
   } else if (p.type === 'done') {
     vizState.analyzing = false;
     vizState.waveform = p.waveform && p.waveform.length ? new Float32Array(p.waveform) : null;
@@ -286,6 +446,10 @@ window.mine.onAnalyzeEvent((p) => {
     $v('#viz-status').textContent = '分析完成';
     renderWave();
     renderSpec();
+    if (autoSwitchedTab) { autoSwitchedTab = false; switchVizTab('wave'); } // 波形就绪，切回
+  } else if (p.type === 'lossless') {
+    // 并行编码探测补发的无损结论（覆盖频谱计算的判定，如"有损压缩格式"快捷结论）
+    renderLossless(p.lossless);
   } else if (p.type === 'error') {
     vizState.analyzing = false;
     $v('#viz-status').textContent = '分析失败';
@@ -293,6 +457,7 @@ window.mine.onAnalyzeEvent((p) => {
     $v('#lossless-summary').textContent = '分析失败：' + (p.message || '未知错误');
     renderWave();
     renderSpec();
+    if (autoSwitchedTab) { autoSwitchedTab = false; switchVizTab('wave'); }
   }
 });
 
@@ -307,6 +472,12 @@ window.annieViz = {
     resetSpec();
     renderLossless(null);
     $v('#viz-status').textContent = '分析中…';
+    // 分析中自动展示"频谱"页签：频谱是流式渲染（逐批到达即绘制），
+    // 波形必须等整曲分析完成才一次性出现——避免用户误以为要等分析完才有图。
+    if (!$v('#viz-bar').classList.contains('hidden') && currentVizTab() === 'wave') {
+      autoSwitchedTab = true;
+      switchVizTab('spec');
+    }
     renderWave();
     renderSpec();
     const r = await window.mine.analyzeStart(input, headers || null);
@@ -316,13 +487,14 @@ window.annieViz = {
       $v('#viz-status').textContent = '分析不可用';
     }
   },
-  /** 播放进度同步（position 事件驱动）。 */
+  /** 播放进度同步（position 事件驱动，10Hz）。V1.1.5：只做增量绘制——
+   *  波形/频谱底图不动，仅刷新进度线（旧实现每 10Hz 全量重绘 1600 根柱 + drawImage）。 */
   setProgress(pos, dur) {
     vizState.position = pos || 0;
     if (dur) vizState.duration = dur;
-    renderWave();
-    // 频谱进度线 10Hz 重绘开销可控（分区收起时 renderSpec 内部自动跳过）
-    renderSpec();
+    // 仅当前激活的页面需要增量更新进度线（未激活 canvas display:none，绘制是 no-op）
+    if (currentVizTab() === 'wave') drawWaveProgress();
+    else if (currentVizTab() === 'spec') drawSpecProgress();
   },
   /** Plus：底栏"频谱"按钮开关可视化面板（状态持久化）。 */
   toggleBar() {
@@ -330,8 +502,14 @@ window.annieViz = {
   },
 };
 
-// 窗口尺寸变化时重绘
-window.addEventListener('resize', () => { renderWave(); renderSpec(); drawLevel(); });
+// 窗口尺寸变化时重绘（低频：先标记缓存脏，再全量重绘）
+window.addEventListener('resize', () => { markVizSizeDirty(); renderWave(); renderSpec(); drawLevel(); });
+// V1.1.5：面板显隐/切 tab 时尺寸可能变化（收起时 0 → 展开后恢复），全量重绘前重测
+const _origSwitch = switchVizTab;
+switchVizTab = function (tab) {
+  markVizSizeDirty();
+  _origSwitch(tab);
+};
 drawLevel();
 
 })();

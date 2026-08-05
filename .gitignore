@@ -16,6 +16,11 @@ _lx-build/
 engine/publish/
 engine/tools/
 
+# ---- AnnieEngine 源码构建产物（源码本身入库，见 engine/src/）----
+engine/src/bin/
+engine/src/obj/
+engine/src/publish/
+
 # ---- 构建日志/临时文件 ----
 build-err.txt
 build-out.txt
@@ -28,3 +33,9 @@ portable/
 # ---- 系统文件 ----
 Thumbs.db
 .DS_Store
+
+# ---- 开发工具工作目录 ----
+.omo/
+
+# ---- 引擎 junction（开发态镜像，指向 engine/）----
+annie/engine/

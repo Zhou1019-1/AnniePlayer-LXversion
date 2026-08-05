@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* 安妮播放器 —— 设置面板（MR 风格视觉自定义 + 界面偏好）
  * 视觉参数直推 Mineradio 视觉栈的 fx 对象（syncFxUniforms 实时生效）；
  * 歌词参数改动后 invalidate 重建歌词网格；全部偏好经主进程持久化到 store.ui。
@@ -22,10 +22,14 @@
     palette: 'gold',
     /* ---------------- Pro beat0.0.1：音质链路 ---------------- */
     dsdMode: 'pcm',        // pcm 转 PCM（默认）| dop（DoP 直通）| native（ASIO DSD）
-    bufferMs: 50,          // 独占缓冲 50–500ms
+    bufferMs: 150,        // 独占缓冲 50–500ms（默认 150ms：50ms 过小，快速操作时易欠载爆音）
     preload: false,        // 整轨预载到内存
-    crossfadeSec: 0,       // 交叉淡入 0–10s（0=关闭）
-    loudMode: 'off'        // 响度均衡：off | track | album
+    crossfadeSec: 0.5,       // 交叉淡入 0–10s（0=关闭）
+    loudMode: 'off',        // 响度均衡：off | track | album
+    // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
+    downloadDir: '',
+    saveLrc: true,         // 下载时在目录生成旁挂 .lrc 歌词文件（嵌入标签始终做）
+    saveCover: true        // 下载时在目录生成封面图片文件（嵌入标签始终做）
   };
   var ui = Object.assign({}, DEFAULTS);
   var saveTimer = null;
@@ -209,6 +213,67 @@
     close.onclick = function () { togglePanel(false); };
     head.appendChild(close);
     panel.appendChild(head);
+
+    // —— 下载设置 ——
+    // 与流媒体面板下载目录同一份配置（主进程 stream-settings.json）；
+    // 这里提供展示 + 更改/默认入口，改动即时同步到流媒体面板。
+    var s0 = section('下载设置');
+    (function () {
+      // 行：左侧 label + hint，右侧卡片（路径 + 按钮 + 右下角开关）
+      var row = el('div', 'set-row');
+      var lab = el('div');
+      lab.appendChild(el('div', '', '下载目录'));
+      lab.appendChild(el('div', 'set-hint', '流媒体下载的保存位置，与流媒体面板的下载目录同步'));
+      row.appendChild(lab);
+      // 路径卡片：带边框容器，右下角为歌词/封面保存开关
+      var card = el('div', 'set-dl-card');
+      var dirVal = el('div', 'set-dl-dir', '读取中…');
+      card.appendChild(dirVal);
+      var foot = el('div', 'set-dl-foot');
+      var btnRow = el('div', 'set-dl-btns');
+      var btnChange = el('button', 'eq-preset', '更改');
+      var btnReset = el('button', 'eq-preset', '默认');
+      btnChange.style.cssText = 'border-radius: 7px; padding: 4px 12px; font-size: 12px; border: 1px solid var(--line); background: var(--bg3); color: var(--text); cursor: pointer;';
+      btnReset.style.cssText = btnChange.style.cssText;
+      btnRow.appendChild(btnChange);
+      btnRow.appendChild(btnReset);
+      foot.appendChild(btnRow);
+      // 右下角：保存歌词 / 保存封面 两个开关
+      var opts = el('div', 'set-dl-opts');
+      var mkOpt = function (key, label) {
+        var l = el('label', 'set-dl-opt');
+        var c = document.createElement('input');
+        c.type = 'checkbox'; c.checked = !!ui[key]; c.dataset.key = key;
+        c.onchange = function () { ui[key] = c.checked; save(); };
+        l.appendChild(c);
+        l.appendChild(el('span', '', label));
+        opts.appendChild(l);
+        return l;
+      };
+      mkOpt('saveLrc', '歌词');
+      mkOpt('saveCover', '封面');
+      foot.appendChild(opts);
+      card.appendChild(foot);
+      row.appendChild(card);
+      s0.appendChild(row);
+      // 异步读取当前目录（主进程默认：系统音乐文件夹/AnniePlayerSVLX Downloads）
+      if (window.mine && window.mine.streamDownloadDir) {
+        window.mine.streamDownloadDir().then(function (dir) { dirVal.textContent = dir || '（默认）'; dirVal.title = dir; }).catch(function () { dirVal.textContent = '（读取失败）'; });
+      }
+      btnChange.onclick = async function () {
+        try {
+          var r = await window.mine.streamSetDownloadDir();
+          if (!r || r.canceled) return;
+          dirVal.textContent = r.dir; dirVal.title = r.dir;
+        } catch (e) { dirVal.textContent = '（失败：' + (e && e.message || e) + '）'; }
+      };
+      btnReset.onclick = async function () {
+        try {
+          var dir = await window.mine.streamResetDownloadDir();
+          dirVal.textContent = dir; dirVal.title = dir;
+        } catch { }
+      };
+    })();
 
     // —— 视觉预设 ——
     var s1 = section('视觉预设');

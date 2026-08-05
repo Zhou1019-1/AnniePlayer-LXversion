@@ -13,6 +13,10 @@ const state = {
   duration: 0,
   position: 0,
   seeking: false,
+  seekPending: false,  // V1.1.4：seek 保护——引擎 seek 未完成前，旧 position 事件不得拉回进度条
+  seekTarget: 0,
+  seekTimer: 0,
+  _posAt: 0,             // V1.1.7：最近一次 position 事件到达时刻（进度插值锚点）
   metaCache: new Map(),
   currentPath: null,
   currentStream: null, // 正在播放的流媒体曲目（本地播放时为 null）
@@ -289,10 +293,42 @@ function updateLibNav() {
 }
 
 /* V1.1.1：切回粒子舞台时，索引自动定位到正在播放的文件
- * （进入其所在文件夹的曲目视图，并滚动到播放行）；流媒体曲目不入库则保持现状 */
+ * （进入其所在文件夹的曲目视图，并滚动到播放行）；流媒体曲目不入库则保持现状
+ * beta0.0.3 移植：O(1) 索引查找；网格视图自动切换为平铺视图；平滑滚动 + 高亮闪烁 */
+
+// beta0.0.3 移植：曲库路径索引（path → track），O(1) 查找，替代全表线性扫描。
+// 在 tracks 变更点增量维护；size 不一致时惰性重建兜底。
+state.libIndex = new Map();
+function rebuildLibIndex() {
+  state.libIndex.clear();
+  const ts = state.library.tracks || [];
+  for (let i = 0; i < ts.length; i++) state.libIndex.set(ts[i].path, ts[i]);
+}
+function libHas(path) {
+  if (state.libIndex.size !== (state.library.tracks || []).length) rebuildLibIndex();
+  return state.libIndex.has(path);
+}
+
+function flashPlayingRowLegacy(attempts) {
+  const box = $('#track-list');
+  const row = box && box.querySelector('.track-row[data-path="' + String(state.currentPath).replace(/"/g, '\\"') + '"]');
+  if (row) {
+    row.classList.remove('locate-flash');
+    void row.offsetWidth; // 重启动画
+    row.classList.add('locate-flash');
+    setTimeout(() => row.classList.remove('locate-flash'), 2000);
+  } else if ((attempts || 0) < 4) {
+    setTimeout(() => flashPlayingRowLegacy((attempts || 0) + 1), 300);
+  }
+}
+
 async function locatePlayingLegacy() {
-  if (!state.currentPath || state.viewMode === 'grid') return;
-  if (!state.library.tracks.some(t => t.path === state.currentPath)) return;
+  if (!state.currentPath) return false;
+  if (!libHas(state.currentPath)) return false; // O(1) 索引
+  if (state.viewMode === 'grid') { // 网格视图无曲目列表，切到平铺视图再定位
+    state.viewMode = 'tree';
+    if (window.annieSettings) { annieSettings.ui.viewMode = 'tree'; annieSettings.save(); }
+  }
   const dir = state.currentPath.replace(/[\\/][^\\/]+$/, '');
   state.libNav.mode = 'tracks';
   state.libNav.folder = dir;
@@ -300,17 +336,29 @@ async function locatePlayingLegacy() {
   await renderTracks();
   updateLibNav();
   if (lv) {
-    const i = lv.rows.findIndex(r => r.type === 'track' && r.t.path === state.currentPath);
-    if (i >= 0) {
+    const i = lv.pathIdx.get(state.currentPath); // O(1) 索引
+    if (i !== undefined) {
       const box = $('#track-list');
-      box.scrollTop = Math.max(0, lv.pos[i] - box.clientHeight / 2);
+      box.scrollTo({ top: Math.max(0, lv.pos[i] - box.clientHeight / 2), behavior: 'smooth' });
       renderVirtualWindow();
+      setTimeout(() => flashPlayingRowLegacy(0), 350);
     }
   }
+  return true;
 }
 document.addEventListener('annie-theme-changed', (e) => {
   if (e.detail && e.detail.theme === 'legacy') locatePlayingLegacy();
 });
+
+/* beta0.0.3 移植：一键定位当前播放文件（双主题分发）。
+ * FB2K 主题走 annieFb2kLocate（树展开+列表定位），粒子舞台走本文件 locatePlayingLegacy。 */
+window.annieLocatePlaying = () => {
+  if (!state.currentPath) return;
+  if (window.annieTheme && annieTheme.current === 'fb2k' && window.annieFb2kLocate) window.annieFb2kLocate();
+  else locatePlayingLegacy();
+};
+const btnLocate = $('#btn-locate');
+if (btnLocate) btnLocate.onclick = () => window.annieLocatePlaying();
 
 function renderFolderGrid() {
   const roots = buildFolderTree();
@@ -575,6 +623,10 @@ function virtualRenderList(rows) {
     });
   }
   lv.rows = rows;
+  // beta0.0.3 移植：路径 → 行号 O(1) 索引（定位播放行时替代 findIndex 线性扫描）
+  const pIdx = new Map();
+  for (let ri = 0; ri < rows.length; ri++) if (rows[ri].type === 'track') pIdx.set(rows[ri].t.path, ri);
+  lv.pathIdx = pIdx;
   lv.pos = new Float64Array(rows.length + 1);
   let y = 0;
   for (let i = 0; i < rows.length; i++) { lv.pos[i] = y; y += rows[i].type === 'group' ? LV_GROUP_H : LV_ROW_H; }
@@ -845,20 +897,53 @@ function updateBpChip(d) {
   const chip = document.getElementById('bp-chip');
   if (!chip) return;
   chip.classList.remove('hidden');
+  // V1.1.9：共享模式（独占开关熄灭）下物理上不可能 bit-perfect——系统混音器必然重采样，
+  // 引擎的 bitPerfect 只代表"引擎自身未重采样"：圆点熄灭（灰、无发光）+ 文字标注共享。
+  const isShared = !(typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true);
   const isDsd = (d.codec || '').toLowerCase().includes('dsd') || d.bitDepth === 1;
   const inFmt = isDsd
     ? `DSD ${(d.requestedRate / 2822400).toFixed(0)}x`
     : `${d.requestedRate / 1000}kHz/${d.bitDepth || '?'}bit`;
-  document.getElementById('bp-text').textContent = `${inFmt} → ${d.outFormat}`;
-  chip.classList.toggle('ok', !!d.bitPerfect);
-  chip.classList.toggle('warn', !d.bitPerfect);
-  chip.title = d.bitPerfect ? 'Bit-perfect 源码率直通（无重采样）' : (d.reason || '非直通');
+  const bp = isShared ? false : !!d.bitPerfect; // 共享模式一律非直通
+  chip.classList.toggle('ok', bp);
+  chip.classList.toggle('warn', !bp && !isShared); // 共享模式：两态都不亮（灰点熄灭）
+  chip.classList.toggle('off', isShared); // V1.1.9：共享模式熄灭态
+  // 文字：共享模式显式标注（旧实现只有 inFmt→outFormat，看不出直通状态）
+  document.getElementById('bp-text').textContent = isShared
+    ? `共享 · ${inFmt} → ${d.outFormat}`
+    : `${inFmt} → ${d.outFormat}`;
+  chip.title = isShared
+    ? '共享输出（非直通）：系统混音器会重采样到设备格式；如需 bit-perfect 请点亮独占开关'
+    : (bp ? 'Bit-perfect 源码率直通（无重采样）' : (d.reason || '非直通'));
 }
 
 /* ---------------- 播放 ---------------- */
+// V1.1.4：本地快速切歌合并——150ms 窗口内连点累计目标，只执行最后一次（减少引擎设备开关）
+const localSwitch = { timer: 0, target: null };
+function cancelLocalSwitch() {
+  clearTimeout(localSwitch.timer);
+  localSwitch.timer = 0;
+  localSwitch.target = null;
+}
+function requestLocalSwitch(dir) {
+  localSwitch.target = Math.max(0, Math.min(state.queue.length - 1, (localSwitch.target !== null ? localSwitch.target : state.index) + dir));
+  clearTimeout(localSwitch.timer);
+  localSwitch.timer = setTimeout(() => {
+    const t = localSwitch.target;
+    cancelLocalSwitch();
+    playAt(t);
+  }, 150);
+}
 async function playAt(i, offsetSec = 0) {
   const t = state.queue[i];
   if (!t) return;
+  cancelLocalSwitch(); // 明确指定目标（列表点击/自动切歌），取消未执行的合并
+  // V1.1.4：切歌清除 seek 保护——否则新歌 position（从 0 起）永远达不到旧 seekTarget，
+  // 进度条被 seekPending 冻结 10 秒（快速混合操作卡顿源）
+  if (state.seekPending) { state.seekPending = false; clearTimeout(state.seekTimer); }
+  // V1.1.5：取消流媒体侧未执行的切歌合并——否则用户点本地曲目后 150ms 定时器仍会开火，
+  // playStreamAt 劫持播放（把刚播的本地曲目换成流媒体曲目）
+  if (typeof cancelStreamSwitch === 'function') cancelStreamSwitch();
   state.index = i;
   state.currentPath = t.path;
   state.currentStream = null;
@@ -881,8 +966,14 @@ async function playAt(i, offsetSec = 0) {
     setFormatChips([{ text: '播放失败: ' + e.message, cls: 'warn' }]);
   }
   showMeta(t.path);
-  // 触发可视化分析（波形 / 频谱 / 无损检测）
-  if (window.annieViz) window.annieViz.analyze(playPath, null);
+  // 触发可视化分析（波形 / 频谱 / 无损检测）。
+  // V1.1.9：延后 1.2s 启动——切歌瞬间引擎 ffmpeg 解码与分析 ffmpeg 同时全速解码会
+  // 抢磁盘/CPU，导致分析首批帧延迟随机波动（频谱"渐进 vs 从无到有"差异根因）。
+  // 延后等引擎解码进入稳态后，分析稳定快速启动。
+  if (window.annieViz) {
+    const _p = playPath;
+    setTimeout(() => { if (state.currentPath === _p || state.currentStream?.url === _p) window.annieViz.analyze(_p, null); }, 1200);
+  }
 }
 
 /* ---------------- 流媒体播放入口（由 streaming.js 调用） ---------------- */
@@ -894,8 +985,32 @@ window.annieStreamPlay = async function (track) {
   state.duration = track.duration || 0;
   renderTracks();
 
+  // 视觉立即切换（++trackSwitchToken / reset 歌词 / 封面 / 节拍）——不等待引擎确认。
+  // 原因：engine('play') 是 JSON-RPC，慢速网络流可能数秒甚至超时才确认；
+  // 若等它，舞台上的歌词/封面（数据早已并行就绪）会被引擎确认时间阻塞。
   try {
-    await window.mine.engine('play', { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
+    if (window.annieStage) {
+      window.annieStage.playTrack({
+        path: track.url,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        cover: track.cover,
+        duration: track.duration || 0,
+        sampleRate: 0,
+        bitsPerSample: 0,
+        codec: track.quality || '流媒体'
+      });
+    }
+  } catch (e) { console.warn('[player] stage playTrack', e); }
+  // playTrack 已完成（token 已更新）→ 通知调用方注入歌词/封面（同步时机，无竞态）
+  if (track.onPlayed) { try { track.onPlayed(); } catch (e) { console.warn('[player] onPlayed', e); } }
+
+  try {
+    // V1.1.4：流媒体切歌同样走 crossfade（设备保持）——与本地 playAt 一致，避免高频设备开关
+    const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
+    const method = cf > 0 ? 'play.crossfade' : 'play';
+    await window.mine.engine(method, { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
   } catch (e) {
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);
     return;
@@ -903,24 +1018,21 @@ window.annieStreamPlay = async function (track) {
   // 悬浮信息层
   $('#thumb-title').textContent = track.title || '未知曲目';
   $('#thumb-artist').textContent = [track.artist, track.album].filter(Boolean).join(' · ');
-  if (track.cover) $('#thumb-cover').src = track.cover;
-  if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
-  // 喂给视觉舞台，让粒子/封面墙也能识别流媒体封面与元数据
-  if (window.annieStage) {
-    window.annieStage.playTrack({
-      path: track.url,
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      cover: track.cover,
-      duration: track.duration || 0,
-      sampleRate: 0,
-      bitsPerSample: 0,
-      codec: track.quality || '流媒体'
-    });
+  // V1.1.8：http 封面（kwcdn.kuwo.cn 等）经代理转 dataURL 再显示——
+  // 直接赋 http 会被 CSP img-src 拦截，且会覆盖 doInject 已代理好的 dataURL
+  if (track.cover) {
+    if (/^https?:\/\//i.test(track.cover) && window.mine.streamCoverProxy) {
+      window.mine.streamCoverProxy(track.cover).then(r => {
+        if (r && r.url && state.currentStream === track) $('#thumb-cover').src = r.url;
+      }).catch(() => { });
+    } else $('#thumb-cover').src = track.cover;
   }
-  // 可视化分析（ffmpeg 拉流解码）
-  if (window.annieViz) window.annieViz.analyze(track.url, track.headers);
+  if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
+  // 可视化分析（ffmpeg 拉流解码）——V1.1.9：延后 1.2s（同 playAt，避免双 ffmpeg 抢资源）
+  if (window.annieViz) {
+    const _u = track.url;
+    setTimeout(() => { if (state.currentStream?.url === _u) window.annieViz.analyze(_u, track.headers); }, 1200);
+  }
 };
 
 async function showMeta(p) {
@@ -930,6 +1042,9 @@ async function showMeta(p) {
   $('#thumb-title').textContent = m.title || '未知曲目';
   $('#thumb-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
   if (m.cover) $('#thumb-cover').src = m.cover;
+  // V1.1.8：本地无封面时清除残留——旧实现只在新封面存在时赋值，
+  // 流媒体带封面 → 本地无封面切换时，上一首封面会残留不消失
+  else $('#thumb-cover').removeAttribute('src');
   if (m.duration) { state.duration = m.duration; $('#t-total').textContent = fmtTime(m.duration); }
   // Plus：切歌微交互（封面交叉淡入 + 文本逐行滑入）
   const np = $('#np-overlay');
@@ -962,13 +1077,29 @@ window.mine.onEngineEvent((event, d) => {
           if (fb) state.duration = fb;
         }
       }
-      if (!state.seeking) updateProgress();
-      if (window.annieViz) window.annieViz.setProgress(state.position, state.duration);
+      // V1.1.4：seek 保护——引擎 seek 期间（ffprobe 探测/重缓冲）旧 position 事件持续到达，
+      // 会把进度条拉回播放中位置造成"乱跳"；锁定目标位置直到引擎确认到达目标
+      if (state.seekPending) {
+        if (d.seconds >= state.seekTarget - 0.5) {
+          state.seekPending = false;
+          clearTimeout(state.seekTimer);
+        }
+      }
+      // V1.1.7：插值锚点——记录引擎位置与到达时刻，rAF 外推实现连续滑动
+      state._posAt = performance.now();
+      if (!state.seeking && !state.seekPending) {
+        updateProgress();
+        if (window.annieViz) window.annieViz.setProgress(state.position, state.duration);
+        startProgressInterp();
+      }
       break;
     case 'state':
       state.playing = d.state === 'playing';
       $('#btn-play').textContent = state.playing ? '⏸' : '▶';
       { const bp = $('#btn-play'); bp.classList.remove('pop'); void bp.offsetWidth; bp.classList.add('pop'); } // Plus：播放键回弹
+      // V1.1.7：暂停→停止插值（position 冻结）；恢复→重置锚点（下一 position 事件重新起算）
+      if (!state.playing) cancelProgressInterp();
+      else state._posAt = performance.now();
       if (d.state === 'ended') {
         if (state.currentStream && window.annieStream) window.annieStream.playNext();
         else playAt(state.index + 1);
@@ -976,23 +1107,33 @@ window.mine.onEngineEvent((event, d) => {
       break;
     case 'format': {
       state.backendKind = d.backend;
+      // V1.1.9：共享模式（独占开关熄灭）下系统混音器必然重采样，不显示"源码率直通"
+      const isShared = !(typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true);
       const chips = [
         { text: `${d.codec || '?'} ${d.bitDepth ? d.bitDepth + 'bit' : ''}`.trim(), cls: '' },
         { text: `${d.requestedRate / 1000}kHz`, cls: 'gold' },
-        { text: `${d.backend === 'asio' ? 'ASIO' : 'WASAPI 独占'}`, cls: 'gold' },
+        { text: `${d.backend === 'asio' ? 'ASIO' : (isShared ? 'WASAPI 共享' : 'WASAPI 独占')}`, cls: 'gold' },
         { text: d.device || '', cls: '' },
       ];
-      if (d.resampled) chips.push({ text: `已重采样到 ${d.sampleRate / 1000}kHz`, cls: 'warn' });
+      if (isShared) chips.push({ text: '共享模式（系统重采样）', cls: 'warn' });
+      else if (d.resampled) chips.push({ text: `已重采样到 ${d.sampleRate / 1000}kHz`, cls: 'warn' });
       else chips.push({ text: '源码率直通', cls: 'gold' });
       setFormatChips(chips);
       updateBpChip(d); // Pro：Bit-perfect 直通状态
       window.__lastFormat = d; // Pro：Now Playing 技术信息复用
-      $('#tb-backend').textContent = `${d.backend === 'asio' ? 'ASIO' : 'WASAPI 独占'} · ${d.device || ''}`;
-      $('#tb-backend').classList.add('live');
+      // V1.1.9：徽章联动独占开关——独占点亮（金黄 live）、共享熄灭（灰色）
+      const isExcl = typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true;
+      $('#tb-backend').textContent = `${d.backend === 'asio' ? 'ASIO' : (isExcl ? 'WASAPI 独占' : 'WASAPI 共享')} · ${d.device || ''}`;
+      $('#tb-backend').classList.toggle('live', isExcl);
       break;
     }
     case 'backend':
-      $('#tb-backend').textContent = `${d.kind === 'asio' ? 'ASIO' : 'WASAPI 独占'} · ${d.device || ''}`;
+      // V1.1.9：徽章联动独占开关
+      {
+        const isExcl = typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true;
+        $('#tb-backend').textContent = `${d.kind === 'asio' ? 'ASIO' : (isExcl ? 'WASAPI 独占' : 'WASAPI 共享')} · ${d.device || ''}`;
+        $('#tb-backend').classList.toggle('live', isExcl);
+      }
       break;
     case 'engine-dead':
       $('#tb-backend').textContent = '引擎已退出';
@@ -1027,12 +1168,34 @@ function setFormatChips(chips) {
 }
 
 /* ---------------- 传输控制 ---------------- */
-function updateProgress() {
-  const pct = state.duration > 0 ? Math.min(100, state.position / state.duration * 100) : 0;
+// V1.1.7：进度插值状态——引擎 position 事件 10Hz，直接更新进度条会"一格一格跳"；
+// 事件到达时记锚点（position + 到达时刻），rAF 循环按播放速率外推，进度条连续平滑滑动。
+function updateProgress(pos) {
+  const p = pos !== undefined ? pos : state.position;
+  const pct = state.duration > 0 ? Math.min(100, p / state.duration * 100) : 0;
   $('#progress-fill').style.width = pct + '%';
   $('#progress-knob').style.left = pct + '%';
-  $('#t-cur').textContent = fmtTime(state.position);
+  $('#t-cur').textContent = fmtTime(p);
   $('#t-total').textContent = fmtTime(state.duration);
+}
+let _interpRaf = 0;
+function cancelProgressInterp() {
+  if (_interpRaf) { cancelAnimationFrame(_interpRaf); _interpRaf = 0; }
+}
+function startProgressInterp() {
+  if (_interpRaf || !state.playing) return;
+  const tick = () => {
+    _interpRaf = 0;
+    // 暂停/seek 保护/拖动中不插值（等 position 事件恢复锚点）
+    if (!state.playing || state.seeking || state.seekPending) return;
+    const dt = (performance.now() - state._posAt) / 1000;
+    if (dt < 0 || dt > 5) return; // 锚点过期（引擎事件停滞），等下个事件刷新
+    const disp = state.position + dt;
+    updateProgress(disp);
+    if (window.annieViz) window.annieViz.setProgress(disp, state.duration);
+    _interpRaf = requestAnimationFrame(tick);
+  };
+  _interpRaf = requestAnimationFrame(tick);
 }
 
 $('#btn-play').onclick = async () => {
@@ -1040,9 +1203,21 @@ $('#btn-play').onclick = async () => {
     try { await window.mine.engine(state.playing ? 'pause' : 'resume'); } catch { }
   } else if (state.queue.length) playAt(0);
 };
-$('#btn-next').onclick = () => playAt(state.index + 1);
-$('#btn-prev').onclick = () => { if (state.position > 3) playAt(state.index); else playAt(Math.max(0, state.index - 1)); };
-$('#btn-stop').onclick = () => window.mine.engine('stop').catch(() => { });
+// 流媒体播放时 state.index = -1（不占用本地队列索引），下一首/上一首必须走
+// streaming.js 的播放队列（window.annieStream），否则会误播本地队列第 0 首。
+$('#btn-next').onclick = () => {
+  if (state.currentStream && window.annieStream) window.annieStream.playNext();
+  else requestLocalSwitch(1); // V1.1.4：合并连点，只执行最后一次
+};
+$('#btn-prev').onclick = () => {
+  if (state.currentStream && window.annieStream && window.annieStream.playPrev) window.annieStream.playPrev(state.position);
+  else { if (state.position > 3) playAt(state.index); else requestLocalSwitch(-1); } // V1.1.4：合并连点
+};
+$('#btn-stop').onclick = () => {
+  // V1.1.5：stop 立即解除 seek 保护——否则停止后 seekPending 残留，下次播放进度条被冻结
+  if (state.seekPending) { state.seekPending = false; clearTimeout(state.seekTimer); }
+  window.mine.engine('stop').catch(() => { });
+};
 
 // 进度条拖动
 (() => {
@@ -1059,13 +1234,20 @@ $('#btn-stop').onclick = () => window.mine.engine('stop').catch(() => { });
   let sec = 0;
   bar.addEventListener('pointerdown', (e) => {
     if (!state.currentPath || !state.duration) return;
+    cancelProgressInterp(); // V1.1.7：拖动期间暂停插值，避免 rAF 外推与拖动手竞争
     state.seeking = true; sec = seekTo(e);
     const move = (ev) => { sec = seekTo(ev); };
     const up = async () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       state.seeking = false;
-      try { await window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000); } catch { }
+      // V1.1.4：seek 保护——锁定目标位置，引擎 seek 完成前旧 position 不拉回（见 position 处理）
+      state.seekPending = true;
+      state.seekTarget = sec;
+      clearTimeout(state.seekTimer);
+      state.seekTimer = setTimeout(() => { state.seekPending = false; }, 10000);
+      try { await window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000); }
+      catch { state.seekPending = false; clearTimeout(state.seekTimer); } // V1.1.5：seek 失败立即解除冻结，避免进度条锁死 10 秒
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1162,8 +1344,18 @@ $('#btn-close').onclick = () => window.mine.winClose();
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.code === 'Space') { e.preventDefault(); $('#btn-play').click(); }
-  else if (e.code === 'ArrowRight') window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + state.position + 5 }, 30000).catch(() => { });
-  else if (e.code === 'ArrowLeft') window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + Math.max(0, state.position - 5) }, 30000).catch(() => { });
+  // V1.1.5：方向键 seek 复用 seekPending 保护——旧实现直接发 seek 无保护，
+  // 引擎 seek 期间旧 position 事件把进度条拉回（乱跳）
+  else if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') {
+    const delta = e.code === 'ArrowRight' ? 5 : -5;
+    if (!state.currentPath) return;
+    const target = (state.currentCue ? state.currentCue.start : 0) + Math.max(0, state.position + delta);
+    state.seekPending = true;
+    state.seekTarget = state.currentCue ? target - state.currentCue.start : target;
+    clearTimeout(state.seekTimer);
+    state.seekTimer = setTimeout(() => { state.seekPending = false; }, 10000);
+    window.mine.engine('seek', { seconds: target }, 30000).catch(() => { state.seekPending = false; clearTimeout(state.seekTimer); });
+  }
   else if (e.code === 'ArrowUp') { e.preventDefault(); $('#volume').value = Math.min(100, +$('#volume').value + 5); $('#volume').oninput({ target: $('#volume') }); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); $('#volume').value = Math.max(0, +$('#volume').value - 5); $('#volume').oninput({ target: $('#volume') }); }
 });

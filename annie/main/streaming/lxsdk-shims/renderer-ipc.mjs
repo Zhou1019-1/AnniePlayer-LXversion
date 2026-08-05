@@ -57,12 +57,20 @@ function __dirnameShim() {
 
 async function txDecodeOne(str) {
   if (!str) return '';
+  // 优先原生模块（ABI 匹配时），失败降级纯 JS 3DES 实现
   const decode = getQrcDecode();
-  if (!decode) return '';
+  if (decode) {
+    try {
+      const buf = Buffer.from(str, 'hex');
+      return (await inflateAsync(decode(buf, buf.length))).toString();
+    } catch (e) { console.warn('[lxsdk] qrc 原生解码失败，降级纯 JS:', e.message); }
+  }
   try {
-    const buf = Buffer.from(str, 'hex');
-    return (await inflateAsync(decode(buf, buf.length))).toString();
-  } catch { return ''; }
+    const { qrcTripleDesDecrypt } = await import('./qrc-jsdec.mjs');
+    const decrypted = qrcTripleDesDecrypt(str);
+    if (!decrypted.length) return '';
+    return (await inflateAsync(Buffer.from(decrypted.buffer, decrypted.byteOffset, decrypted.byteLength))).toString();
+  } catch (e) { console.warn('[lxsdk] qrc 纯 JS 解码失败:', e.message); return ''; }
 }
 
 // ---- rendererInvoke 实现 ----

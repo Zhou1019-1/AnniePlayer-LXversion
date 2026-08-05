@@ -94,6 +94,10 @@ class EngineClient {
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
     if (msg.event) {
+      // 诊断：播放格式事件落日志（codec/bitDepth/sampleRate/resampled/device）
+      if (msg.event === 'format' || msg.event === 'state' || msg.event === 'backend' || msg.event === 'error') {
+        console.error('[engineEvent]', msg.event, JSON.stringify(msg.data || {}));
+      }
       this._broadcast(msg.event, msg.data || {});
       return;
     }
@@ -102,7 +106,13 @@ class EngineClient {
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
       if (msg.ok) p.resolve(msg.result);
-      else p.reject(new Error(msg.error || 'engine error'));
+      else {
+        // 诊断：引擎拒绝调用时带出方法名
+        if (msg.error && !/already|ready/i.test(String(msg.error))) {
+          console.error('[engineClient] 引擎拒绝:', p.method, '→', msg.error);
+        }
+        p.reject(new Error(msg.error || 'engine error'));
+      }
     }
   }
 
@@ -122,7 +132,7 @@ class EngineClient {
         this.pending.delete(id);
         reject(new Error('引擎调用超时: ' + method));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method });
       try {
         this.proc.stdin.write(JSON.stringify({ id, method, params }) + '\n');
       } catch (e) {

@@ -160,8 +160,8 @@ async function readMetaBatch(paths, limit = 4) {
   return out;
 }
 
-/** 查找并读取同名 .lrc（自动识别 UTF-8 / GBK）。 */
-function readLyrics(filePath) {
+/** 查找并读取同名 .lrc（自动识别 UTF-8 / GBK）。无 .lrc 时回退读取内嵌歌词标签。 */
+async function readLyrics(filePath) {
   const base = filePath.slice(0, filePath.length - path.extname(filePath).length);
   const candidates = [base + '.lrc', base + '.LRC'];
   for (const p of candidates) {
@@ -178,7 +178,35 @@ function readLyrics(filePath) {
       return { ok: true, path: p, text };
     } catch (e) { return { ok: false, error: e.message }; }
   }
-  return { ok: false, error: 'no-lrc' };
+  // V1.1.10：无同名 .lrc 时回退读取音频文件内嵌歌词标签（FLAC LYRICS / MP3 USLT 等）——
+  // ffprobe 可提取，避免"文件明明带歌词却不显示"。
+  return readEmbeddedLyrics(filePath);
+}
+
+/** 用 ffprobe 读取音频文件内嵌歌词（FLAC Vorbis LYRICS / MP3 USLT/lyrics 等）。 */
+function readEmbeddedLyrics(filePath) {
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process');
+    // 与 analyzer.js resolveTool 一致的 dev/prod 双路径工具链定位
+    const prod = path.join(process.resourcesPath || '', 'engine', 'tools', 'ffprobe.exe');
+    const dev = path.join(__dirname, '..', 'engine', 'tools', 'ffprobe.exe');
+    let ffprobe = null;
+    for (const p of [prod, dev]) { try { if (fs.existsSync(p)) { ffprobe = p; break; } } catch { } }
+    if (!ffprobe) { resolve({ ok: false, error: 'no-ffprobe' }); return; }
+    const proc = spawn(ffprobe, ['-v', 'error', '-show_entries', 'format_tags', '-of', 'json', filePath], { windowsHide: true });
+    let out = '';
+    proc.stdout.on('data', (d) => { out += d; });
+    proc.on('error', () => resolve({ ok: false, error: 'ffprobe-error' }));
+    proc.on('close', (code) => {
+      if (code !== 0) { resolve({ ok: false, error: 'ffprobe-' + code }); return; }
+      try {
+        const tags = JSON.parse(out).format?.tags || {};
+        const text = tags.LYRICS || tags.lyrics || tags.UNSYNCEDLYRICS || tags['UNSYNCED LYRICS'] || null;
+        if (text) resolve({ ok: true, path: filePath, text, embedded: true });
+        else resolve({ ok: false, error: 'no-lyrics-tag' });
+      } catch { resolve({ ok: false, error: 'parse-error' }); }
+    });
+  });
 }
 
 /** 读文件为 Buffer（渲染层节拍分析用）。>64MB 拒绝，防内存爆。 */

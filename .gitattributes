@@ -1,0 +1,24 @@
+# 统一行尾为 LF：仓库内以 LF 存储，检出保持 LF（避免 autocrlf 导致的假改动）
+* text=auto eol=lf
+
+# 二进制文件标记，避免被 text 规则误伤
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.pdb binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.dat binary
+*.db binary
+*.node binary
+
+# 已压缩/生成文件按二进制处理（避免行尾重写破坏）
+*.min.js binary
+vendor/three.r128.min.js binary
+vendor/gsap.min.js binary

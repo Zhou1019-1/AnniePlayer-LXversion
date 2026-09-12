@@ -14,13 +14,14 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 </script>
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/fb2k.css">
+<link rel="stylesheet" href="css/am.css">
 </head>
 <body>
 
 <!-- 标题栏 -->
 <header id="titlebar">
   <div class="tb-drag">
-    <span class="tb-logo">安妮播放器Plus <em>Pro</em> <span class="tb-ver">beta0.0.2</span></span>
+    <span class="tb-logo">安妮播放器 <em>SVLX</em> <span class="tb-ver">1.2.0</span></span>
     <span id="tb-backend" class="tb-badge" title="输出后端">未连接</span>
   </div>
   <div class="tb-btns">
@@ -194,6 +195,7 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
     </div>
     <div class="ctl-group tools">
       <button id="btn-fav-cur" class="ctl" title="收藏当前曲目">♡</button>
+      <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）">◎</button>
       <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板">📊</button>
       <!-- beta0.0.3 移植：一键定位当前播放文件（滚动到列表位置并高亮） -->
       <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）">◎</button>
@@ -224,6 +226,9 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 <!-- 仿 foobar2000 主题根容器（内容由 fb2k.js 构建；默认隐藏，由 html[data-theme] 控制） -->
 <div id="fb2k-root" aria-hidden="true"></div>
 
+<!-- Apple Music 风格主题根容器（内容由 am.js 构建；默认隐藏，由 html[data-theme] 控制） -->
+<div id="am-root" aria-hidden="true"></div>
+
 <!-- 主题切换淡入淡出遮罩 -->
 <div id="theme-fade"></div>
 
@@ -242,5 +247,6 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 <script src="js/local/proUi.js"></script>
 <script src="js/local/theme.js"></script>
 <script src="js/local/fb2k.js"></script>
+<script src="js/local/am.js"></script>
 </body>
 </html>

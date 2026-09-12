@@ -1,0 +1,345 @@
+/* ================= Apple Music 风格主题（主题 C，与粒子舞台/FB2K 并列） =================
+ * 所有规则限定在 html[data-theme="am"] 下，与其余主题完全隔离。
+ * 设计：Apple Music for Windows（Fluent/Liquid Glass）——
+ *   磨砂玻璃（高斯模糊+饱和+半透明）、封面氛围大模糊背景、圆角卡片、#fa2d55 强调色；
+ * 亮/暗双主题：#am-root.am-light 切换 CSS 变量；
+ * 布局：顶部传输栏(56px,磨砂) → 主体[侧栏(240px,磨砂) | 内容 | 歌词面板(360px,磨砂,可显隐)]。
+ * AM 主题自带标题栏（拖拽区+窗口按钮），隐藏旧 #titlebar。 */
+
+/* ---------- 主题显隐总开关 ---------- */
+#am-root { display: none; }
+html[data-theme="am"] #am-root {
+  display: flex; flex-direction: column;
+  position: fixed; inset: 0; z-index: 40;
+  overflow: hidden;
+}
+html[data-theme="am"] #layout,
+html[data-theme="am"] #viz-bar,
+html[data-theme="am"] #bottom-bar,
+html[data-theme="am"] #level-dock,
+html[data-theme="am"] #tool-banner { display: none !important; }
+html[data-theme="am"] #titlebar { display: none !important; }
+
+/* ---------- 设计变量（默认暗色；.am-light 覆盖为亮色） ---------- */
+#am-root {
+  --am-accent: #fa2d55;
+  --am-accent-hover: #fb4a6e;
+  --am-accent-ink: #fff;
+  --am-bg: #1e1e1e;
+  --am-bg-elev: #262626;
+  --am-text: #f5f5f7;
+  --am-text-2: rgba(245, 245, 247, .56);
+  --am-text-3: rgba(245, 245, 247, .34);
+  --am-sep: rgba(255, 255, 255, .08);
+  --am-glass: rgba(30, 30, 30, .72);
+  --am-glass-2: rgba(38, 38, 38, .62);
+  --am-hover: rgba(255, 255, 255, .06);
+  --am-active: rgba(255, 255, 255, .10);
+  --am-row-cur: rgba(250, 45, 85, .14);
+  --am-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+  --am-blur: blur(48px) saturate(1.8);
+  --am-font: -apple-system, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  color: var(--am-text);
+  font: 13px/1.5 var(--am-font);
+  background: var(--am-bg);
+  -webkit-font-smoothing: antialiased;
+}
+#am-root.am-light {
+  --am-bg: #f5f5f7;
+  --am-bg-elev: #ffffff;
+  --am-text: #1d1d1f;
+  --am-text-2: rgba(29, 29, 31, .58);
+  --am-text-3: rgba(29, 29, 31, .36);
+  --am-sep: rgba(0, 0, 0, .08);
+  --am-glass: rgba(245, 245, 247, .72);
+  --am-glass-2: rgba(255, 255, 255, .66);
+  --am-hover: rgba(0, 0, 0, .05);
+  --am-active: rgba(0, 0, 0, .08);
+  --am-row-cur: rgba(250, 45, 85, .10);
+  --am-shadow: 0 12px 40px rgba(0, 0, 0, .18);
+}
+
+/* ---------- 封面氛围大模糊背景（图 1 风格） ---------- */
+#am-root::before {
+  content: ''; position: absolute; inset: -8%;
+  background-image: var(--am-bgimage, none);
+  background-size: cover; background-position: center;
+  filter: blur(90px) saturate(1.5) brightness(.42);
+  transform: scale(1.1);
+  transition: opacity .6s ease;
+  pointer-events: none;
+}
+#am-root.am-light::before { filter: blur(90px) saturate(1.4) brightness(1.05); opacity: .5; }
+#am-root.am-nobg::before { opacity: 0; }
+
+/* ---------- 顶部传输栏（磨砂） ---------- */
+.am-topbar {
+  flex: none; height: 64px; display: flex; align-items: center; gap: 12px;
+  padding: 0 14px; position: relative; z-index: 3;
+  background: var(--am-glass);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  border-bottom: 1px solid var(--am-sep);
+  -webkit-app-region: drag; /* 标准无框窗口拖拽：整个顶栏可拖动窗口 */
+}
+/* 拖拽区内所有可交互元素必须显式 no-drag，否则点击被窗口拖拽吞掉 */
+.am-topbar button, .am-topbar input, .am-topbar select, .am-np-prog { -webkit-app-region: no-drag; }
+.am-transport { display: flex; align-items: center; gap: 4px; }
+.am-tbtn {
+  border: 0; background: transparent; color: var(--am-text-2); cursor: pointer;
+  width: 34px; height: 34px; border-radius: 8px; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s, transform .1s;
+}
+.am-tbtn:hover { background: var(--am-hover); color: var(--am-text); }
+.am-tbtn:active { transform: scale(.92); }
+.am-tbtn.on { color: var(--am-accent); }
+.am-tbtn.am-play { width: 40px; height: 40px; font-size: 19px; color: var(--am-text); }
+
+/* 中央：迷你封面 + 标题 + 音质徽标；下行：当前时间 · 细进度 · 剩余时间 */
+.am-np {
+  flex: 1; min-width: 0; max-width: 620px; margin: 0 auto;
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  position: relative; cursor: default;
+}
+.am-np-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.am-np-cover {
+  width: 38px; height: 38px; border-radius: 6px; object-fit: cover; flex: none;
+  background: var(--am-bg-elev); box-shadow: 0 2px 10px rgba(0, 0, 0, .3);
+}
+.am-np-cover:not([src]) { visibility: hidden; }
+.am-np-text { min-width: 0; flex: 1; }
+.am-np-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-np-sub { font-size: 11px; color: var(--am-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-badge {
+  flex: none; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  color: var(--am-accent); border: 1px solid var(--am-accent); border-radius: 5px;
+  padding: 2px 6px; opacity: .9; white-space: nowrap;
+}
+.am-np-progrow { display: flex; align-items: center; gap: 8px; }
+.am-np-time {
+  flex: none; width: 40px; font-size: 10px; color: var(--am-text-2);
+  font-variant-numeric: tabular-nums; text-align: center; user-select: none;
+}
+.am-np-prog { flex: 1; height: 4px; border-radius: 2px; background: var(--am-sep); overflow: hidden; cursor: pointer; }
+.am-np-prog i { display: block; height: 100%; width: 0; background: var(--am-text-2); border-radius: 2px; }
+.am-np-prog:hover i { background: var(--am-accent); }
+
+.am-tb-right { display: flex; align-items: center; gap: 6px; }
+.am-vol { display: flex; align-items: center; gap: 6px; }
+.am-vol input[type="range"] {
+  -webkit-appearance: none; width: 84px; height: 4px; border-radius: 2px;
+  background: var(--am-sep); outline: none; cursor: pointer;
+}
+.am-vol input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--am-text); box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+.am-winbtns { display: flex; gap: 2px; margin-left: 4px; }
+.am-winbtns .am-tbtn { border-radius: 6px; width: 40px; font-size: 13px; }
+.am-winbtns .am-close:hover { background: #e81123; color: #fff; }
+
+/* ---------- 主体三栏 ---------- */
+.am-body { flex: 1; display: flex; min-height: 0; position: relative; z-index: 2; }
+
+/* 侧栏（磨砂 Liquid Glass） */
+.am-side {
+  flex: none; width: 240px; display: flex; flex-direction: column;
+  background: var(--am-glass-2);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  border-right: 1px solid var(--am-sep);
+  padding: 8px; overflow-y: auto;
+}
+.am-search {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  background: var(--am-hover); border-radius: 8px; padding: 6px 10px; margin-top: auto;
+}
+.am-search input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  color: var(--am-text); font: 13px var(--am-font);
+}
+.am-search input::placeholder { color: var(--am-text-3); }
+.am-side-h {
+  flex: none; font-size: 11px; font-weight: 600; color: var(--am-text-3);
+  padding: 10px 10px 4px; letter-spacing: .02em;
+}
+.am-nav {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: transparent; color: var(--am-text); cursor: pointer;
+  padding: 7px 10px; border-radius: 8px; font: 13px var(--am-font); text-align: left;
+  transition: background .15s;
+}
+.am-nav:hover { background: var(--am-hover); }
+.am-nav.cur { background: var(--am-active); font-weight: 600; }
+.am-nav .am-nav-ico { width: 18px; text-align: center; flex: none; opacity: .8; }
+.am-nav .am-nav-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-nav .am-nav-del {
+  flex: none; opacity: 0; border: 0; background: transparent; color: var(--am-text-3);
+  cursor: pointer; font-size: 14px; padding: 0 4px; border-radius: 4px;
+}
+.am-nav:hover .am-nav-del { opacity: 1; }
+.am-nav .am-nav-del:hover { color: var(--am-accent); }
+.am-nav.am-new { color: var(--am-text-2); }
+
+/* 内容区 */
+.am-content { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 28px 40px; }
+.am-view-h { font-size: 26px; font-weight: 700; margin: 4px 0 16px; letter-spacing: -.01em; }
+
+/* 专辑网格 */
+.am-album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 22px 18px; }
+.am-album-card { cursor: pointer; }
+.am-album-card img {
+  width: 100%; aspect-ratio: 1; border-radius: 10px; object-fit: cover; display: block;
+  background: var(--am-bg-elev); box-shadow: 0 4px 18px rgba(0, 0, 0, .25);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.am-album-card:hover img { transform: scale(1.03); box-shadow: var(--am-shadow); }
+.am-album-name { margin-top: 8px; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-album-sub { font-size: 12px; color: var(--am-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 歌曲表 */
+.am-table { width: 100%; border-collapse: collapse; }
+.am-table th {
+  text-align: left; font-size: 11px; font-weight: 500; color: var(--am-text-3);
+  padding: 6px 12px; border-bottom: 1px solid var(--am-sep); position: sticky; top: -20px;
+  background: var(--am-bg); /* 不用 backdrop-filter：粘性表头逐帧模糊是滚动卡顿来源 */
+}
+.am-table td { padding: 7px 12px; font-size: 13px; border-bottom: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+.am-table .am-tr { cursor: default; border-radius: 8px; transition: background .12s; }
+.am-table .am-tr:hover { background: var(--am-hover); }
+.am-table .am-tr.cur { background: var(--am-row-cur); }
+.am-table .am-tr.cur .am-c-title { color: var(--am-accent); font-weight: 600; }
+.am-c-cover { width: 34px; height: 34px; border-radius: 5px; object-fit: cover; background: var(--am-bg-elev); vertical-align: middle; }
+.am-c-dim { color: var(--am-text-2); }
+.am-c-acts { text-align: right; width: 76px; }
+.am-mini-btn {
+  border: 0; background: transparent; color: var(--am-text-3); cursor: pointer;
+  width: 26px; height: 26px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .12s, color .12s;
+}
+.am-tr:hover .am-mini-btn { opacity: 1; }
+.am-mini-btn:hover { color: var(--am-text); background: var(--am-hover); }
+.am-mini-btn.faved { opacity: 1; color: var(--am-accent); }
+
+/* 歌单详情头（图 2 风格） */
+.am-pl-head { display: flex; gap: 22px; align-items: flex-end; margin-bottom: 20px; }
+.am-pl-cover {
+  width: 190px; height: 190px; border-radius: 12px; object-fit: cover; flex: none;
+  background: var(--am-bg-elev); box-shadow: var(--am-shadow);
+}
+.am-pl-cover-ph {
+  width: 190px; height: 190px; border-radius: 12px; flex: none;
+  background: var(--am-bg-elev); box-shadow: var(--am-shadow);
+  display: flex; align-items: center; justify-content: center; font-size: 44px; color: var(--am-text-3);
+}
+.am-pl-info { min-width: 0; }
+.am-pl-name { font-size: 24px; font-weight: 700; outline: none; border-radius: 6px; padding: 0 4px; margin-left: -4px; }
+.am-pl-name[contenteditable="true"]:hover { background: var(--am-hover); }
+.am-pl-meta { color: var(--am-text-2); font-size: 13px; margin: 4px 0 14px; }
+.am-pl-actions { display: flex; gap: 10px; }
+.am-btn {
+  border: 0; border-radius: 9px; cursor: pointer; font: 600 13px var(--am-font);
+  padding: 8px 18px; display: inline-flex; align-items: center; gap: 7px;
+  background: var(--am-glass-2); color: var(--am-text);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  transition: background .15s, transform .1s;
+}
+.am-btn:hover { background: var(--am-active); }
+.am-btn:active { transform: scale(.96); }
+.am-btn.am-btn-accent { background: var(--am-accent); color: var(--am-accent-ink); }
+.am-btn.am-btn-accent:hover { background: var(--am-accent-hover); }
+.am-empty { color: var(--am-text-3); text-align: center; padding: 80px 0; font-size: 14px; }
+
+/* ---------- 歌词面板（AM 风格：大字号逐行，当前行高亮，远处微模糊） ---------- */
+.am-lyrics {
+  flex: none; width: 0; overflow: hidden; position: relative;
+  transition: width .25s ease;
+  border-left: 1px solid transparent;
+}
+#am-root.am-lyr-on .am-lyrics {
+  width: 360px; border-left-color: var(--am-sep);
+  background: var(--am-glass-2);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+}
+.am-lyr-scroll { position: absolute; inset: 0; overflow-y: auto; padding: 40vh 26px; scroll-behavior: smooth; }
+.am-lyr-line {
+  font-size: 22px; font-weight: 700; line-height: 1.45; letter-spacing: -.01em;
+  padding: 7px 0; cursor: pointer;
+  color: var(--am-text-3);
+  transition: color .3s, filter .3s, transform .3s, opacity .3s;
+  transform-origin: left center;
+}
+.am-lyr-line .tly { display: block; font-size: 14px; font-weight: 500; opacity: .8; margin-top: 2px; }
+.am-lyr-line.far { filter: blur(1.6px); opacity: .55; }
+.am-lyr-line.near { color: var(--am-text-2); }
+.am-lyr-line.cur { color: var(--am-text); transform: scale(1.04); filter: none; }
+.am-lyr-line:hover { color: var(--am-text-2); }
+.am-lyr-empty { color: var(--am-text-3); font-size: 15px; font-weight: 600; text-align: center; margin-top: 30vh; }
+
+/* 滚动条 */
+.am-side::-webkit-scrollbar, .am-content::-webkit-scrollbar, .am-lyr-scroll::-webkit-scrollbar { width: 8px; }
+.am-side::-webkit-scrollbar-thumb, .am-content::-webkit-scrollbar-thumb, .am-lyr-scroll::-webkit-scrollbar-thumb {
+  background: var(--am-sep); border-radius: 4px;
+}
+.am-lyr-scroll::-webkit-scrollbar-thumb { background: transparent; }
+
+/* "添加到播放列表"弹出菜单 */
+.am-pop {
+  position: fixed; z-index: 90; min-width: 180px; max-width: 260px;
+  background: var(--am-glass); border: 1px solid var(--am-sep); border-radius: 10px;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: var(--am-shadow); padding: 6px; display: none;
+}
+.am-pop.on { display: block; }
+.am-pop-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 0; background: transparent; color: var(--am-text); cursor: pointer;
+  padding: 7px 10px; border-radius: 7px; font: 13px var(--am-font); text-align: left;
+}
+.am-pop-item:hover { background: var(--am-accent); color: #fff; }
+.am-pop-sep { height: 1px; background: var(--am-sep); margin: 5px 8px; }
+
+/* ---------- 在线搜索视图（洛雪，AM 外观） ---------- */
+.am-st-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.am-st-pfs { display: flex; gap: 6px; flex-wrap: wrap; }
+.am-chip {
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text-2);
+  border-radius: 999px; padding: 5px 14px; font: 12px var(--am-font); cursor: pointer;
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  transition: background .15s, color .15s, border-color .15s;
+}
+.am-chip:hover { color: var(--am-text); background: var(--am-hover); }
+.am-chip.cur { background: var(--am-accent); border-color: var(--am-accent); color: #fff; }
+.am-st-quality {
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  border-radius: 8px; padding: 5px 8px; font: 12px var(--am-font); outline: none; cursor: pointer;
+}
+.am-st-inputrow { display: flex; gap: 10px; margin-bottom: 10px; }
+.am-st-input {
+  flex: 1; min-width: 0; border: 1px solid var(--am-sep); outline: none;
+  background: var(--am-glass-2); color: var(--am-text);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-radius: 10px; padding: 9px 14px; font: 13px var(--am-font);
+  transition: border-color .15s;
+}
+.am-st-input:focus { border-color: var(--am-accent); }
+.am-st-input::placeholder { color: var(--am-text-3); }
+.am-st-status { font-size: 12px; color: var(--am-text-2); min-height: 18px; margin-bottom: 8px; }
+.am-st-status.warn { color: var(--am-accent); }
+.am-qbadge {
+  display: inline-block; font-size: 10px; font-weight: 600; color: var(--am-text-3);
+  border: 1px solid var(--am-sep); border-radius: 4px; padding: 1px 5px; margin-right: 4px;
+}
+.am-qbadge.hq { color: var(--am-accent); border-color: var(--am-accent); }
+
+/* 文件夹列表行 */
+.am-folder-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 10px; cursor: pointer;
+  transition: background .15s;
+}
+.am-folder-row:hover { background: var(--am-hover); }
+.am-folder-ico { font-size: 20px; flex: none; }
+.am-folder-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-folder-sub { flex: none; font-size: 12px; color: var(--am-text-3); }
+
+/* 设置面板主题卡片缩略图（全局类，配合 settings.js 的 theme-grid） */
+.theme-thumb-am { background: linear-gradient(135deg, rgba(250,45,85,.85), rgba(30,30,30,.9) 60%), rgba(255,255,255,.2); backdrop-filter: blur(6px); }

@@ -46,6 +46,53 @@ function broadcastScan(payload) {
   try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('scan:event', payload); } catch { }
 }
 
+/* SVLX 1.2.0：SACD ISO 分轨（sacd_extract 探测 → 虚拟分轨，播放时按需解轨为临时 DSF） */
+const sacdIso = require('./sacdIso');
+let isoProbeJobs = 0;      // 进行中的 ISO 探测数
+let pendingScanDone = null; // ISO 探测未完成时暂存 done 事件
+function finishScanIfReady() {
+  if (!pendingScanDone || isoProbeJobs > 0) return;
+  const m = pendingScanDone; pendingScanDone = null;
+  try { saveStore({ tracks: scannedTracks }); } catch { }
+  broadcastScan({ type: 'done', found: m.found });
+}
+async function probeIsos(isos) {
+  isoProbeJobs++;
+  try {
+    const virtuals = [];
+    for (const f of isos) {
+      try {
+        const info = await sacdIso.probe(f.path);
+        const albumName = info.album || f.name.replace(/\.iso$/i, ''); // 无文本元数据的 ISO 用文件名兜底
+        for (const tr of info.tracks) {
+          virtuals.push({
+            path: f.path + '#iso' + tr.no,
+            name: (tr.title || ('Track ' + String(tr.no).padStart(2, '0'))) + '.dsf',
+            dir: f.dir, size: f.size, mtime: f.mtime,
+            iso: { src: f.path, no: tr.no, dur: tr.dur || 0 },
+            cueMeta: { title: tr.title || ('Track ' + String(tr.no).padStart(2, '0')), artist: tr.performer || info.albumArtist || '', album: albumName }
+          });
+        }
+      } catch { /* 非 SACD ISO 或探测失败：跳过 */ }
+    }
+    if (virtuals.length) {
+      scannedTracks.push(...virtuals);
+      try {
+        const store = loadStore();
+        let dirty = false;
+        for (const t of virtuals) {
+          store.metaCache[t.path] = { title: t.cueMeta.title, artist: t.cueMeta.artist, album: t.cueMeta.album, genre: '', year: 0, duration: t.iso.dur || 0 };
+          dirty = true;
+        }
+        if (dirty) saveStore({ metaCache: store.metaCache });
+      } catch { }
+      broadcastScan({ type: 'cue', hidden: [], tracks: virtuals }); // 复用 CUE 事件通道（渲染层统一处理）
+    }
+  } catch { }
+  isoProbeJobs--;
+  finishScanIfReady();
+}
+
 function ensureScanWorker() {
   if (scanWorker) return scanWorker;
   try {
@@ -78,8 +125,12 @@ function ensureScanWorker() {
         broadcastScan({ type: 'cue', hidden: m.hidden, tracks: m.tracks });
       }
       else if (m.type === 'done') {
-        try { saveStore({ tracks: scannedTracks }); } catch { }
-        broadcastScan({ type: 'done', found: m.found });
+        pendingScanDone = m; // SVLX 1.2.0：等待进行中的 ISO 探测完成后再收尾
+        finishScanIfReady();
+      }
+      else if (m.type === 'isoFound') {
+        // SVLX 1.2.0：SACD ISO——主线程探测分轨（sacd_extract 不可用时静默跳过）
+        if (sacdIso.available()) probeIsos(m.isos || []);
       }
       else if (m.type === 'cancelled') {
         try { saveStore({ tracks: scannedTracks }); } catch { } // 保留已扫到的部分
@@ -131,11 +182,12 @@ function loadStore() {
   try {
     const s = JSON.parse(fs.readFileSync(storePath(), 'utf8'));
     if (!Array.isArray(s.favorites)) s.favorites = [];
+    if (!Array.isArray(s.playlists)) s.playlists = []; // SVLX 1.3.0：自建播放列表 [{id,name,paths,created}]
     if (!s.metaCache || typeof s.metaCache !== 'object') s.metaCache = {};
     if (!s.stats || typeof s.stats !== 'object') s.stats = {}; // Pro beat0.0.1：播放统计
     return s;
   }
-  catch { return { folders: [], tracks: [], volume: 1, backend: null, favorites: [], metaCache: {}, stats: {} }; }
+  catch { return { folders: [], tracks: [], volume: 1, backend: null, favorites: [], playlists: [], metaCache: {}, stats: {} }; }
 }
 
 function saveStore(patch) {
@@ -277,12 +329,53 @@ function registerIpc() {
     return favs;
   });
 
+  // SVLX 1.3.0：自建播放列表（Apple Music 主题使用；{id, name, paths[], created}）
+  ipcMain.handle('lib:playlists', () => loadStore().playlists);
+  ipcMain.handle('lib:playlist:create', (_e, name) => {
+    const store = loadStore();
+    const pl = {
+      id: 'pl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+      name: String(name || '').trim() || '新建播放列表',
+      paths: [],
+      created: Date.now()
+    };
+    store.playlists.push(pl);
+    saveStore({ playlists: store.playlists });
+    return store.playlists;
+  });
+  ipcMain.handle('lib:playlist:rename', (_e, id, name) => {
+    const store = loadStore();
+    const pl = store.playlists.find(p => p.id === id);
+    if (pl) { const n = String(name || '').trim(); if (n) pl.name = n; saveStore({ playlists: store.playlists }); }
+    return store.playlists;
+  });
+  ipcMain.handle('lib:playlist:delete', (_e, id) => {
+    const store = loadStore();
+    saveStore({ playlists: store.playlists.filter(p => p.id !== id) });
+    return loadStore().playlists;
+  });
+  ipcMain.handle('lib:playlist:add', (_e, id, paths) => {
+    const store = loadStore();
+    const pl = store.playlists.find(p => p.id === id);
+    if (pl && Array.isArray(paths)) {
+      for (const p of paths) if (typeof p === 'string' && !pl.paths.includes(p)) pl.paths.push(p);
+      saveStore({ playlists: store.playlists });
+    }
+    return store.playlists;
+  });
+  ipcMain.handle('lib:playlist:remove', (_e, id, trackPath) => {
+    const store = loadStore();
+    const pl = store.playlists.find(p => p.id === id);
+    if (pl) { pl.paths = pl.paths.filter(p => p !== trackPath); saveStore({ playlists: store.playlists }); }
+    return store.playlists;
+  });
+
   // 批量读取标签（排序用），结果写入 metaCache 持久化，避免重复解析
   // EXP 7.28：解析移交 scanWorker 线程；Worker 不可用时降级为主进程异步解析
   ipcMain.handle('lib:metaBatch', async (_e, paths) => {
     const store = loadStore();
     const cache = store.metaCache;
-    const missing = paths.filter(p => !cache[p] && !p.includes('#cue')); // Pro：CUE 虚拟分轨不触碰文件系统
+    const missing = paths.filter(p => !cache[p] && !p.includes('#cue') && !p.includes('#iso')); // Pro：CUE/ISO 虚拟分轨不触碰文件系统
     if (missing.length) {
       let fresh = await metaViaWorker(missing);
       if (!fresh) fresh = await library.readMetaBatch(missing);
@@ -484,19 +577,34 @@ function registerIpc() {
   });
 
   // Pro：CUE 虚拟分轨（路径含 #cueN）不读文件系统，直接由 metaCache 合成
+  // SVLX 1.2.0：SACD ISO 虚拟分轨（路径含 #isoN）同样由 metaCache 合成
   ipcMain.handle('track:meta', (_e, p) => {
-    if (p.includes('#cue')) {
+    if (p.includes('#cue') || p.includes('#iso')) {
       const c = loadStore().metaCache[p] || {};
-      return { ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '', duration: 0, cue: true };
+      return { ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '', duration: c.duration || 0, cue: true };
     }
     return library.readMeta(p);
   });
-  ipcMain.handle('track:lyrics', (_e, p) => library.readLyrics(p.includes('#cue') ? p.slice(0, p.indexOf('#cue')) : p));
+  ipcMain.handle('track:lyrics', (_e, p) => {
+    const cut = p.includes('#cue') ? p.indexOf('#cue') : (p.includes('#iso') ? p.indexOf('#iso') : -1);
+    return library.readLyrics(cut >= 0 ? p.slice(0, cut) : p);
+  });
   ipcMain.handle('track:readFile', (_e, p) => {
     // Pro：CUE 虚拟分轨剥离 #cueN 后缀，读真实整轨文件
-    const real = p.includes('#cue') ? p.slice(0, p.indexOf('#cue')) : p;
+    const cut = p.includes('#cue') ? p.indexOf('#cue') : (p.includes('#iso') ? p.indexOf('#iso') : -1);
+    const real = cut >= 0 ? p.slice(0, cut) : p;
     const buf = library.readFileBuffer(real);
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  });
+
+  // SVLX 1.2.0：SACD ISO 按需解轨 → 临时 DSF（缓存命中直接返回）
+  ipcMain.handle('iso:extractTrack', async (_e, params) => {
+    try {
+      if (!sacdIso.available()) return { ok: false, error: '缺少 sacd_extract.exe' };
+      const cacheDir = path.join(app.getPath('userData'), 'isoCache');
+      const dsf = await sacdIso.extractTrack(params.src, params.no, cacheDir);
+      return { ok: true, path: dsf };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('settings:save', (_e, patch) => saveStore(patch));

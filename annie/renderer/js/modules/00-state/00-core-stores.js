@@ -98,13 +98,13 @@ var LYRIC_LAYOUT_STORE_KEY = 'mineradio-lyric-layout-v1';
 var CURRENT_FX_AUTOSAVE_STORE_KEY = 'mineradio-current-fx-autosave-v1';
 var CURRENT_FX_AUTOSAVE_SCHEMA = 'current-fx-autosave-v2';
 var VISUAL_PRESET_SCHEMA = 'skull-preset-v2';
-var MAX_VISUAL_PRESET_INDEX = 7;
+// 对齐上游 Mineradio 2.x：8=音域回响·Wallpaper Engine(sonic-workshop)，9~12=月蚀圣环/雨幕霓虹/折光蝶群/深海绽放
+var MAX_VISUAL_PRESET_INDEX = 12;
 var SONIC_PRESET_INDEX = 7;
-var LEGACY_REMOVED_VISUAL_PRESET_INDEX = 8;
+var SONIC_WORKSHOP_PRESET_INDEX = 8;
 function normalizeSavedVisualPresetIndex(value) {
   var preset = Number(value);
   if (!isFinite(preset)) preset = 0;
-  if (preset === LEGACY_REMOVED_VISUAL_PRESET_INDEX) return SONIC_PRESET_INDEX;
   return Math.max(0, Math.min(MAX_VISUAL_PRESET_INDEX, preset));
 }
 var PLAYBACK_QUALITY_STORE_KEY = 'mineradio-playback-quality-v1';

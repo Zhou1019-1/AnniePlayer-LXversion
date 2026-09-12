@@ -37,6 +37,7 @@ async function scan(jobId, folders) {
   };
 
   const cueFiles = []; // Pro beat0.0.1：扫描中收集 .cue
+  const isoFiles = []; // SVLX 1.2.0：扫描中收集 SACD .iso
 
   async function walk(dir, depth) {
     if (cancelled || depth > 12) return;
@@ -51,6 +52,12 @@ async function scan(jobId, folders) {
         if (!e.isFile()) continue;
         const ext = path.extname(e.name).toLowerCase();
         if (ext === '.cue') { cueFiles.push(full); continue; } // Pro：CUE 分轨
+        if (ext === '.iso') { // SVLX 1.2.0：SACD ISO 分轨（主线程探测后生成虚拟分轨）
+          let size = 0, mtime = 0;
+          try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; } catch { }
+          isoFiles.push({ path: full, name: e.name, dir, size, mtime });
+          continue;
+        }
         if (!AUDIO_EXTS.has(ext)) continue;
         let size = 0, mtime = 0;
         try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; } catch { }
@@ -95,6 +102,9 @@ async function scan(jobId, folders) {
       if (hidden.length || virtuals.length) post({ type: 'cue', hidden, tracks: virtuals });
     } catch { /* cueParser 不可用时忽略 CUE（整轨照常入列） */ }
   }
+
+  /* SVLX 1.2.0：SACD ISO——交给主线程用 sacd_extract 探测分轨 */
+  if (!cancelled && isoFiles.length) post({ type: 'isoFound', isos: isoFiles });
 
   flush();
   post({ type: cancelled ? 'cancelled' : 'done', found });

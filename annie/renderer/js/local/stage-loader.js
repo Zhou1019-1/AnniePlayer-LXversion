@@ -45,6 +45,7 @@
     'js/modules/02-visual/15-ripples-cover-depth.js',
 
     'js/sonic-topography-preset.js',
+    'js/sonic-workshop-preset.js',
 
     'js/modules/03-beat/00-tempo-worker-cache-prefetch.js',
     'js/modules/03-beat/01-audio-beat-analysis.js',

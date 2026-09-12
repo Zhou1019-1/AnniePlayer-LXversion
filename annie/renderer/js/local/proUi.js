@@ -327,7 +327,10 @@
     add('EQ 开关', '音效', () => window.annieEQ && annieEQ.setEnabled(!annieEQ.state.enabled));
     ['flat', 'pop', 'rock', 'jazz', 'classical', 'bass', 'vocal'].forEach(p =>
       add('EQ 预设：' + p, '音效', () => window.annieEQ && annieEQ.setPreset(p)));
-    add('切换主题（粒子舞台 ⇄ FB2K）', '界面', () => annieTheme.apply(annieTheme.current === 'fb2k' ? 'legacy' : 'fb2k'));
+    add('切换主题（粒子舞台 → FB2K → Apple Music）', '界面', () => {
+      const order = ['legacy', 'fb2k', 'am'];
+      annieTheme.switch(order[(order.indexOf(annieTheme.current) + 1) % order.length]);
+    });
     ['gold:暗夜金', 'aurora:靛蓝极光', 'jade:翡翠深空', 'day:白昼'].forEach(s => {
       const [k, label] = s.split(':');
       add('配色：' + label, '界面', () => annieSettings.setPalette(k));

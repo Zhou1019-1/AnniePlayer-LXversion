@@ -704,12 +704,13 @@
     var list = deco.map(function (d) { return d.t; });
     S.rows = rows;
     S.tracks = list;
-    // beta0.0.3 移植：路径 → 行号 O(1) 索引（定位播放行时替代线性扫描）
-    var pIdx = new Map();
+    // SVLX 同步 beta0.0.3：路径 → 行号 / 曲目序号双索引，定位与队列查找 O(1)
+    S.rowPathIdx = new Map();
+    S.trackPathIdx = new Map();
     for (var ri = 0; ri < rows.length; ri++) {
-      if (rows[ri].type === 'track') pIdx.set(rows[ri].t.path, ri);
+      if (rows[ri].type === 'track') S.rowPathIdx.set(rows[ri].t.path, ri);
     }
-    S.rowPathIdx = pIdx;
+    for (var ti = 0; ti < list.length; ti++) S.trackPathIdx.set(list[ti].path, ti);
     // 播放中不覆写 PlayerCore 队列（双击/ transport 会钉住队列快照）；
     // 覆写会导致队列顺序与播放索引错位（显示一首、播放另一首）
     if (!state.currentPath) state.queue = list;
@@ -1122,8 +1123,8 @@
   }
   /* 当前曲目在 FB2K 列表中的位置（按路径定位，避免被其它视图的队列覆写干扰） */
   function fb2kQueueIndex() {
-    for (var i = 0; i < S.tracks.length; i++) if (S.tracks[i].path === state.currentPath) return i;
-    return -1;
+    var i = S.trackPathIdx ? S.trackPathIdx.get(state.currentPath) : undefined; // SVLX 同步：O(1)
+    return i === undefined ? -1 : i;
   }
   function transportNext() {
     var i = fb2kQueueIndex();

@@ -1,10 +1,10 @@
 'use strict';
-/* 界面主题管理器：粒子舞台(legacy) ↔ 仿 foobar2000(fb2k) 一键切换。
+/* 界面主题管理器：粒子舞台(legacy) ↔ 仿 foobar2000(fb2k) ↔ Apple Music(am) 一键切换。
  * 主题存 localStorage（key: annieplayer.theme）；切换时 300ms 淡入淡出遮罩防布局闪烁；
- * 播放引擎与队列不受影响，状态天然连续。预留扩展：VALID 数组追加即可支持第三套主题。 */
+ * 播放引擎与队列不受影响，状态天然连续。预留扩展：VALID 数组追加即可支持更多主题。 */
 (function () {
   var KEY = 'annieplayer.theme';
-  var VALID = ['legacy', 'fb2k'];
+  var VALID = ['legacy', 'fb2k', 'am'];
   var stored = null;
   try { stored = localStorage.getItem(KEY); } catch (e) { }
   var current = VALID.indexOf(stored) >= 0 ? stored : 'legacy';
@@ -19,6 +19,9 @@
     var root = document.getElementById('fb2k-root');
     if (root) root.setAttribute('aria-hidden', theme === 'fb2k' ? 'false' : 'true');
     if (theme === 'fb2k' && window.annieFb2k) window.annieFb2k.mount();
+    var amRoot = document.getElementById('am-root');
+    if (amRoot) amRoot.setAttribute('aria-hidden', theme === 'am' ? 'false' : 'true');
+    if (theme === 'am' && window.annieAM) window.annieAM.mount();
     document.dispatchEvent(new CustomEvent('annie-theme-changed', { detail: { theme: theme } }));
   }
 

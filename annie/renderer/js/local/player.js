@@ -38,8 +38,21 @@ const fmtTime = (s) => {
 };
 
 /* ---------------- 曲库 ---------------- */
+/* SVLX 同步 beta0.0.3：曲库路径索引（path → track），O(1) 查找，替代全表线性扫描。
+ * 在 tracks 各变更点增量维护；size 不一致时惰性重建兜底。 */
+state.libIndex = new Map();
+function rebuildLibIndex() {
+  state.libIndex.clear();
+  const ts = state.library.tracks || [];
+  for (let i = 0; i < ts.length; i++) state.libIndex.set(ts[i].path, ts[i]);
+}
+function libHas(path) {
+  if (state.libIndex.size !== (state.library.tracks || []).length) rebuildLibIndex();
+  return state.libIndex.has(path);
+}
 async function loadLibrary() {
   state.library = await window.mine.getLibrary();
+  rebuildLibIndex();
   state.favorites = new Set(state.library.favorites || []);
   state.tagCache = state.library.metaCache || {};
   // 文件夹被移除后，过滤条件可能失效
@@ -295,20 +308,6 @@ function updateLibNav() {
 /* V1.1.1：切回粒子舞台时，索引自动定位到正在播放的文件
  * （进入其所在文件夹的曲目视图，并滚动到播放行）；流媒体曲目不入库则保持现状
  * beta0.0.3 移植：O(1) 索引查找；网格视图自动切换为平铺视图；平滑滚动 + 高亮闪烁 */
-
-// beta0.0.3 移植：曲库路径索引（path → track），O(1) 查找，替代全表线性扫描。
-// 在 tracks 变更点增量维护；size 不一致时惰性重建兜底。
-state.libIndex = new Map();
-function rebuildLibIndex() {
-  state.libIndex.clear();
-  const ts = state.library.tracks || [];
-  for (let i = 0; i < ts.length; i++) state.libIndex.set(ts[i].path, ts[i]);
-}
-function libHas(path) {
-  if (state.libIndex.size !== (state.library.tracks || []).length) rebuildLibIndex();
-  return state.libIndex.has(path);
-}
-
 function flashPlayingRowLegacy(attempts) {
   const box = $('#track-list');
   const row = box && box.querySelector('.track-row[data-path="' + String(state.currentPath).replace(/"/g, '\\"') + '"]');
@@ -321,7 +320,6 @@ function flashPlayingRowLegacy(attempts) {
     setTimeout(() => flashPlayingRowLegacy((attempts || 0) + 1), 300);
   }
 }
-
 async function locatePlayingLegacy() {
   if (!state.currentPath) return false;
   if (!libHas(state.currentPath)) return false; // O(1) 索引
@@ -616,8 +614,8 @@ function virtualRenderList(rows) {
     box.addEventListener('pointerup', (e) => {
       const row = e.target.closest('.track-row');
       if (row && pressPath && row.dataset.path === pressPath && !e.target.closest('.fav-btn')) {
-        const i = lv.rows.findIndex(r => r.type === 'track' && r.t.path === row.dataset.path);
-        if (i >= 0) { state.queue = lv.rows[i].queueRef; playAt(lv.rows[i].qi); }
+        const i = lv.pathIdx.get(row.dataset.path); // SVLX 同步：Map O(1) 取代 findIndex 线性扫描
+        if (i !== undefined) { state.queue = lv.rows[i].queueRef; playAt(lv.rows[i].qi); }
       }
       pressPath = null;
     });
@@ -726,6 +724,7 @@ function renderScanIncremental() { // 批次到达时节流重绘，避免阻塞
 }
 function startLibraryScan() {
   state.library.tracks = [];
+  state.libIndex.clear();
   renderFolderTree(); renderCurrentView();
   scanProgressUI('扫描中…已发现 0 首', true);
   window.mine.scanStart().catch(() => scanProgressUI(null));
@@ -733,6 +732,7 @@ function startLibraryScan() {
 window.mine.onScanEvent((m) => {
   if (m.type === 'batch') {
     state.library.tracks.push(...m.tracks);
+    for (const t of m.tracks) state.libIndex.set(t.path, t); // SVLX 同步：索引增量维护
     scanProgressUI(`扫描中…已发现 ${m.found} 首`, true);
     renderScanIncremental();
   } else if (m.type === 'cue') {
@@ -740,6 +740,7 @@ window.mine.onScanEvent((m) => {
     const hide = new Set(m.hidden || []);
     state.library.tracks = state.library.tracks.filter(t => !hide.has(t.path));
     state.library.tracks.push(...(m.tracks || []));
+    rebuildLibIndex(); // SVLX 同步：CUE 变更后重建索引
     for (const t of (m.tracks || [])) {
       if (t.cueMeta) state.library.metaCache[t.path] = { title: t.cueMeta.title, artist: t.cueMeta.artist, album: t.cueMeta.album };
     }
@@ -748,7 +749,7 @@ window.mine.onScanEvent((m) => {
     scanProgressUI(null);
     if (m.fallback || m.type === 'error') {
       // 同步兜底 / Worker 崩溃：tracks 已在主进程入库，重新拉取
-      window.mine.getLibrary().then(lib => { state.library = lib; renderFolderTree(); renderCurrentView(); });
+      window.mine.getLibrary().then(lib => { state.library = lib; rebuildLibIndex(); renderFolderTree(); renderCurrentView(); });
     } else {
       renderFolderTree(); renderCurrentView();
     }
@@ -957,8 +958,19 @@ async function playAt(i, offsetSec = 0) {
   // Pro：响度归一化增益 + 交叉淡入（引擎内部条件不满足时自动回退普通播放）
   const loudGain = loudGainFor(t.path);
   const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
-  const playPath = t.cue ? t.cue.src : t.path;
-  const playOffset = t.cue ? (t.cue.start || 0) : offsetSec;
+  let playPath = t.cue ? t.cue.src : t.path;
+  let playOffset = t.cue ? (t.cue.start || 0) : offsetSec;
+  // SVLX 1.2.0：SACD ISO 虚拟分轨——先解轨为临时 DSF（缓存命中则秒回），再正常播放
+  if (t.iso) {
+    setFormatChips([{ text: '正在从 SACD ISO 解轨（首次较慢）…', cls: '' }]);
+    const r = await window.mine.isoExtract({ src: t.iso.src, no: t.iso.no });
+    if (!r || !r.ok) {
+      setFormatChips([{ text: 'ISO 解轨失败: ' + (r && r.error || '未知错误'), cls: 'warn' }]);
+      return;
+    }
+    playPath = r.path; playOffset = 0;
+    if (t.iso.dur && !state.duration) { state.duration = t.iso.dur; $('#t-total').textContent = fmtTime(t.iso.dur); }
+  }
   const method = cf > 0 && playOffset === 0 ? 'play.crossfade' : 'play';
   try {
     await window.mine.engine(method, { path: playPath, offsetSec: playOffset, loudGain }, 30000);
@@ -970,9 +982,10 @@ async function playAt(i, offsetSec = 0) {
   // V1.1.9：延后 1.2s 启动——切歌瞬间引擎 ffmpeg 解码与分析 ffmpeg 同时全速解码会
   // 抢磁盘/CPU，导致分析首批帧延迟随机波动（频谱"渐进 vs 从无到有"差异根因）。
   // 延后等引擎解码进入稳态后，分析稳定快速启动。
+  // SVLX：仅在粒子舞台可见时执行（AM/FB2K 主题下不白跑 ffmpeg 全曲解码）
   if (window.annieViz) {
     const _p = playPath;
-    setTimeout(() => { if (state.currentPath === _p || state.currentStream?.url === _p) window.annieViz.analyze(_p, null); }, 1200);
+    setTimeout(() => { if (!window.__legacyThemeHidden && (state.currentPath === _p || state.currentStream?.url === _p)) window.annieViz.analyze(_p, null); }, 1200);
   }
 }
 
@@ -1013,7 +1026,7 @@ window.annieStreamPlay = async function (track) {
     await window.mine.engine(method, { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
   } catch (e) {
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);
-    return;
+    return false; // SVLX：返回值供 AM 主题弹出错误提示
   }
   // 悬浮信息层
   $('#thumb-title').textContent = track.title || '未知曲目';
@@ -1029,10 +1042,12 @@ window.annieStreamPlay = async function (track) {
   }
   if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
   // 可视化分析（ffmpeg 拉流解码）——V1.1.9：延后 1.2s（同 playAt，避免双 ffmpeg 抢资源）
+  // SVLX：仅在粒子舞台可见时执行
   if (window.annieViz) {
     const _u = track.url;
-    setTimeout(() => { if (state.currentStream?.url === _u) window.annieViz.analyze(_u, track.headers); }, 1200);
+    setTimeout(() => { if (!window.__legacyThemeHidden && state.currentStream?.url === _u) window.annieViz.analyze(_u, track.headers); }, 1200);
   }
+  return true; // SVLX：返回值供 AM 主题弹出错误提示
 };
 
 async function showMeta(p) {

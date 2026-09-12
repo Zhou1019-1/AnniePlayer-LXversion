@@ -12,8 +12,11 @@ function resolveEnginePath() {
   const prod = path.join(process.resourcesPath || '', 'engine', 'AnnieEngine.exe');
   // EXP 沙箱布局：exp7.28/main → exp7.28/engine/publish
   const dev = path.join(__dirname, '..', 'engine', 'publish', 'AnnieEngine.exe');
+  // LXversion 仓库布局：annie/main → <repo>/engine/publish
+  const devRoot = path.join(__dirname, '..', '..', 'engine', 'publish', 'AnnieEngine.exe');
   if (app.isPackaged && fs.existsSync(prod)) return prod;
   if (fs.existsSync(dev)) return dev;
+  if (fs.existsSync(devRoot)) return devRoot;
   if (fs.existsSync(prod)) return prod;
   return null;
 }

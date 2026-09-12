@@ -17,6 +17,14 @@ contextBridge.exposeInMainWorld('mine', {
   toggleFavorite: (p) => ipcRenderer.invoke('lib:toggleFavorite', p),
   metaBatch: (paths) => ipcRenderer.invoke('lib:metaBatch', paths),
 
+  // SVLX 1.3.0：自建播放列表（AM 主题）
+  playlists: () => ipcRenderer.invoke('lib:playlists'),
+  playlistCreate: (name) => ipcRenderer.invoke('lib:playlist:create', name),
+  playlistRename: (id, name) => ipcRenderer.invoke('lib:playlist:rename', id, name),
+  playlistDelete: (id) => ipcRenderer.invoke('lib:playlist:delete', id),
+  playlistAdd: (id, paths) => ipcRenderer.invoke('lib:playlist:add', id, paths),
+  playlistRemove: (id, p) => ipcRenderer.invoke('lib:playlist:remove', id, p),
+
   // EXP 7.28：Worker 曲库扫描（批量/进度/取消）
   scanStart: () => ipcRenderer.invoke('lib:scanStart'),
   scanCancel: () => ipcRenderer.invoke('lib:scanCancel'),
@@ -30,6 +38,8 @@ contextBridge.exposeInMainWorld('mine', {
   meta: (p) => ipcRenderer.invoke('track:meta', p),
   lyrics: (p) => ipcRenderer.invoke('track:lyrics', p),
   readFile: (p) => ipcRenderer.invoke('track:readFile', p),
+  // SVLX 1.2.0：SACD ISO 按需解轨（返回 { ok, path } / { ok:false, error }）
+  isoExtract: (params) => ipcRenderer.invoke('iso:extractTrack', params),
 
   // 设置
   saveSettings: (patch) => ipcRenderer.invoke('settings:save', patch),

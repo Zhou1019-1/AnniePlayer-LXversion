@@ -314,7 +314,8 @@
     var s5 = section('外观 · 界面主题');
     var themeGrid = el('div', 'theme-grid');
     [['legacy', '粒子舞台', 'theme-thumb-legacy', '全屏粒子动画 · 沉浸封面'],
-     ['fb2k', '仿 FB2K', 'theme-thumb-fb2k', 'foobar2000 分栏布局']].forEach(function (t) {
+     ['fb2k', '仿 FB2K', 'theme-thumb-fb2k', 'foobar2000 分栏布局'],
+     ['am', 'Apple Music', 'theme-thumb-am', '磨砂玻璃 · 媒体库 · 歌词']].forEach(function (t) {
       var card = el('button', 'theme-card');
       card.dataset.theme = t[0];
       card.appendChild(el('div', 'theme-thumb ' + t[2]));

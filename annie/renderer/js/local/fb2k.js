@@ -344,7 +344,26 @@
     // Pro beat0.0.1：Now Playing 全屏入口（N 键同效）
     R.btnNpf = toolBtn(SVG.screen || '⛶', 'Now Playing 全屏（N）', function () { window.annieProUi && annieProUi.toggleNpf(); });
     R.btnDark.classList.toggle('active', S.dark);
-    tools.append(R.btnCycleView, R.btnSpec, btnEq, R.btnDark, R.btnNpf, btnSet);
+    // SVLX：WASAPI 独占/共享开关（与粒子舞台底栏锁按钮同一逻辑，走 exclusive.js 全局接口）
+    var SVG_LOCK = '<svg viewBox="0 0 16 16"><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><rect x="3.6" y="7" width="8.8" height="6.4" rx="1.6"/></svg>';
+    var SVG_UNLOCK = '<svg viewBox="0 0 16 16"><path d="M5.5 7V4.8a2.5 2.5 0 0 1 4.9-.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><rect x="3.6" y="7" width="8.8" height="6.4" rx="1.6"/></svg>';
+    var syncExclBtn = function (on) {
+      if (!R.btnExcl) return;
+      R.btnExcl.innerHTML = on ? SVG_LOCK : SVG_UNLOCK;
+      R.btnExcl.classList.toggle('active', on);
+      R.btnExcl.title = on ? 'WASAPI 独占输出（bit-perfect 直通）——点击切换共享'
+                           : 'WASAPI 共享输出（兼容模式）——点击切换独占';
+    };
+    R.btnExcl = toolBtn('', '', async function () {
+      if (!window.annieExclusiveToggle) return;
+      syncExclBtn(await window.annieExclusiveToggle());
+    });
+    syncExclBtn(window.annieIsExclusive ? window.annieIsExclusive() : true);
+    document.addEventListener('annie-exclusive-changed', function (e) { syncExclBtn(!!(e.detail && e.detail.exclusive)); });
+    // SVLX：定位当前播放文件（树展开 + 列表滚动 + 高亮闪烁）
+    var SVG_TARGET = '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.6"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    R.btnLocate = toolBtn(SVG_TARGET, '定位当前播放文件', function () { locatePlayingFb2k(true); });
+    tools.append(R.btnCycleView, R.btnSpec, btnEq, R.btnExcl, R.btnLocate, R.btnDark, R.btnNpf, btnSet);
     bar.appendChild(tools);
 
     // 进度条

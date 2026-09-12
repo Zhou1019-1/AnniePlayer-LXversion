@@ -207,6 +207,9 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-table .am-tr { cursor: default; border-radius: 8px; transition: background .12s; }
 .am-table .am-tr:hover { background: var(--am-hover); }
 .am-table .am-tr.cur { background: var(--am-row-cur); }
+/* 定位播放文件：两次脉冲高亮（与其他主题的 locate-flash 同语义，AM 用背景色脉冲） */
+@keyframes amLocateFlash { 0%, 100% { background: transparent; } 25%, 65% { background: var(--am-row-cur); } }
+.am-tr.locate-flash { animation: amLocateFlash .9s ease-in-out 2; }
 .am-table .am-tr.cur .am-c-title { color: var(--am-accent); font-weight: 600; }
 .am-c-cover { width: 34px; height: 34px; border-radius: 5px; object-fit: cover; background: var(--am-bg-elev); vertical-align: middle; }
 .am-c-dim { color: var(--am-text-2); }

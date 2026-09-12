@@ -368,6 +368,19 @@
     };
     vol.appendChild(R.vol);
     right.appendChild(vol);
+    R.btnExcl = el('button', 'am-tbtn', (window.annieIsExclusive ? window.annieIsExclusive() : true) ? '🔒' : '🔓');
+    R.btnExcl.title = 'WASAPI 独占/共享输出（独占 = bit-perfect）';
+    R.btnExcl.onclick = async function () {
+      if (!window.annieExclusiveToggle) return;
+      var on = await window.annieExclusiveToggle();
+      R.btnExcl.textContent = on ? '🔒' : '🔓';
+    };
+    document.addEventListener('annie-exclusive-changed', function (e) {
+      if (R.btnExcl) R.btnExcl.textContent = (e.detail && e.detail.exclusive) ? '🔒' : '🔓';
+    });
+    R.btnLocate = el('button', 'am-tbtn', '🎯'); R.btnLocate.title = '定位当前播放文件';
+    R.btnLocate.onclick = locatePlaying;
+    right.appendChild(R.btnExcl); right.appendChild(R.btnLocate);
     R.btnLyr = el('button', 'am-tbtn' + (S.lyricsOn ? ' on' : ''), '💬'); R.btnLyr.title = '歌词面板';
     R.btnLyr.onclick = function () {
       S.lyricsOn = !S.lyricsOn;
@@ -637,6 +650,7 @@
     tracks.forEach(function (t, i) {
       var m = trackMeta(t);
       var tr = el('tr', 'am-tr' + (state.currentPath === t.path ? ' cur' : ''));
+      tr.dataset.path = t.path; // 定位播放文件用
       if (withCover) {
         var tdCover = el('td');
         var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy';
@@ -866,6 +880,35 @@
     if (cur >= 0 && nodes[cur]) {
       R.lyrScroll.scrollTop = nodes[cur].offsetTop - R.lyrScroll.clientHeight * 0.42;
     }
+  }
+
+  /* 定位当前播放文件：当前视图找不到时切回歌曲全库，滚动到播放行并闪烁高亮 */
+  function locatePlaying() {
+    var p = state.currentPath;
+    if (!p || state.currentStream) return; // 流媒体不入库，无法定位
+    var inView = currentTracks().some(function (t) { return t.path === p; });
+    if (!inView) {
+      S.view = 'songs'; S.albumKey = null; S.folderKey = null; S.search = '';
+      renderSidebar();
+    }
+    renderView();
+    setTimeout(function () {
+      if (!R.content) return;
+      var row = R.content.querySelector('.am-tr[data-path="' + CSS.escape(p) + '"]');
+      if (!row) return;
+      // 手动滚容器：不能用 scrollIntoView——它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
+      var cRect = R.content.getBoundingClientRect();
+      var rRect = row.getBoundingClientRect();
+      var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
+      if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+      else R.content.scrollTop = Math.max(0, target);
+      var root = document.getElementById('am-root');
+      if (root && root.scrollTop) root.scrollTop = 0; // 防御：壳容器永不允许滚动
+      row.classList.remove('locate-flash');
+      void row.offsetWidth; // 重启动画
+      row.classList.add('locate-flash');
+      setTimeout(function () { row.classList.remove('locate-flash'); }, 2000);
+    }, 60);
   }
 
   /* ---------------- 播放状态刷新 ---------------- */

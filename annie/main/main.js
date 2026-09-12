@@ -630,7 +630,10 @@ ipcMain.handle('stream:hotSearch', (_e, params) => streaming.hotSearch(params));
     });
     if (r.canceled || !r.filePaths.length) return { canceled: true };
     try {
-      return { canceled: false, source: streaming.sources.importFromPath(r.filePaths[0]) };
+      // V1.2.0 修复：importFromPath 已 async 化（Worker 沙箱验证），必须 await——
+      // 否则返回的是未完成 Promise（UI 显示 undefined），且 refreshSources 抢在
+      // 注册表写入前执行，导致"导入成功但列表仍显示未导入"
+      return { canceled: false, source: await streaming.sources.importFromPath(r.filePaths[0]) };
     } catch (e) {
       return { canceled: false, error: String(e.message || e) };
     }

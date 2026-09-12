@@ -65,6 +65,12 @@ npm run dist:setup   # 产出 setupEXE/安妮播放器融合版V3-vX.Y.Z-setup.e
 打包直接复用 `node_modules/electron/dist`（`electronDist` 配置），无需联网下载 Electron。
 开发运行：`npm start`（同样需要 engine/ 二进制）。
 
+## 致谢
+
+- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：PR #1 贡献——音源沙箱 Worker 化（脚本卡死不再冻结主进程）、下载元数据/内嵌歌词写入（tagWriter）、WASAPI 独占/共享开关、QQ 免签搜索与纯 JS QRC 歌词解密、国内镜像打包配置、AnnieEngine 引擎源码入库，以及「安妮独家音源」公益 API 的收集整理
+- [洛雪音乐 lx-music-desktop](https://github.com/lyswhut/lx-music-desktop)（Apache-2.0）：流媒体 SDK 与歌词解密方案
+- [Mineradio](https://github.com/XxHuberrr/Mineradio) / [sonic-topography](https://github.com/yin-yizhen/sonic-topography)：粒子舞台视觉栈与声波地形算法
+
 ## 许可证与免责
 
 - 本项目整体：**GPL-3.0-only**（随安妮播放器）

@@ -81,33 +81,40 @@
       : 'WASAPI 共享输出（熄灭）：系统混音器统一格式，不切设备不冲突（兼容模式）';
   }
 
+  /* ---------------- 切换逻辑（三主题共用） ---------------- */
+  // SVLX：抽成全局接口，粒子舞台按钮 / FB2K 工具条 / AM 顶栏共用同一套切换逻辑
+  async function toggle() {
+    exclusive = !exclusive;
+    save();
+    syncBtn();
+    syncBadge(); // V1.1.9：左上角徽章联动点亮/熄灭
+    syncBpChip(); // V1.1.9：bit-perfect 状态联动（共享熄灭/独占恢复）
+    // 提示：切换后当前播放会中断重建（断流）
+    try { if (typeof proToast === 'function') proToast(exclusive ? '已切换独占输出（bit-perfect）' : '已切换共享输出（兼容模式）'); } catch { }
+    // 广播给其他主题的按钮同步图标
+    try { document.dispatchEvent(new CustomEvent('annie-exclusive-changed', { detail: { exclusive } })); } catch { }
+    await applyToEngine();
+    // 若正在播放，重新起播当前曲目
+    try {
+      if (state && state.playing && state.currentPath) {
+        await window.mine.engine('stop').catch(() => { });
+        const t = state.queue[state.index];
+        const path = t && t.cue ? t.cue.src : state.currentPath;
+        const off = t && t.cue ? (t.cue.start || 0) : 0;
+        const gain = typeof loudGainFor === 'function' ? loudGainFor(state.currentPath) : 1;
+        await window.mine.engine('play', { path, offsetSec: off, loudGain: gain }, 30000).catch(() => { });
+      }
+    } catch { }
+    return exclusive;
+  }
+
   function mount(group) {
     if (document.getElementById('btn-excl')) return;
     const btn = document.createElement('button');
     btn.id = 'btn-excl';
     btn.className = 'ctl';
     btn.innerHTML = exclusive ? LOCK_SVG : UNLOCK_SVG;
-    btn.onclick = async () => {
-      exclusive = !exclusive;
-      save();
-      syncBtn();
-      syncBadge(); // V1.1.9：左上角徽章联动点亮/熄灭
-      syncBpChip(); // V1.1.9：bit-perfect 状态联动（共享熄灭/独占恢复）
-      // 提示：切换后当前播放会中断重建（断流）
-      try { if (typeof proToast === 'function') proToast(exclusive ? '已切换独占输出（bit-perfect）' : '已切换共享输出（兼容模式）'); } catch { }
-      await applyToEngine();
-      // 若正在播放，重新起播当前曲目
-      try {
-        if (state && state.playing && state.currentPath) {
-          await window.mine.engine('stop').catch(() => { });
-          const t = state.queue[state.index];
-          const path = t && t.cue ? t.cue.src : state.currentPath;
-          const off = t && t.cue ? (t.cue.start || 0) : 0;
-          const gain = typeof loudGainFor === 'function' ? loudGainFor(state.currentPath) : 1;
-          await window.mine.engine('play', { path, offsetSec: off, loudGain: gain }, 30000).catch(() => { });
-        }
-      } catch { }
-    };
+    btn.onclick = () => { toggle(); };
     // EQ 按钮右侧插入
     const eqBtn = document.getElementById('btn-eq');
     if (eqBtn && eqBtn.nextSibling) group.insertBefore(btn, eqBtn.nextSibling);
@@ -118,6 +125,8 @@
   /* ---------------- 挂载 ---------------- */
   // V1.1.9：全局查询接口（player.js 徽章/format 事件读取）
   window.annieIsExclusive = () => exclusive;
+  // SVLX：全局切换接口（FB2K / AM 主题的开关按钮调用），返回切换后的状态
+  window.annieExclusiveToggle = toggle;
   // EQ 注入完成后调用（eq.js 在 exclusive.js 之前加载，DOM ready 后 EQ 按钮已存在）
   window.annieMountExclusiveBtn = mount;
 

@@ -26,13 +26,27 @@
   async function applyToEngine() {
     const kind = state && state.backendKind ? state.backendKind : 'wasapi';
     let id = null;
-    if (state && state.library && state.library.backend) {
+    // 优先锁定“当前实际输出”的设备：用最近 format 事件的设备名在设备列表反查 id。
+    // 直接用持久化的 library.backend 会跳到旧设备（实测点亮独占后跳到另一张 USB 声卡）
+    if (kind === 'wasapi') {
+      const curName = window.__lastFormat && window.__lastFormat.device;
+      if (curName) {
+        try {
+          const d = await window.mine.engine('devices.list');
+          const hit = (d.wasapi || []).find(function (x) { return x.name === curName; });
+          if (hit) id = hit.id;
+        } catch { }
+      }
+    }
+    if (!id && state && state.library && state.library.backend) {
       const parts = state.library.backend.split('|');
       if (parts[0] === 'wasapi' && parts[1]) id = parts[1];
     }
     try {
       const r = await window.mine.engine('devices.select', { kind, id, exclusive });
       if (r && r.exclusive !== undefined) exclusive = r.exclusive;
+      // 设备已按当前输出锁定，同步持久化，避免下次启动/切换又回到旧设备
+      if (id) { try { window.mine.saveSettings({ backend: kind + '|' + id }); } catch { } }
     } catch { /* 引擎未就绪等场景静默，下次播放时 EnsureBackend 会用当前值 */ }
   }
 

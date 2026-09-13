@@ -35,6 +35,7 @@ class EngineClient {
     this.errorRing = [];      // 最近错误栈
     this._stopIntentional = false;
     this.onRestart = null;    // 重启完成回调（main 注入，恢复播放）
+    this.eventFilter = null;  // 事件分流钩子（main 注入）：(win, event) => boolean，返回 false 不给该窗口发
   }
 
   _log(line, isErr) {
@@ -120,8 +121,12 @@ class EngineClient {
   }
 
   _broadcast(event, data) {
+    const filter = this.eventFilter;
     for (const win of BrowserWindow.getAllWindows()) {
-      try { win.webContents.send('engine-event', { event, data }); } catch { }
+      try {
+        if (filter && !filter(win, event)) continue; // 按窗口分流（如桌面歌词窗不收 level 频谱事件）
+        win.webContents.send('engine-event', { event, data });
+      } catch { }
     }
   }
 

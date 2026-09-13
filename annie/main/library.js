@@ -79,8 +79,24 @@ function mimeFromExt(ext) {
   return map[ext.toLowerCase()] || 'image/jpeg';
 }
 
-/** 内嵌标签无封面时，查找同目录常见外部封面文件。 */
+/* 性能优化：外置封面查找结果按目录缓存（目录 mtime 未变直接复用），
+ * 避免每首无内嵌封面的歌重复 12 名字 × 6 扩展 existsSync + readdirSync。 */
+const dirCoverCache = new Map(); // dir -> { mtime, cover }
+const DIR_COVER_CACHE_MAX = 500;
+
+/** 内嵌标签无封面时，查找同目录常见外部封面文件（带目录级缓存）。 */
 function findExternalCover(dir) {
+  let dm = 0;
+  try { dm = fs.statSync(dir).mtimeMs; } catch { return scanDirForCover(dir); }
+  const hit = dirCoverCache.get(dir);
+  if (hit && hit.mtime === dm) return hit.cover;
+  const cover = scanDirForCover(dir);
+  dirCoverCache.set(dir, { mtime: dm, cover });
+  if (dirCoverCache.size > DIR_COVER_CACHE_MAX) dirCoverCache.delete(dirCoverCache.keys().next().value);
+  return cover;
+}
+
+function scanDirForCover(dir) {
   const names = ['cover', 'folder', 'front', 'album', 'art', 'thumb', 'Cover', 'Folder', 'Front', 'Album', 'Art', 'Thumb'];
   for (const n of names) {
     for (const ext of IMAGE_EXTS) {
@@ -96,6 +112,26 @@ function findExternalCover(dir) {
     }
   } catch { }
   return null;
+}
+
+/* 性能优化：封面 dataURL 内存缓存（体积大，不入持久化 metaCache）。
+ * path -> { mtime, cover }，mtime 校验 + LRU 上限 300 条。
+ * 返回值语义：undefined = 未缓存（调用方需解析）；null = 已知无封面。 */
+const coverCache = new Map();
+const COVER_CACHE_MAX = 300;
+
+function getCachedCover(filePath, mtimeMs) {
+  const e = coverCache.get(filePath);
+  if (!e || e.mtime !== mtimeMs) return undefined;
+  coverCache.delete(filePath); coverCache.set(filePath, e); // LRU touch
+  return e.cover;
+}
+
+function setCachedCover(filePath, mtimeMs, cover) {
+  if (!mtimeMs) return;
+  if (coverCache.has(filePath)) coverCache.delete(filePath);
+  coverCache.set(filePath, { mtime: mtimeMs, cover });
+  while (coverCache.size > COVER_CACHE_MAX) coverCache.delete(coverCache.keys().next().value);
 }
 
 /** 读内嵌标签（标题/艺术家/专辑/时长/码率 + 封面 dataURL）。 */
@@ -160,27 +196,54 @@ async function readMetaBatch(paths, limit = 4) {
   return out;
 }
 
+/* 性能优化：歌词结果内存缓存（含"无歌词"负缓存），audioPath -> { am, lm, result }。
+ * am = 音频文件 mtime，lm = 同名 .lrc 的 mtime（无 .lrc 记 -1）——
+ * 两者都校验，之后新增/修改 .lrc 或替换音频文件都会正确失效。 */
+const lyricsCache = new Map();
+const LYRICS_CACHE_MAX = 200;
+
+function findLrcFile(filePath) {
+  const base = filePath.slice(0, filePath.length - path.extname(filePath).length);
+  for (const ext of ['.lrc', '.LRC']) {
+    try {
+      const st = fs.statSync(base + ext);
+      if (st.isFile()) return { p: base + ext, mtime: st.mtimeMs };
+    } catch { }
+  }
+  return null;
+}
+
+function readLrcFile(p) {
+  try {
+    const buf = fs.readFileSync(p);
+    let text;
+    if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+      text = buf.toString('utf8');
+    } else {
+      try { text = new TextDecoder('utf8', { fatal: true }).decode(buf); }
+      catch { text = new TextDecoder('gbk').decode(buf); }
+    }
+    return { ok: true, path: p, text };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 /** 查找并读取同名 .lrc（自动识别 UTF-8 / GBK）。无 .lrc 时回退读取内嵌歌词标签。 */
 async function readLyrics(filePath) {
-  const base = filePath.slice(0, filePath.length - path.extname(filePath).length);
-  const candidates = [base + '.lrc', base + '.LRC'];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
-    try {
-      const buf = fs.readFileSync(p);
-      let text;
-      if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
-        text = buf.toString('utf8');
-      } else {
-        try { text = new TextDecoder('utf8', { fatal: true }).decode(buf); }
-        catch { text = new TextDecoder('gbk').decode(buf); }
-      }
-      return { ok: true, path: p, text };
-    } catch (e) { return { ok: false, error: e.message }; }
+  let am = 0;
+  try { am = fs.statSync(filePath).mtimeMs; } catch { }
+  const lrc = findLrcFile(filePath);
+  const lm = lrc ? lrc.mtime : -1;
+  const hit = lyricsCache.get(filePath);
+  if (hit && hit.am === am && hit.lm === lm) {
+    lyricsCache.delete(filePath); lyricsCache.set(filePath, hit); // LRU touch
+    return hit.result;
   }
   // V1.1.10：无同名 .lrc 时回退读取音频文件内嵌歌词标签（FLAC LYRICS / MP3 USLT 等）——
-  // ffprobe 可提取，避免"文件明明带歌词却不显示"。
-  return readEmbeddedLyrics(filePath);
+  // ffprobe 可提取，避免"文件明明带歌词却不显示"。结果（含"无歌词"负结果）入缓存。
+  const result = lrc ? readLrcFile(lrc.p) : await readEmbeddedLyrics(filePath);
+  lyricsCache.set(filePath, { am, lm, result });
+  if (lyricsCache.size > LYRICS_CACHE_MAX) lyricsCache.delete(lyricsCache.keys().next().value);
+  return result;
 }
 
 /** 用 ffprobe 读取音频文件内嵌歌词（FLAC Vorbis LYRICS / MP3 USLT/lyrics 等）。 */
@@ -216,4 +279,4 @@ function readFileBuffer(filePath) {
   return fs.readFileSync(filePath);
 }
 
-module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio };
+module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover };

@@ -96,6 +96,17 @@
   function isLossless(codec) { return /flac|ape|wav|aiff|alac|dts|tta|wv/i.test(codec || ''); }
 
   /* ---------------- 元数据（带封面，懒加载缓存） ---------------- */
+  /* 右栏/标题刷新合并到一次 rAF：同一帧内多个 meta 到达只重建一次右栏 */
+  var rightRAF = 0;
+  function scheduleRightRefresh() {
+    if (rightRAF) return;
+    rightRAF = requestAnimationFrame(function () {
+      rightRAF = 0;
+      if (window.annieTheme.current !== 'fb2k') return;
+      updateRight(); updateTitle();
+    });
+  }
+
   function getMeta(path) {
     var m = S.metaCache.get(path);
     if (!m) {
@@ -103,7 +114,7 @@
       S.metaCache.set(path, m);
       window.mine.meta(path).then(function (r) {
         Object.assign(m, r); m.pending = false;
-        if (window.annieTheme.current === 'fb2k') { refreshVisibleRowMeta(path); updateRight(); updateTitle(); }
+        if (window.annieTheme.current === 'fb2k') { refreshVisibleRowMeta(path); scheduleRightRefresh(); }
       }).catch(function () { m.pending = false; });
     }
     return m;
@@ -169,7 +180,12 @@
     R.rows = el('div', 'f2-rows');
     R.list.appendChild(R.spacer);
     R.list.appendChild(R.rows);
-    R.list.addEventListener('scroll', renderVisible);
+    // 滚动事件用 rAF 合并：滚动中每帧最多重绘一次可视行
+    var scrollRAF = 0;
+    R.list.addEventListener('scroll', function () {
+      if (scrollRAF) return;
+      scrollRAF = requestAnimationFrame(function () { scrollRAF = 0; renderVisible(); });
+    });
     center.appendChild(R.list);
     R.main.appendChild(center);
     R.main.appendChild(makeResizer('right'));
@@ -706,9 +722,9 @@
           || d.artist.toLowerCase().indexOf(kw) >= 0 || d.album.toLowerCase().indexOf(kw) >= 0;
       });
     }
-    var rows = [];
+    var rows = [], ti = 0; // ti：曲目前置序号（前缀和），滚动渲染直接取用，不再每次从头数
     if (S.sortKey) {
-      deco.forEach(function (d) { rows.push({ type: 'track', t: d.t }); });
+      deco.forEach(function (d) { rows.push({ type: 'track', t: d.t, ti: ti++ }); });
     } else { // 默认：按专辑分组（绿色分组行）
       var lastAl = null;
       deco.forEach(function (d) {
@@ -717,7 +733,7 @@
           lastAl = al;
           rows.push({ type: 'group', label: al + (d.artist && d.artist !== '未知艺术家' ? ' | ' + d.artist : '') });
         }
-        rows.push({ type: 'track', t: d.t });
+        rows.push({ type: 'track', t: d.t, ti: ti++ });
       });
     }
     var list = deco.map(function (d) { return d.t; });
@@ -753,12 +769,9 @@
     var end = Math.min(S.rows.length, Math.ceil((st + h) / S.rowH) + 8);
     R.rows.innerHTML = '';
     var frag = document.createDocumentFragment();
-    var trackIdx = -1;
-    for (var i = 0; i < end; i++) {
+    for (var i = start; i < end; i++) { // 只遍历可视区间；曲目序号取行模型预计算的 r.ti
       var r = S.rows[i];
-      if (r.type === 'track') trackIdx++;
-      if (i < start) continue;
-      var node = r.type === 'group' ? groupNode(r, i) : trackNode(r, i, trackIdx);
+      var node = r.type === 'group' ? groupNode(r, i) : trackNode(r, i, r.ti);
       node.style.top = (i * S.rowH) + 'px';
       node.style.position = 'absolute';
       node.style.left = '0'; node.style.right = '0';
@@ -932,7 +945,23 @@
         var r = S.rows[i];
         if (r.type === 'track' && !S.metaCache.has(r.t.path)) paths.push(r.t.path);
       }
-      paths.slice(0, 40).forEach(getMeta);
+      paths = paths.slice(0, 40);
+      if (!paths.length) return;
+      // V3.1：批量完整 meta 一次 IPC（原 40 次独立 track:meta），先占 pending 位防重入
+      paths.forEach(function (p) { S.metaCache.set(p, { pending: true }); });
+      window.mine.metaFullBatch(paths).then(function (map) {
+        paths.forEach(function (p) {
+          var m = S.metaCache.get(p);
+          var r = map && map[p];
+          if (m && r) Object.assign(m, r);
+          if (m) m.pending = false;
+        });
+        if (window.annieTheme.current !== 'fb2k') return;
+        paths.forEach(refreshVisibleRowMeta);
+        scheduleRightRefresh(); // 40 个 meta 到达只重建一次右栏
+      }).catch(function () {
+        paths.forEach(function (p) { var m = S.metaCache.get(p); if (m) m.pending = false; });
+      });
     }, 60);
   }
   function refreshVisibleRowMeta(path) {
@@ -1067,6 +1096,8 @@
   var SPEC_FRAME_SEC = 2048 / 44100; // analyzer HOP / SAMPLE_RATE
   window.mine.onAnalyzeEvent(function (p) {
     if (p.type !== 'frames' || !p.frames || !p.count) return;
+    // 仅 FB2K 主题激活且频谱开启时缓存 FFT 帧；其他主题直接丢弃（每首数 MB，切歌才清）
+    if (window.annieTheme.current !== 'fb2k' || !S.specOn) return;
     if (p.gen !== S.specGen) { S.specGen = p.gen; S.specFrames = []; } // 新一曲的分析：重置缓存
     var arr = new Uint8Array(p.frames);
     var bands = Math.floor(arr.length / p.count);
@@ -1076,8 +1107,10 @@
   });
   var specRAF = 0;
   function specLoop() {
+    // 非 FB2K 主题：不再排下一帧，循环停摆（切回 fb2k 时由 startSpecLoop 重启）
+    if (window.annieTheme.current !== 'fb2k') { specRAF = 0; return; }
     specRAF = requestAnimationFrame(specLoop);
-    if (window.annieTheme.current !== 'fb2k' || !S.playing || !S.specOn || S.rightCollapsed || !R.spec) return;
+    if (!S.playing || !S.specOn || S.rightCollapsed || !R.spec) return;
     var cv = R.spec, W = cv.clientWidth, H = cv.clientHeight;
     if (!W || !H) return;
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
@@ -1103,6 +1136,10 @@
       ctx.fillStyle = S.dark ? '#5c6478' : '#444'; // V1.1.2：暗色下频谱柱提亮
       ctx.fillRect(i * bw + 1, H - h, bw - 2, h);
     }
+  }
+  /* 防重入启动：循环已在跑（specRAF 非 0）时不重复排帧 */
+  function startSpecLoop() {
+    if (!specRAF && window.annieTheme.current === 'fb2k') specRAF = requestAnimationFrame(specLoop);
   }
   function updateSpecVisibility() {
     if (R.specBox) R.specBox.style.display = (S.playing && S.specOn) ? '' : 'none';
@@ -1337,7 +1374,7 @@
         S.sel.clear(); rebuildRows();
       }
     });
-    specLoop();
+    startSpecLoop();
   }
 
   function onTrackChanged() {
@@ -1451,13 +1488,14 @@
   /* beta0.0.3 移植：一键定位入口（平滑滚动 + 高亮） */
   window.annieFb2kLocate = function () { locatePlayingFb2k(true); };
   document.addEventListener('annie-theme-changed', function (e) {
-    if (e.detail && e.detail.theme === 'fb2k') locatePlayingFb2k();
+    if (e.detail && e.detail.theme === 'fb2k') { locatePlayingFb2k(); startSpecLoop(); }
   });
 
   window.annieFb2k = {
     mount: function () {
       if (!S.mounted) { build(); S.mounted = true; }
       refreshAll();
+      startSpecLoop(); // 切回 FB2K 主题时重启频谱循环（内部防重入）
     },
     refresh: refreshAll,
     isDark: function () { return S.dark; },          // V1.1.2

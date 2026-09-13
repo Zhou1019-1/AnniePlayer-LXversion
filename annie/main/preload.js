@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('mine', {
   getLibrary: () => ipcRenderer.invoke('lib:get'),
   toggleFavorite: (p) => ipcRenderer.invoke('lib:toggleFavorite', p),
   metaBatch: (paths) => ipcRenderer.invoke('lib:metaBatch', paths),
+  metaFullBatch: (paths) => ipcRenderer.invoke('lib:metaFullBatch', paths), // V3.1：批量完整 meta（含封面）
 
   // SVLX 1.3.0：自建播放列表（AM 主题）
   playlists: () => ipcRenderer.invoke('lib:playlists'),

@@ -13,6 +13,16 @@ const analyzer = require('./analyzer');
 
 const engine = new EngineClient();
 let mainWindow = null;
+let dlyrWinRef = null; // 桌面歌词窗引用（引擎事件分流用，由 registerIpc 内 dlyrics:toggle 维护）
+
+/* 性能优化：引擎事件按窗口分流。实证 desktop-lyrics.html 只消费 dlyrics:line 中继，
+ * 不订阅 engine-event；保留 position/state/ended 白名单兜底（歌词滚动需要），
+ * level(~10Hz 频谱) 等高频事件不再发给桌面歌词窗。主窗全量不变。 */
+const DLYR_ENGINE_EVENTS = new Set(['position', 'state', 'ended']);
+engine.eventFilter = (win, event) => {
+  if (dlyrWinRef && win === dlyrWinRef) return DLYR_ENGINE_EVENTS.has(event);
+  return true;
+};
 
 // ---------- 流媒体图片 CDN 防盗链：按目标域注入 Referer ----------
 function setupImageReferer() {
@@ -178,24 +188,51 @@ function metaViaWorker(paths) {
 // ---------- 曲库持久化（userData/library.json） ----------
 function storePath() { return path.join(app.getPath('userData'), 'library.json'); }
 
+/* 性能优化：store 内存单例。启动后首次 loadStore 读盘一次，之后全部走内存；
+ * saveStore 只做顶层浅合并 + 防抖 1500ms 原子落盘（临时文件 + rename），
+ * 避免"任何小改动 = 全量读 + 全量写数 MB JSON"。 */
+let _storeMem = null;
+let _storeDirty = false;
+let _storeTimer = null;
+
 function loadStore() {
+  if (_storeMem) return _storeMem;
   try {
     const s = JSON.parse(fs.readFileSync(storePath(), 'utf8'));
     if (!Array.isArray(s.favorites)) s.favorites = [];
     if (!Array.isArray(s.playlists)) s.playlists = []; // SVLX 1.3.0：自建播放列表 [{id,name,paths,created}]
     if (!s.metaCache || typeof s.metaCache !== 'object') s.metaCache = {};
     if (!s.stats || typeof s.stats !== 'object') s.stats = {}; // Pro beat0.0.1：播放统计
-    return s;
+    _storeMem = s;
   }
-  catch { return { folders: [], tracks: [], volume: 1, backend: null, favorites: [], playlists: [], metaCache: {}, stats: {} }; }
+  catch { _storeMem = { folders: [], tracks: [], volume: 1, backend: null, favorites: [], playlists: [], metaCache: {}, stats: {} }; }
+  return _storeMem;
+}
+
+function flushStore() {
+  if (!_storeDirty || !_storeMem) return;
+  _storeDirty = false;
+  clearTimeout(_storeTimer); _storeTimer = null;
+  try {
+    const p = storePath();
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(_storeMem), 'utf8'); // 不缩进，省体积和序列化时间
+    fs.renameSync(tmp, p); // 原子替换，避免写一半损坏 library.json
+  } catch { }
 }
 
 function saveStore(patch) {
   const cur = loadStore();
-  const next = { ...cur, ...patch };
-  try { fs.writeFileSync(storePath(), JSON.stringify(next, null, 2), 'utf8'); } catch { }
-  return next;
+  Object.assign(cur, patch); // 保持原语义：浅合并顶层键
+  _storeDirty = true;
+  clearTimeout(_storeTimer);
+  _storeTimer = setTimeout(flushStore, 1500);
+  if (_storeTimer.unref) _storeTimer.unref();
+  return cur;
 }
+
+// 退出前强制落盘防抖窗口内的未保存变更
+app.on('before-quit', () => { try { flushStore(); } catch { } });
 
 // ---------- 窗口 ----------
 function createWindow() {
@@ -520,7 +557,8 @@ function registerIpc() {
       }
     });
     dlyrWin.loadFile(path.join(__dirname, '..', 'renderer', 'desktop-lyrics.html'));
-    dlyrWin.on('closed', () => { dlyrWin = null; try { mainWindow?.webContents.send('dlyrics:closed'); } catch { } });
+    dlyrWinRef = dlyrWin; // 供引擎事件分流识别
+    dlyrWin.on('closed', () => { dlyrWin = null; dlyrWinRef = null; try { mainWindow?.webContents.send('dlyrics:closed'); } catch { } });
     return { ok: true, shown: true };
   });
   ipcMain.on('dlyrics:line', (_e, payload) => { try { dlyrWin?.webContents.send('dlyrics:line', payload); } catch { } });
@@ -588,12 +626,96 @@ function registerIpc() {
 
   // Pro：CUE 虚拟分轨（路径含 #cueN）不读文件系统，直接由 metaCache 合成
   // SVLX 1.2.0：SACD ISO 虚拟分轨（路径含 #isoN）同样由 metaCache 合成
-  ipcMain.handle('track:meta', (_e, p) => {
+  ipcMain.handle('track:meta', async (_e, p) => {
     if (p.includes('#cue') || p.includes('#iso')) {
       const c = loadStore().metaCache[p] || {};
       return { ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '', duration: c.duration || 0, cue: true };
     }
-    return library.readMeta(p);
+    /* 性能优化：metaCache 持久缓存命中（mtimeMs 校验）+ 封面内存 LRU 命中 → 直接返回，
+     * 免重复 readMeta 整文件解析。旧版 metaBatch 写入的条目无 mtimeMs → 自动miss走解析。 */
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(p).mtimeMs; } catch { }
+    const store = loadStore();
+    const c = store.metaCache[p];
+    if (c && mtimeMs && c.mtimeMs === mtimeMs) {
+      const cover = library.getCachedCover(p, mtimeMs);
+      if (cover !== undefined) {
+        return {
+          ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '',
+          genre: c.genre || '', year: c.year || 0, duration: c.duration || 0,
+          codec: c.codec || '', sampleRate: c.sampleRate || 0, bitsPerSample: c.bitsPerSample || 0,
+          bitrate: c.bitrate || 0, channels: c.channels || 0,
+          fileSize: c.fileSize || 0, mtimeMs, cover
+        };
+      }
+    }
+    const meta = await library.readMeta(p);
+    if (meta && meta.ok) {
+      const mt = meta.mtimeMs || mtimeMs;
+      library.setCachedCover(p, mt, meta.cover); // 封面 dataURL 体积大，只进内存 LRU，不写持久缓存
+      store.metaCache[p] = {
+        ...(store.metaCache[p] || {}), // 保留 loudness / fakeScan 等外部写入的字段
+        title: meta.title, artist: meta.artist, album: meta.album,
+        genre: meta.genre || '', year: meta.year || 0, duration: meta.duration || 0,
+        codec: meta.codec || '', sampleRate: meta.sampleRate || 0, bitsPerSample: meta.bitsPerSample || 0,
+        bitrate: meta.bitrate || 0, channels: meta.channels || 0,
+        fileSize: meta.fileSize || 0, mtimeMs: mt
+      };
+      saveStore({ metaCache: store.metaCache });
+    }
+    return meta;
+  });
+  /* V3.1：批量完整 meta（FB2K 懒加载用，替代 40 次独立 track:meta IPC）。
+   * 缓存逻辑与 track:meta 一致（metaCache mtime 校验 + 封面内存 LRU），
+   * 未命中的批量解析（readMetaBatch 4 并发），封面只进内存 LRU。 */
+  ipcMain.handle('lib:metaFullBatch', async (_e, paths) => {
+    const store = loadStore();
+    const out = {};
+    const missing = [];
+    for (const p of paths) {
+      if (p.includes('#cue') || p.includes('#iso')) {
+        const c = store.metaCache[p] || {};
+        out[p] = { ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '', duration: c.duration || 0, cue: true };
+        continue;
+      }
+      let mtimeMs = 0;
+      try { mtimeMs = fs.statSync(p).mtimeMs; } catch { }
+      const c = store.metaCache[p];
+      if (c && mtimeMs && c.mtimeMs === mtimeMs) {
+        const cover = library.getCachedCover(p, mtimeMs);
+        if (cover !== undefined) {
+          out[p] = {
+            ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '',
+            genre: c.genre || '', year: c.year || 0, duration: c.duration || 0,
+            codec: c.codec || '', sampleRate: c.sampleRate || 0, bitsPerSample: c.bitsPerSample || 0,
+            bitrate: c.bitrate || 0, channels: c.channels || 0,
+            fileSize: c.fileSize || 0, mtimeMs, cover
+          };
+          continue;
+        }
+      }
+      missing.push(p);
+    }
+    if (missing.length) {
+      const fresh = await library.readMetaBatch(missing);
+      for (const [p, meta] of Object.entries(fresh)) {
+        if (meta && meta.ok) {
+          const mt = meta.mtimeMs || 0;
+          library.setCachedCover(p, mt, meta.cover);
+          store.metaCache[p] = {
+            ...(store.metaCache[p] || {}),
+            title: meta.title, artist: meta.artist, album: meta.album,
+            genre: meta.genre || '', year: meta.year || 0, duration: meta.duration || 0,
+            codec: meta.codec || '', sampleRate: meta.sampleRate || 0, bitsPerSample: meta.bitsPerSample || 0,
+            bitrate: meta.bitrate || 0, channels: meta.channels || 0,
+            fileSize: meta.fileSize || 0, mtimeMs: mt
+          };
+        }
+        out[p] = meta;
+      }
+      saveStore({ metaCache: store.metaCache });
+    }
+    return out;
   });
   ipcMain.handle('track:lyrics', (_e, p) => {
     const cut = p.includes('#cue') ? p.indexOf('#cue') : (p.includes('#iso') ? p.indexOf('#iso') : -1);

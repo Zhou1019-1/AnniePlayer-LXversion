@@ -76,8 +76,25 @@
       for (var p in out) S.meta[p] = out[p];
       // 解析失败的曲目主进程不入缓存——打失败标记，防止每次渲染都重复请求
       missing.forEach(function (t) { if (!S.meta[t.path]) S.meta[t.path] = { fail: true }; });
-      if (window.annieTheme && annieTheme.current === 'am') renderView();
+      if (!(window.annieTheme && annieTheme.current === 'am')) return;
+      // 专辑网格的分组依赖标签，需整视图重排；曲目表只补丁可见行文本，避免整视图重建
+      if (S.view === 'albums' && !S.albumKey) renderView();
+      else patchVisibleMeta();
     }).catch(function () { });
+  }
+  /* 标签到达后只更新当前 DOM 里可见行的文本（窗口化/非窗口化均适用） */
+  function patchVisibleMeta() {
+    if (!R.content) return;
+    var rows = R.content.querySelectorAll('tr.am-tr');
+    for (var k = 0; k < rows.length; k++) {
+      var tr = rows[k], m = S.meta[tr.dataset.path];
+      if (!m || m.fail) continue;
+      var titleEl = tr.querySelector('.am-c-title');
+      if (titleEl && m.title) titleEl.textContent = m.title;
+      var dims = tr.querySelectorAll('.am-c-dim');
+      if (dims[0] && m.artist) dims[0].textContent = m.artist;
+      if (dims[1]) dims[1].textContent = m.album || '';
+    }
   }
   /* 搜索时全库深加载标签（metaCache 持久化，全库解析只有一次成本；分块避免一次 IPC 过大） */
   function ensureMetaDeep() {
@@ -96,7 +113,11 @@
       window.mine.metaBatch(missing).then(function (out) {
         for (var p in out) S.meta[p] = out[p];
         missing.forEach(function (p) { if (!S.meta[p]) S.meta[p] = { fail: true }; });
-        if (S.search && window.annieTheme && annieTheme.current === 'am') renderView();
+        // 新标签可能让新曲目命中搜索，需重绘；但按块到达，200ms 合并避免每块整表重建
+        if (S.search && window.annieTheme && annieTheme.current === 'am') {
+          clearTimeout(S._deepRT);
+          S._deepRT = setTimeout(renderView, 200);
+        }
         setTimeout(step, 30); // 让出主线程，避免搜索框打字卡顿
       }).catch(function () { setTimeout(step, 500); });
     }
@@ -423,6 +444,11 @@
     var body = el('div', 'am-body');
     R.sidebar = el('nav', 'am-side');
     R.content = el('div', 'am-content');
+    // 窗口化渲染：滚动时按可视区重建行（rAF 合并，避免滚动事件风暴）
+    R.content.addEventListener('scroll', function () {
+      if (!S._tbl || S._tblRAF) return;
+      S._tblRAF = requestAnimationFrame(function () { S._tblRAF = 0; renderAmWindow(); });
+    });
     var lyr = el('aside', 'am-lyrics');
     R.lyrScroll = el('div', 'am-lyr-scroll');
     lyr.appendChild(R.lyrScroll);
@@ -521,7 +547,9 @@
         }
         ensureMetaDeep(); // 后台分块补齐全库标签（metaCache 持久化，仅首次有成本）
       }
-      renderView();
+      // 防抖：打字过程中不整表重绘，150ms 静默后一次性渲染
+      clearTimeout(S._schT);
+      S._schT = setTimeout(renderView, 150);
     };
     sch.appendChild(inp); sb.appendChild(sch);
   }
@@ -649,59 +677,102 @@
   }
 
   /* 本地曲目表：封面按专辑共享（每张专辑只解析一次，行内复用同一 dataURL，解码一次）；
-     超 2000 行的巨型列表不渲染封面列以保流畅 */
+     超 2000 行的巨型列表不渲染封面列以保流畅。
+     V3.1：>300 行窗口化渲染——只构建可视区 ±15 行，上下用占位行撑高度，滚动 rAF 合并。 */
+  var AM_ROW_H_COVER = 52, AM_ROW_H_PLAIN = 41, AM_WINDOW_MIN = 300, AM_OVERSCAN = 15;
+  function buildTrackRow(t, i, opts) {
+    var m = trackMeta(t);
+    var tr = el('tr', 'am-tr' + (state.currentPath === t.path ? ' cur' : ''));
+    tr.dataset.path = t.path; // 定位播放文件用
+    if (opts.withCover) {
+      var tdCover = el('td');
+      var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy';
+      img.style.visibility = 'hidden';
+      albumCover(t, function (url) { if (url) { img.src = url; img.style.visibility = ''; } });
+      tdCover.appendChild(img); tr.appendChild(tdCover);
+    }
+    tr.appendChild(el('td', 'am-c-title', esc(m.title)));
+    tr.appendChild(el('td', 'am-c-dim', esc(m.artist)));
+    tr.appendChild(el('td', 'am-c-dim', esc(m.album)));
+    var acts = el('td', 'am-c-acts');
+    var bFav = el('button', 'am-mini-btn' + (state.favorites && state.favorites.has(t.path) ? ' faved' : ''), '♥');
+    bFav.title = '喜爱';
+    bFav.onclick = function (e) {
+      e.stopPropagation();
+      window.mine.toggleFavorite(t.path).then(function (favs) {
+        state.favorites = new Set(favs);
+        bFav.classList.toggle('faved', state.favorites.has(t.path));
+        if (S.view === 'favorites') renderView();
+      });
+    };
+    var bAdd = el('button', 'am-mini-btn', '⊕');
+    bAdd.title = '添加到播放列表';
+    bAdd.onclick = function (e) { e.stopPropagation(); openAddMenu(e.clientX, e.clientY, t.path); };
+    acts.appendChild(bFav); acts.appendChild(bAdd);
+    if (opts.inPlaylist) {
+      var bRm = el('button', 'am-mini-btn', '✕');
+      bRm.title = '从播放列表移除';
+      bRm.onclick = function (e) {
+        e.stopPropagation();
+        window.mine.playlistRemove(opts.plId, t.path).then(function (pls) { S.playlists = pls; renderSidebar(); renderView(); });
+      };
+      acts.appendChild(bRm);
+    }
+    tr.appendChild(acts);
+    tr.ondblclick = function () { playList(opts.tracks, i); };
+    return tr;
+  }
+  function amSpacerRow(h, cols) {
+    var tr = el('tr');
+    var td = el('td');
+    td.colSpan = cols;
+    td.style.cssText = 'height:' + h + 'px;padding:0;border:0';
+    tr.appendChild(td);
+    return tr;
+  }
   function renderTrackTable(c, tracks) {
     var tb = el('table', 'am-table');
     var inPlaylist = S.view.indexOf('pl:') === 0;
-    var plId = inPlaylist ? S.view.slice(3) : null;
-    var withCover = tracks.length <= 2000;
-    tb.innerHTML = '<thead><tr>' + (withCover ? '<th style="width:46px"></th>' : '') +
+    var opts = {
+      withCover: tracks.length <= 2000,
+      inPlaylist: inPlaylist,
+      plId: inPlaylist ? S.view.slice(3) : null,
+      tracks: tracks
+    };
+    tb.innerHTML = '<thead><tr>' + (opts.withCover ? '<th style="width:46px"></th>' : '') +
       '<th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:96px"></th></tr></thead>';
     var body = el('tbody');
-    tracks.forEach(function (t, i) {
-      var m = trackMeta(t);
-      var tr = el('tr', 'am-tr' + (state.currentPath === t.path ? ' cur' : ''));
-      tr.dataset.path = t.path; // 定位播放文件用
-      if (withCover) {
-        var tdCover = el('td');
-        var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy';
-        img.style.visibility = 'hidden';
-        albumCover(t, function (url) { if (url) { img.src = url; img.style.visibility = ''; } });
-        tdCover.appendChild(img); tr.appendChild(tdCover);
-      }
-      tr.appendChild(el('td', 'am-c-title', esc(m.title)));
-      tr.appendChild(el('td', 'am-c-dim', esc(m.artist)));
-      tr.appendChild(el('td', 'am-c-dim', esc(m.album)));
-      var acts = el('td', 'am-c-acts');
-      var bFav = el('button', 'am-mini-btn' + (state.favorites && state.favorites.has(t.path) ? ' faved' : ''), '♥');
-      bFav.title = '喜爱';
-      bFav.onclick = function (e) {
-        e.stopPropagation();
-        window.mine.toggleFavorite(t.path).then(function (favs) {
-          state.favorites = new Set(favs);
-          bFav.classList.toggle('faved', state.favorites.has(t.path));
-          if (S.view === 'favorites') renderView();
-        });
-      };
-      var bAdd = el('button', 'am-mini-btn', '⊕');
-      bAdd.title = '添加到播放列表';
-      bAdd.onclick = function (e) { e.stopPropagation(); openAddMenu(e.clientX, e.clientY, t.path); };
-      acts.appendChild(bFav); acts.appendChild(bAdd);
-      if (inPlaylist) {
-        var bRm = el('button', 'am-mini-btn', '✕');
-        bRm.title = '从播放列表移除';
-        bRm.onclick = function (e) {
-          e.stopPropagation();
-          window.mine.playlistRemove(plId, t.path).then(function (pls) { S.playlists = pls; renderSidebar(); renderView(); });
-        };
-        acts.appendChild(bRm);
-      }
-      tr.appendChild(acts);
-      tr.ondblclick = function () { playList(tracks, i); };
-      body.appendChild(tr);
-    });
     tb.appendChild(body);
     c.appendChild(tb);
+
+    if (tracks.length <= AM_WINDOW_MIN) {
+      S._tbl = null;
+      tracks.forEach(function (t, i) { body.appendChild(buildTrackRow(t, i, opts)); });
+      return;
+    }
+    // 窗口化：可视区 ±15 行
+    var rowH = opts.withCover ? AM_ROW_H_COVER : AM_ROW_H_PLAIN;
+    var cols = opts.withCover ? 5 : 4;
+    var win = { tracks: tracks, opts: opts, body: body, tb: tb, rowH: rowH, cols: cols, lastStart: -1, lastEnd: -1 };
+    S._tbl = win;
+    renderAmWindow();
+  }
+  function renderAmWindow() {
+    var win = S._tbl, c = R.content;
+    if (!win || !c || !win.body.isConnected) { return; }
+    var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
+    var base = win.tb.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop + headH;
+    var st = c.scrollTop, h = c.clientHeight;
+    var start = Math.max(0, Math.floor((st - base) / win.rowH) - AM_OVERSCAN);
+    var end = Math.min(win.tracks.length, Math.ceil((st + h - base) / win.rowH) + AM_OVERSCAN);
+    if (start === win.lastStart && end === win.lastEnd) return;
+    win.lastStart = start; win.lastEnd = end;
+    var frag = document.createDocumentFragment();
+    if (start > 0) frag.appendChild(amSpacerRow(start * win.rowH, win.cols));
+    for (var i = start; i < end; i++) frag.appendChild(buildTrackRow(win.tracks[i], i, win.opts));
+    if (end < win.tracks.length) frag.appendChild(amSpacerRow((win.tracks.length - end) * win.rowH, win.cols));
+    win.body.innerHTML = '';
+    win.body.appendChild(frag);
   }
 
   /* ---------------- 在线搜索视图（洛雪 musicSdk，AM 外观） ---------------- */

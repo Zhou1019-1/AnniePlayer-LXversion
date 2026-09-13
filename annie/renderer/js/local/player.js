@@ -1223,7 +1223,8 @@ function startProgressInterp() {
     const dt = (performance.now() - state._posAt) / 1000;
     if (dt < 0 || dt > 5) return; // 锚点过期（引擎事件停滞），等下个事件刷新
     const disp = state.position + dt;
-    updateProgress(disp);
+    // AM/FB2K 主题下舞台进度条隐藏，跳过 DOM 写入（其自身进度条由 position 事件驱动）
+    if (!window.__legacyThemeHidden) updateProgress(disp);
     if (window.annieViz) window.annieViz.setProgress(disp, state.duration);
     _interpRaf = requestAnimationFrame(tick);
   };

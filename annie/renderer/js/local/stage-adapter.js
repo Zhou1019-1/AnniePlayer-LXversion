@@ -111,13 +111,17 @@
   var posPlaying = false;
 
   function interpTicker() {
-    if (posPlaying && !annieAudio.paused) {
+    // 仅舞台可见且播放中需要 60fps 补间；暂停或切到其他主题时降为 4Hz 慢轮（等 state 事件恢复锚点）
+    var active = posPlaying && !annieAudio.paused && !window.__legacyThemeHidden;
+    if (active) {
       var now = performance.now();
       var est = lastPosSec + (now - lastPosAt) / 1000;
       if (annieAudio.duration > 0) est = Math.min(est, annieAudio.duration + 0.25);
       annieAudio.currentTime = est;
+      requestAnimationFrame(interpTicker);
+    } else {
+      setTimeout(interpTicker, 250);
     }
-    requestAnimationFrame(interpTicker);
   }
   requestAnimationFrame(interpTicker);
 

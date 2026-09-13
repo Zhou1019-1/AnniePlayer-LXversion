@@ -425,8 +425,9 @@
       dbgScanAt = 0;
     }
   });
-  // FPS 采集（轻量 rAF 计数）
+  // FPS 采集（轻量 rAF 计数，仅调试面板打开时 60fps，关闭时 1Hz 慢轮待命）
   (function fpsLoop() {
+    if (!dbgOn) { setTimeout(fpsLoop, 1000); return; }
     dbgFrames++;
     const now = Date.now();
     if (now - dbgFpsAt >= 1000) { dbgFps = dbgFrames; dbgFrames = 0; dbgFpsAt = now; }

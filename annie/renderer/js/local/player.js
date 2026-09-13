@@ -1041,12 +1041,9 @@ window.annieStreamPlay = async function (track) {
     } else $('#thumb-cover').src = track.cover;
   }
   if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
-  // 可视化分析（ffmpeg 拉流解码）——V1.1.9：延后 1.2s（同 playAt，避免双 ffmpeg 抢资源）
-  // SVLX：仅在粒子舞台可见时执行
-  if (window.annieViz) {
-    const _u = track.url;
-    setTimeout(() => { if (!window.__legacyThemeHidden && state.currentStream?.url === _u) window.annieViz.analyze(_u, track.headers); }, 1200);
-  }
+  // 流媒体不做可视化分析：analyze 会让 ffmpeg 全速下载整首网络流，
+  // 与引擎的实时拉流抢带宽导致音频卡顿（AM/FB2K 门控后粒子舞台下仍会触发）。
+  // 舞台对无分析数据的曲目走实时回退渲染。
   return true; // SVLX：返回值供 AM 主题弹出错误提示
 };
 

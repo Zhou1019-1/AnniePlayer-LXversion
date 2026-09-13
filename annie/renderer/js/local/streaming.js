@@ -375,6 +375,12 @@ async function playStreamAt(i) {
     if (ly && ly.lrc && window.annieStage && window.annieStage.setLyricText) {
       window.annieStage.setLyricText(ly.lrc);
     }
+    // AM 主题流媒体歌词：按 stream:// 路径缓存 + 广播事件（AM 歌词走本地文件接口，stream:// 会落空）
+    if (ly && ly.lrc && state.currentPath) {
+      window.__annieStreamLrcByPath = window.__annieStreamLrcByPath || {};
+      window.__annieStreamLrcByPath[state.currentPath] = ly.lrc;
+      try { document.dispatchEvent(new CustomEvent('annie-stream-lyric', { detail: { path: state.currentPath } })); } catch { }
+    }
     // V1.1.4：播放确认后预取下一首（URL 缓存 + 引擎 probe 预热）——切歌时秒起播
     prefetchNextSong();
   };

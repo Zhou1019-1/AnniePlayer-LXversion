@@ -281,7 +281,18 @@
           cover: song.cover || '', duration: song.duration ? song.duration / 1000 : 0,
           provider: song.provider, quality: r.quality || ''
         })).then(function (ok) {
-          if (ok === false) renderStreamStatus(song.name + '：播放失败，引擎未接受流地址', true);
+          if (ok === false) { renderStreamStatus(song.name + '：播放失败，引擎未接受流地址', true); return; }
+          // 播放确认后取歌词：注入缓存 + 广播给 AM 歌词面板 + 同步粒子舞台
+          if (window.mine.streamLyric) {
+            window.mine.streamLyric({ provider: song.provider, song: song }).then(function (ly) {
+              if (!ly || !ly.lrc) return;
+              if (S.stIndex !== i || !state.currentStream || !state.currentPath) return;
+              window.__annieStreamLrcByPath = window.__annieStreamLrcByPath || {};
+              window.__annieStreamLrcByPath[state.currentPath] = ly.lrc;
+              if (window.annieStage && window.annieStage.setLyricText) window.annieStage.setLyricText(ly.lrc);
+              try { document.dispatchEvent(new CustomEvent('annie-stream-lyric', { detail: { path: state.currentPath } })); } catch (e) { }
+            }).catch(function () { });
+          }
         });
       }
       if (!song.cover && window.mine.streamGetPic) {
@@ -832,11 +843,18 @@
     });
     return merged;
   }
-  function loadLyrics(path) {
+  function loadLyrics(path, isStream) {
     if (S.lyrPath === path) return;
     S.lyrPath = path; S.lyrLines = []; S.lyrCur = -1;
     R.lyrScroll.innerHTML = '';
     if (!path) { renderLyrics(); return; }
+    // 流媒体曲目：path 是真实播放 URL；歌词由 AM/streaming.js 取到后注入 __annieStreamLrcByPath 并广播 annie-stream-lyric
+    if (isStream) {
+      var cached = window.__annieStreamLrcByPath && window.__annieStreamLrcByPath[path];
+      if (cached) { S.lyrLines = parseLrc(cached); }
+      renderLyrics();
+      return;
+    }
     window.mine.lyrics(path).then(function (r) {
       if (S.lyrPath !== path) return;
       S.lyrLines = (r && r.ok && r.text) ? parseLrc(r.text) : [];
@@ -847,7 +865,9 @@
     var box = R.lyrScroll;
     box.innerHTML = '';
     if (!S.lyrLines.length) {
-      box.appendChild(el('div', 'am-lyr-empty', state.currentPath ? '暂无歌词' : '播放歌曲以显示歌词'));
+      var emptyText = !state.currentPath ? '播放歌曲以显示歌词'
+        : (state.currentStream ? '歌词加载中…' : '暂无歌词');
+      box.appendChild(el('div', 'am-lyr-empty', emptyText));
       return;
     }
     S.lyrLines.forEach(function (l, i) {
@@ -961,7 +981,7 @@
         else root.classList.add('am-nobg');
       });
     }
-    loadLyrics(state.currentStream ? null : ((state.currentCue && state.currentCue.src) || (t && t.path) || null));
+    loadLyrics(state.currentStream ? state.currentPath : ((state.currentCue && state.currentCue.src) || (t && t.path) || null), !!state.currentStream);
   }
   function refreshTransport() {
     if (!R.btnPlay) return;
@@ -978,6 +998,12 @@
 
   /* ---------------- 引擎事件 ---------------- */
   function bindGlobal() {
+    // 流媒体歌词到达（streaming.js 广播）：命中当前曲目则重载歌词面板
+    document.addEventListener('annie-stream-lyric', function (e) {
+      if (!state.currentStream || !e.detail || e.detail.path !== state.currentPath) return;
+      S.lyrPath = null; // 解除 loadLyrics 的同路径短路
+      loadLyrics(state.currentPath, true);
+    });
     window.mine.onEngineEvent(function (event, data) {
       if (event === 'position' && data) {
         S.pos = Math.max(0, (data.seconds || 0) - (state.currentCue ? state.currentCue.start : 0));

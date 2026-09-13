@@ -12,7 +12,9 @@ function resolveTool(name) {
   const prod = path.join(process.resourcesPath || '', 'engine', 'tools', name);
   // EXP 沙箱布局：exp7.28/main → exp7.28/engine/tools
   const dev = path.join(__dirname, '..', 'engine', 'tools', name);
-  for (const p of [prod, dev]) { try { if (fs.existsSync(p)) return p; } catch { } }
+  // SVLX 仓库布局：annie/main → 仓库根 engine/tools（此前缺这条，dev 下分析器完全失效）
+  const devRoot = path.join(__dirname, '..', '..', 'engine', 'tools', name);
+  for (const p of [prod, dev, devRoot]) { try { if (fs.existsSync(p)) return p; } catch { } }
   return name; // 回退 PATH
 }
 

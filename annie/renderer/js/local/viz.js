@@ -404,6 +404,25 @@ function renderSpec() {
 }
 
 /* ---------------- 无损检测报告 ---------------- */
+// V3.1：无损判定改为用户主动触发——分析照常产出波形/频谱，判定结果仅暂存，
+// 用户点击"开始无损检测"才展示；无现成结果时对当前曲目跑一次分析。
+function renderLosslessIdle() {
+  const sum = $v('#lossless-summary');
+  const rs = $v('#lossless-reasons');
+  if (!sum || !rs) return;
+  sum.textContent = state.currentPath
+    ? '无损判定不会自动进行，点击按钮对当前曲目检测'
+    : '播放曲目后可手动进行无损检测';
+  rs.innerHTML = '';
+  const btn = document.createElement('button');
+  btn.textContent = '开始无损检测';
+  btn.style.cssText = 'margin-top:8px;padding:6px 16px;border:1px solid var(--line);border-radius:8px;background:none;color:var(--fg,#e8eaf0);cursor:pointer;font-size:12px';
+  btn.onmouseenter = () => { btn.style.borderColor = '#fac900'; };
+  btn.onmouseleave = () => { btn.style.borderColor = 'var(--line)'; };
+  btn.onclick = () => window.annieViz.detectLossless();
+  rs.appendChild(btn);
+}
+
 function renderLossless(r) {
   const sum = $v('#lossless-summary');
   const rs = $v('#lossless-reasons');
@@ -444,14 +463,17 @@ window.mine.onAnalyzeEvent((p) => {
     vizState.analyzing = false;
     vizState.waveform = p.waveform && p.waveform.length ? new Float32Array(p.waveform) : null;
     if (p.durationSec) vizState.specDur = p.durationSec;
-    renderLossless(p.lossless);
+    if (p.lossless) vizState.lossless = p.lossless; // V3.1：暂存不展示
+    if (vizState.losslessWanted) { vizState.losslessWanted = false; renderLossless(vizState.lossless); }
+    else renderLosslessIdle();
     $v('#viz-status').textContent = '分析完成';
     renderWave();
     renderSpec();
     if (autoSwitchedTab) { autoSwitchedTab = false; switchVizTab('wave'); } // 波形就绪，切回
   } else if (p.type === 'lossless') {
     // 并行编码探测补发的无损结论（覆盖频谱计算的判定，如"有损压缩格式"快捷结论）
-    renderLossless(p.lossless);
+    vizState.lossless = p.lossless; // V3.1：暂存，用户触发过才展示
+    if (vizState.losslessWanted) { vizState.losslessWanted = false; renderLossless(p.lossless); }
   } else if (p.type === 'error') {
     vizState.analyzing = false;
     $v('#viz-status').textContent = '分析失败';
@@ -471,8 +493,9 @@ window.annieViz = {
     vizState.analyzing = true;
     vizState.waveform = null;
     vizState.position = 0;
+    vizState.lossless = null; // V3.1：新曲目清空旧判定
     resetSpec();
-    renderLossless(null);
+    renderLosslessIdle();
     $v('#viz-status').textContent = '分析中…';
     // 分析中自动展示"频谱"页签：频谱是流式渲染（逐批到达即绘制），
     // 波形必须等整曲分析完成才一次性出现——避免用户误以为要等分析完才有图。
@@ -497,6 +520,17 @@ window.annieViz = {
     // 仅当前激活的页面需要增量更新进度线（未激活 canvas display:none，绘制是 no-op）
     if (currentVizTab() === 'wave') drawWaveProgress();
     else if (currentVizTab() === 'spec') drawSpecProgress();
+  },
+  /** V3.1：无损检测手动触发——有暂存结果直接展示，否则对当前曲目跑一次分析。 */
+  async detectLossless() {
+    if (vizState.lossless && !vizState.analyzing) { renderLossless(vizState.lossless); return; }
+    const input = state.currentStream ? state.currentStream.url
+      : (state.currentCue ? state.currentCue.src : state.currentPath);
+    if (!input) return;
+    vizState.losslessWanted = true;
+    $v('#lossless-summary').textContent = '无损检测分析中…（整曲 FFT，请稍候）';
+    $v('#lossless-reasons').innerHTML = '';
+    await window.annieViz.analyze(input, state.currentStream ? (state.currentStream.headers || null) : null);
   },
   /** Plus：底栏"频谱"按钮开关可视化面板（状态持久化）。 */
   toggleBar() {

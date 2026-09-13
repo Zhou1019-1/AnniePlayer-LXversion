@@ -52,8 +52,13 @@
     lastLevelAt = performance.now();
   }
 
+  var lastBuildAt = -1;
   function buildSpectrum() {
     var now = performance.now();
+    // 同帧复用：主循环每帧连续调 getByteFrequencyData + getByteTimeDomainData，
+    // 各触发一次完整合成（上万次超越函数）——3ms 内的重复调用直接复用上次结果
+    if (now - lastBuildAt < 3) return;
+    lastBuildAt = now;
     // 引擎电平 ~11Hz 上报；超过 300ms 没新数据视为停播，能量自然衰减
     if (now - lastLevelAt > 300) spectrumTarget *= 0.94;
     // 攻击快、释放慢

@@ -447,12 +447,22 @@ function registerIpc() {
   ipcMain.handle('fakescan:batchStart', (_e, paths) => {
     fakeCollected = {};
     const collected = {};
+    // 分批落盘（同 loudness 范式）：每首歌一次全量读写 library.json 是 O(N²) IO
+    const flush = (obj) => {
+      const keys = Object.keys(obj);
+      if (!keys.length) return;
+      const s = loadStore();
+      for (const p of keys) {
+        const v = obj[p];
+        s.metaCache[p] = { ...(s.metaCache[p] || {}), fakeScan: { cutoff: v.cutoff, verdict: v.verdict, reason: v.reason } };
+        delete obj[p];
+      }
+      saveStore({ metaCache: s.metaCache });
+    };
     fakeScan.batchStart(mainWindow, paths || [], (p, v) => {
       collected[p] = v; fakeCollected[p] = v;
-      const s = loadStore();
-      s.metaCache[p] = { ...(s.metaCache[p] || {}), fakeScan: { cutoff: v.cutoff, verdict: v.verdict, reason: v.reason } };
-      saveStore({ metaCache: s.metaCache });
-    }).then(() => { });
+      if (Object.keys(collected).length >= 20) flush(collected);
+    }).then(() => flush(collected));
     return { ok: true };
   });
   ipcMain.handle('fakescan:cancel', () => { fakeScan.batchCancel(); return { ok: true }; });

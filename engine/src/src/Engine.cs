@@ -56,6 +56,17 @@ public sealed class Engine
 
     private readonly Timer _positionTimer;
 
+    // 电平数据：音频回调线程只写以下字段（零 I/O/零 JSON/零锁），
+    // 由 position 定时器（10Hz）读取后 Emit level。float 读写原子，volatile 脏标记保证有序。
+    private float _levelRmsL, _levelPeakL, _levelRmsR, _levelPeakR;
+    private volatile bool _levelDirty;
+
+    private void OnLevelSample(float rmsL, float peakL, float rmsR, float peakR)
+    {
+        _levelRmsL = rmsL; _levelPeakL = peakL; _levelRmsR = rmsR; _levelPeakR = peakR;
+        _levelDirty = true;
+    }
+
     public Engine(Rpc rpc)
     {
         _rpc = rpc;
@@ -404,8 +415,8 @@ public sealed class Engine
             var source = new PcmFloatSource(pcm, rate, channels) { Gain = _gain, LoudGain = _loudGain };
             if (_eqEnabled) { source.Eq = new EqChain(rate, channels); source.Eq.Update(_eqGains); }
             // 双声道电平：rms/peak 保留为两声道较大值（向后兼容），rmsL/peakL/rmsR/peakR 为分声道值
-            source.OnLevel += (rmsL, peakL, rmsR, peakR) => _rpc.Emit("level",
-                new { rms = Math.Max(rmsL, rmsR), peak = Math.Max(peakL, peakR), rmsL, peakL, rmsR, peakR });
+            // 音频回调线程只写缓存字段，level 事件由 position 定时器（10Hz）顺带发送
+            source.OnLevel += OnLevelSample;
 
             // Pro：crossfade 开启时经混音器输出（设备流在切歌时保持打开，同流混音过渡）
             IWaveProvider outProvider = source;
@@ -609,8 +620,8 @@ public sealed class Engine
             var pcm = FfmpegPcmStream.Start(path, 0, resampled ? mixRate : 0, mixRate, mixCh, headers, CapacityFor(info, mixRate, mixCh));
             var source = new PcmFloatSource(pcm, mixRate, mixCh) { Gain = _gain, LoudGain = (float)Math.Clamp(loudGain, 0.05, 4.0) };
             if (_eqEnabled) { source.Eq = new EqChain(mixRate, mixCh); source.Eq.Update(_eqGains); }
-            source.OnLevel += (rmsL, peakL, rmsR, peakR) => _rpc.Emit("level",
-                new { rms = Math.Max(rmsL, rmsR), peak = Math.Max(peakL, peakR), rmsL, peakL, rmsR, peakR });
+            // 音频回调线程只写缓存字段，level 事件由 position 定时器（10Hz）顺带发送
+            source.OnLevel += OnLevelSample;
 
             FfmpegPcmStream? oldPcm;
             lock (_gate)
@@ -875,6 +886,15 @@ public sealed class Engine
         }
 
         _rpc.Emit("position", new { seconds = Math.Round(pos, 3), duration = dur });
+
+        // level 事件随 position 一起发（仅在有更新时），音频回调线程不参与 I/O
+        if (_levelDirty)
+        {
+            _levelDirty = false;
+            float rmsL = _levelRmsL, peakL = _levelPeakL, rmsR = _levelRmsR, peakR = _levelPeakR;
+            _rpc.Emit("level",
+                new { rms = Math.Max(rmsL, rmsR), peak = Math.Max(peakL, peakR), rmsL, peakL, rmsR, peakR });
+        }
 
         if (shouldEnd)
         {

@@ -245,7 +245,8 @@ public sealed class IntPcmConverter : IWaveProvider
             {
                 case 2:
                     short s16 = (short)Math.Round(v * 32767f);
-                    BitConverter.GetBytes(s16).CopyTo(buffer, o);
+                    buffer[o] = (byte)(s16 & 0xFF);
+                    buffer[o + 1] = (byte)((s16 >> 8) & 0xFF);
                     break;
                 case 3:
                     int s24 = (int)Math.Round(v * 8388607f);
@@ -255,7 +256,10 @@ public sealed class IntPcmConverter : IWaveProvider
                     break;
                 case 4:
                     int s32 = (int)Math.Round(v * 2147483647.0);
-                    BitConverter.GetBytes(s32).CopyTo(buffer, o);
+                    buffer[o] = (byte)(s32 & 0xFF);
+                    buffer[o + 1] = (byte)((s32 >> 8) & 0xFF);
+                    buffer[o + 2] = (byte)((s32 >> 16) & 0xFF);
+                    buffer[o + 3] = (byte)((s32 >> 24) & 0xFF);
                     break;
             }
         }

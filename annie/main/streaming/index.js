@@ -52,10 +52,23 @@ async function getPic(params) {
  * 用途：kwcdn.kuwo.cn 的 https 证书无效、部分 CDN 图被 CSP 拦 http——
  * 主进程 Node fetch 走系统 TLS/直连能取到，转 data: 后渲染层 img-src 放行。
  * 带 10 秒超时 + 大小上限（8MB），失败返回空串由调用方回退。
+ * V3.1：LRU 缓存（200 条）——列表滚动/切歌重复请求同一批封面不再重复 fetch。
  */
+const COVER_CACHE_MAX = 200;
+const coverCache = new Map(); // url -> Promise<{url,...}>（存 Promise 合并并发同求）
 async function coverProxy(url) {
   const u = String(url || '');
   if (!/^https?:\/\//i.test(u)) return { url: '', error: 'bad-url' };
+  const hit = coverCache.get(u);
+  if (hit) { coverCache.delete(u); coverCache.set(u, hit); return hit; } // LRU 触热
+  const p = coverProxyFetch(u);
+  coverCache.set(u, p);
+  if (coverCache.size > COVER_CACHE_MAX) coverCache.delete(coverCache.keys().next().value);
+  // 失败结果不驻留缓存（网络抖动后下次还能重试）
+  p.catch(() => {}).then(r => { if (r && r.error) coverCache.delete(u); });
+  return p;
+}
+async function coverProxyFetch(u) {
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 10000);

@@ -87,6 +87,7 @@ function switchVizTab(tab) {
   document.querySelectorAll('.viz-tab').forEach(b => b.classList.toggle('active', b.dataset.vtab === tab));
   $v('#wave-canvas').classList.toggle('active', tab === 'wave');
   $v('#spec-canvas').classList.toggle('active', tab === 'spec');
+  const sp = $v('#spec-progress'); if (sp) sp.classList.toggle('active', tab === 'spec');
   $v('#lossless-page').classList.toggle('active', tab === 'lossless');
   renderWave();
   renderSpec();
@@ -363,6 +364,7 @@ function renderSpecFull() {
     ctx.textAlign = 'center';
     ctx.fillText(vizState.analyzing ? '频谱分析中…' : '播放曲目后显示频谱', W / 2, H / 2);
     vizState._specOldX = -1;
+    positionSpecProgress(0, 0); // 无频谱数据时隐藏覆盖层进度线
     return;
   }
   ctx.drawImage(vizState.specCanvas, 0, 0, vizState.specFrames, SPEC_BANDS, 0, 0, W, H);
@@ -376,24 +378,24 @@ function renderSpecFull() {
 
   const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
   vizState._specOldX = -1;
-  drawSpecProgressLine(ctx, W, H, progress);
+  positionSpecProgress(W, progress);
 }
 
-// 10Hz：进度线移动——改为调度全量重绘（rAF 合并）。
-// V1.1.9：旧实现"擦除旧线列"用源画布单列重贴，进度线半透明金色叠在频谱上，
-// 擦除取整误差累积 → 走过的区域逐渐染黄。全量重绘（黑底→底图→画线）旧线必然消失。
+// 进度线移到独立覆盖层：60fps 只写 transform，底图不再全量重绘。
+// （V1.1.9 曾改全量重绘解决旧线染黄；覆盖层方案天然无残留问题）
+function positionSpecProgress(W, progress) {
+  const ov = $v('#spec-progress');
+  if (!ov) return;
+  const line = ov.firstElementChild;
+  if (!line) return;
+  const show = progress > 0 && W > 0;
+  line.style.display = show ? '' : 'none';
+  if (show) line.style.transform = 'translateX(' + (Math.round(progress * W) - 1) + 'px)';
+}
 function drawSpecProgress() {
-  scheduleSpecRender();
-}
-
-// 频谱进度线（V1.1.9：由 renderSpecFull 全量重绘调用，黑底已清旧线，只画新线；
-// 不透明纯色，杜绝半透明叠加累积染黄）
-function drawSpecProgressLine(ctx, W, H, progress) {
-  if (progress > 0) {
-    const px = Math.round(progress * W) - 1;
-    ctx.fillStyle = '#fac900';
-    ctx.fillRect(px, 0, 2, H);
-  }
+  const s = vizState.size.spec;
+  const progress = vizState.duration > 0 ? Math.min(1, vizState.position / vizState.duration) : 0;
+  positionSpecProgress(s.w, progress);
 }
 
 // 兼容旧接口（低频调用方：switchVizTab/setVizBar/analyze/resize）

@@ -76,17 +76,38 @@ function localMatches(kw) {
   return out;
 }
 
-function localDupOf(song) {
-  const norm = (s) => String(s || '').toLowerCase().replace(/[\s（）()\[\]【】·\-_.]/g, '');
-  const n = norm(song.name), a = norm(song.artist);
-  if (!n) return null;
+/* V3.1 性能：本地查重预建索引。旧实现每首搜索结果都遍历整个曲库且每曲两次正则
+ *（30 结果 × 5000 曲 = 15 万次正则/次渲染）。现在按规范化标题建 Map 索引，
+ * 命中后再按艺人匹配；库规模/标签版本变化时自动重建。 */
+const _dupNorm = (s) => String(s || '').toLowerCase().replace(/[\s（）()\[\]【】·\-_.]/g, '');
+let _dupIdx = { key: '', map: null };
+function dupIndex() {
+  const key = state.library.tracks.length + '|' + (state._tagVer || 0);
+  if (_dupIdx.key === key && _dupIdx.map) return _dupIdx.map;
+  const map = new Map();
   for (const t of state.library.tracks) {
     const mc = state.library.metaCache[t.path] || {};
-    const tn = norm(mc.title || t.name.replace(/\.[^.]+$/, ''));
-    const ta = norm(mc.artist);
-    if (tn === n && (!a || !ta || ta === a || ta.includes(a) || a.includes(ta))) {
-      const lossless = /\.(flac|wav|ape|aiff?|alac|tta|wv|dsf|dff)$/i.test(t.path);
-      return { fav: state.favorites.has(t.path), lossless, path: t.path };
+    const tn = _dupNorm(mc.title || t.name.replace(/\.[^.]+$/, ''));
+    if (!tn) continue;
+    let arr = map.get(tn);
+    if (!arr) map.set(tn, arr = []);
+    arr.push({
+      ta: _dupNorm(mc.artist),
+      path: t.path,
+      lossless: /\.(flac|wav|ape|aiff?|alac|tta|wv|dsf|dff)$/i.test(t.path),
+    });
+  }
+  _dupIdx = { key, map };
+  return map;
+}
+function localDupOf(song) {
+  const n = _dupNorm(song.name), a = _dupNorm(song.artist);
+  if (!n) return null;
+  const cands = dupIndex().get(n);
+  if (!cands) return null;
+  for (const c of cands) {
+    if (!a || !c.ta || c.ta === a || c.ta.includes(a) || a.includes(c.ta)) {
+      return { fav: state.favorites.has(c.path), lossless: c.lossless, path: c.path };
     }
   }
   return null;

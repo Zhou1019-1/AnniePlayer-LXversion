@@ -394,6 +394,10 @@ body { display: flex; flex-direction: column; }
 .viz-page.active { display: block; }
 canvas.viz-page { display: none; }
 canvas.viz-page.active { display: block; }
+/* 频谱进度线覆盖层：transform 平移 2px 线条，底图不再 60fps 全量重绘 */
+#spec-progress { position: absolute; inset: 0; pointer-events: none; display: none; }
+#spec-progress.active { display: block; }
+#spec-progress .line { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: #fac900; }
 #lossless-page { padding: 8px 12px; overflow-y: auto; }
 
 /* 可视化面板关闭后的恢复把手（悬浮在舞台右下角） */

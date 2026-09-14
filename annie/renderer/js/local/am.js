@@ -935,16 +935,131 @@
   }
 
   /* ---------------- 歌词（AM 风格逐行） ---------------- */
+  /* 逐字歌词：词标签解析（<mm:ss.xxx>绝对 / <相对ms,时长ms>lxlyric）+ 双层渲染 + 进度
+   * 与 fb2k/stage-adapter 同款逻辑；无词标签时完全回退行级高亮 */
+  function karaParseMark(raw, lineStart) {
+    var s = String(raw || '').trim();
+    var mm = /^(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)$/.exec(s);
+    if (mm) return { t: (parseInt(mm[1], 10) || 0) * 60 + parseFloat(mm[2] || '0'), d: 0 };
+    var rel = /^(\d+),(\d+)$/.exec(s);
+    if (rel) return { t: (Number(lineStart) || 0) + (parseInt(rel[1], 10) || 0) / 1000, d: (parseInt(rel[2], 10) || 0) / 1000 };
+    return null;
+  }
+  function karaExtractWords(rawText, lineStart) {
+    var s = String(rawText || '');
+    if (s.indexOf('<') < 0) return null;
+    var re = /<([^<>]+)>/g, m, marks = [];
+    while ((m = re.exec(s))) marks.push({ raw: m[1], index: m.index, end: re.lastIndex });
+    if (!marks.length) return null;
+    var words = [], fullText = '';
+    for (var i = 0; i < marks.length; i++) {
+      var seg = s.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].index : s.length);
+      if (!seg) continue;
+      var tk = karaParseMark(marks[i].raw, lineStart);
+      if (tk == null) { fullText += seg; continue; }
+      var c0 = fullText.length;
+      fullText += seg;
+      words.push({ text: seg, t: tk.t, d: tk.d, c0: c0, c1: fullText.length });
+    }
+    if (!words.length) return null;
+    for (var k = 0; k < words.length; k++) {
+      if (words[k].d > 0) continue;
+      var nxt = words[k + 1];
+      words[k].d = nxt ? Math.max(0.06, nxt.t - words[k].t) : 0.6;
+    }
+    return { text: fullText, words: words };
+  }
+  var _karaCanvas = null;
+  function karaMeasureCtx() {
+    if (!_karaCanvas) _karaCanvas = document.createElement('canvas');
+    return _karaCanvas.getContext('2d');
+  }
+  function karaRanges(node, line) {
+    var sig = String(line.text || '') + '|' + ((line.words && line.words.length) || 0);
+    if (node._karaSig === sig && node._karaRanges) return node._karaRanges;
+    var cs = getComputedStyle(node);
+    var ctx = karaMeasureCtx();
+    ctx.font = (cs.fontWeight || '400') + ' ' + (cs.fontSize || '13px') + ' ' + (cs.fontFamily || 'sans-serif');
+    var text = String(line.text || '');
+    var full = Math.max(1, ctx.measureText(text).width);
+    var ranges = (line.words || []).map(function (w) {
+      var c0 = Math.max(0, Math.min(text.length, w.c0 || 0));
+      var c1 = Math.max(c0, Math.min(text.length, w.c1 != null ? w.c1 : c0));
+      return { p0: ctx.measureText(text.slice(0, c0)).width / full, p1: ctx.measureText(text.slice(0, c1)).width / full };
+    });
+    node._karaSig = sig; node._karaRanges = ranges;
+    return ranges;
+  }
+  function karaProgress(node, line, now) {
+    var words = line.words;
+    if (!words || !words.length) return 0;
+    var ranges = karaRanges(node, line);
+    var p = 0;
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i];
+      var ws = w.t, we = w.t + Math.max(0.08, w.d || 0.24);
+      if (now < ws) break;
+      var local = now >= we ? 1 : (now - ws) / Math.max(0.08, we - ws);
+      local = Math.max(0, Math.min(1, local));
+      var r = ranges[i] || { p0: 0, p1: 0 };
+      p = Math.max(p, r.p0 + (r.p1 - r.p0) * local);
+      if (now < we) break;
+    }
+    return Math.max(0, Math.min(1, p));
+  }
+  /* 构建一行歌词元素（逐字时含双层文本），主歌词/沉浸/迷你共用 */
+  function buildLyrLineEl(l, i, cls) {
+    var d = el('div', cls + ' far');
+    if (l.words && l.words.length && l.text) {
+      d.classList.add('kara');
+      var wrap = el('span', 'kara-wrap');
+      var base = el('span', 'kara-base'); base.textContent = l.text;
+      var hi = el('span', 'kara-hi'); hi.textContent = l.text;
+      wrap.appendChild(base); wrap.appendChild(hi);
+      d.appendChild(wrap);
+      d._kara = { line: l, hi: hi };
+    } else {
+      d.appendChild(document.createTextNode(l.text));
+    }
+    if (l.tly) d.appendChild(el('span', 'tly', l.tly));
+    d.onclick = function () { seek(l.t); };
+    d._idx = i;
+    return d;
+  }
+  /* 更新容器内当前行逐字进度（每 tick 调用；行切换时重置上一行） */
+  function paintKara(container, cur, now) {
+    if (!container) return;
+    if (container._karaCur !== cur) {
+      var old = container._karaCur;
+      if (old != null && old >= 0) {
+        var on = container.children[old];
+        if (on && on._kara) on._kara.hi.style.width = '0%';
+      }
+      container._karaCur = cur;
+    }
+    if (cur < 0) return;
+    var node = container.children[cur];
+    if (node && node._kara) node._kara.hi.style.width = (karaProgress(node, node._kara.line, now) * 100).toFixed(2) + '%';
+  }
   function parseLrc(text) {
     var out = [];
     String(text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/((\[\d+:\d+(\.\d+)?\])+)(.*)/);
       if (!m) return;
-      var txt = m[4].trim();
-      var re = /\[(\d+):(\d+)(\.\d+)?\]/g, t;
+      var raw = m[4].trim();
+      var re = /\[(\d+):(\d+)(\.\d+)?\]/g, t, firstT = null, times = [];
       while ((t = re.exec(m[1]))) {
-        out.push({ t: (+t[1]) * 60 + (+t[2]) + (t[3] ? +t[3] : 0), text: txt });
+        var tt = (+t[1]) * 60 + (+t[2]) + (t[3] ? +t[3] : 0);
+        if (firstT == null) firstT = tt;
+        times.push(tt);
       }
+      // 逐字：提取 <词时间> 标签，text 清洗为纯文本
+      var ex = karaExtractWords(raw, firstT);
+      var txt = ex ? ex.text : raw;
+      var words = ex ? ex.words : null;
+      times.forEach(function (tt) {
+        out.push({ t: tt, text: txt, words: words ? words.slice() : null });
+      });
     });
     // 翻译行合并：同一时间戳的后续行作为 tly
     out.sort(function (a, b) { return a.t - b.t; });
@@ -952,7 +1067,7 @@
     out.forEach(function (l) {
       var prev = merged[merged.length - 1];
       if (prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text) prev.tly = l.text;
-      else if (l.text) merged.push({ t: l.t, text: l.text, tly: '' });
+      else if (l.text) merged.push({ t: l.t, text: l.text, tly: '', words: l.words || null });
     });
     return merged;
   }
@@ -987,12 +1102,7 @@
       return;
     }
     S.lyrLines.forEach(function (l, i) {
-      var d = el('div', 'am-lyr-line far');
-      d.appendChild(document.createTextNode(l.text));
-      if (l.tly) d.appendChild(el('span', 'tly', l.tly));
-      d.onclick = function () { seek(l.t); };
-      d._idx = i;
-      box.appendChild(d);
+      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line'));
     });
     tickLyrics();
   }
@@ -1002,6 +1112,8 @@
     for (var i = 0; i < S.lyrLines.length; i++) {
       if (S.lyrLines[i].t <= S.pos + 0.15) cur = i; else break;
     }
+    // 逐字扫过：每 tick 更新当前行（不吃下方 line-change 早退）
+    paintKara(R.lyrScroll, cur, S.pos);
     if (cur === S.lyrCur) return;
     S.lyrCur = cur;
     var nodes = R.lyrScroll.children;
@@ -1152,12 +1264,7 @@
       return;
     }
     S.lyrLines.forEach(function (l, i) {
-      var d = el('div', 'am-lyr-line far');
-      d.appendChild(document.createTextNode(l.text));
-      if (l.tly) d.appendChild(el('span', 'tly', l.tly));
-      d.onclick = function () { seek(l.t); };
-      d._idx = i;
-      box.appendChild(d);
+      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line'));
     });
     paintLyrBox(box, S.lyrCur, 0.35);
   }
@@ -1172,6 +1279,7 @@
       n.classList.toggle('near', dist === 1);
       n.classList.toggle('far', dist > 1);
     }
+    paintKara(box, cur, S.pos);
     if (cur >= 0 && nodes[cur]) box.scrollTop = nodes[cur].offsetTop - box.clientHeight * rate;
   }
 

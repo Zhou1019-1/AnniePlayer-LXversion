@@ -276,6 +276,20 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-lyr-line.cur { color: var(--am-text); transform: scale(1.04); filter: none; }
 .am-lyr-line:hover { color: var(--am-text-2); }
 .am-lyr-empty { color: var(--am-text-3); font-size: 15px; font-weight: 600; text-align: center; margin-top: 30vh; }
+/* ---------- 逐字歌词：双层文本（底层暗色 + 上层高亮，按进度裁切扫过） ---------- */
+.am-lyr-line.kara .kara-wrap { position: relative; display: inline-block; white-space: pre; }
+.am-lyr-line.kara .kara-base { color: var(--am-text-3); }
+.am-lyr-line.kara.cur .kara-base { color: var(--am-text-2); }
+.am-lyr-line.kara .kara-hi {
+  position: absolute; left: 0; top: 0; width: 0%; overflow: hidden; white-space: pre;
+  color: var(--am-text); /* 与逐行高亮同色（.cur），非强调色 */
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent 100%);
+}
+/* 沉浸歌词：深色封面背景上用白色扫过 */
+.am-imm-lyr .am-lyr-line.kara .kara-base { color: rgba(255, 255, 255, .5); }
+.am-imm-lyr .am-lyr-line.kara.cur .kara-base { color: rgba(255, 255, 255, .72); }
+.am-imm-lyr .am-lyr-line.kara .kara-hi { color: #fff; }
 
 /* 滚动条 */
 .am-side::-webkit-scrollbar, .am-content::-webkit-scrollbar, .am-lyr-scroll::-webkit-scrollbar { width: 8px; }

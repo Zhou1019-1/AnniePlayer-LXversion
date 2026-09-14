@@ -1140,6 +1140,7 @@ window.mine.onEngineEvent((event, d) => {
       else state._posAt = performance.now();
       if (d.state === 'ended') {
         if (state.currentStream && window.annieStream) window.annieStream.playNext();
+        else if (window.annieAutoNext && window.annieAutoNext()) { /* 播放模式/定时已接管（仅本地） */ }
         else playAt(state.index + 1);
       }
       break;

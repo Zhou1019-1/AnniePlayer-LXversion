@@ -518,7 +518,7 @@ function registerIpc() {
   });
 
   /* ---------------- Pro beat0.0.1：迷你模式（主窗口形态切换，位置记忆） ---------------- */
-  let miniSaved = null, miniWasMax = false;
+  let miniSaved = null, miniWasMax = false, miniActive = false;
   ipcMain.handle('mini:enter', (_e, miniBounds) => {
     if (!mainWindow) return { ok: false };
     // 最大化窗口 setSize/setBounds 无效：先记录并退出最大化（修复：最大化进迷你变"全屏"）
@@ -527,10 +527,20 @@ function registerIpc() {
     if (miniWasMax) mainWindow.unmaximize();
     mainWindow.setMinimumSize(360, 120);
     mainWindow.setAlwaysOnTop(true);
+    miniActive = true;
     // 记忆位置尺寸合法性钳制（防止历史异常值把迷你窗撑回大屏）
     if (miniBounds && miniBounds.width >= 360 && miniBounds.width <= 900 && miniBounds.height >= 120 && miniBounds.height <= 400)
       mainWindow.setBounds(miniBounds);
     else mainWindow.setSize(420, 150);
+    return { ok: true };
+  });
+  // AM 迷你界面：歌词/队列面板展开时动态调整窗口高度（仅迷你模式内有效）
+  ipcMain.handle('mini:setSize', (_e, w, h) => {
+    if (!mainWindow || !miniActive) return { ok: false };
+    w = Math.round(Math.min(Math.max(w || 360, 320), 520));
+    h = Math.round(Math.min(Math.max(h || 156, 120), 760));
+    const b = mainWindow.getBounds();
+    mainWindow.setBounds({ x: b.x, y: b.y, width: w, height: h });
     return { ok: true };
   });
   ipcMain.handle('mini:exit', () => {
@@ -538,6 +548,7 @@ function registerIpc() {
     const b = mainWindow.getBounds();
     mainWindow.setAlwaysOnTop(false);
     mainWindow.setMinimumSize(1120, 680);
+    miniActive = false;
     if (miniWasMax) mainWindow.maximize(); // 进入前是最大化 → 还原最大化
     else if (miniSaved) mainWindow.setBounds(miniSaved);
     miniSaved = null; miniWasMax = false;

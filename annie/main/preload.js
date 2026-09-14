@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld('mine', {
   // Pro beat0.0.1：迷你模式 / 桌面歌词 / 拖放 / 托盘
   miniEnter: (miniBounds) => ipcRenderer.invoke('mini:enter', miniBounds),
   miniExit: () => ipcRenderer.invoke('mini:exit'),
+  miniSetSize: (w, h) => ipcRenderer.invoke('mini:setSize', w, h),
   dlyricsToggle: () => ipcRenderer.invoke('dlyrics:toggle'),
   dlyricsLine: (payload) => ipcRenderer.send('dlyrics:line', payload),
   dlyricsCtl: (payload) => ipcRenderer.send('dlyrics:ctl', payload),

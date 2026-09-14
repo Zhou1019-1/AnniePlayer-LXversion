@@ -346,3 +346,136 @@ html[data-theme="am"] #titlebar { display: none !important; }
 
 /* 设置面板主题卡片缩略图（全局类，配合 settings.js 的 theme-grid） */
 .theme-thumb-am { background: linear-gradient(135deg, rgba(250,45,85,.85), rgba(30,30,30,.9) 60%), rgba(255,255,255,.2); backdrop-filter: blur(6px); }
+
+/* ================= V3.2：播放定时弹层 ================= */
+.am-timer-pop { min-width: 260px; max-width: 300px; }
+.am-pop-h { font-size: 14px; font-weight: 700; color: var(--am-text); padding: 4px 10px 6px; }
+.am-pop-hint { font-size: 11px; color: var(--am-text-3); padding: 0 10px 6px; line-height: 1.5; }
+.am-pop-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; color: var(--am-text); }
+.am-pop-cur { flex: 1; min-width: 0; color: var(--am-accent); }
+.am-pop-num {
+  width: 52px; border: 1px solid var(--am-sep); outline: none; border-radius: 6px;
+  background: var(--am-glass-2); color: var(--am-text); padding: 3px 6px; font: 12px var(--am-font);
+}
+.am-pop-num:focus { border-color: var(--am-accent); }
+
+/* ================= V3.2：待播清单 / 历史记录面板（沉浸+迷你共享） ================= */
+.am-q-tabs { display: flex; gap: 6px; padding: 10px 12px 6px; flex: none; }
+.am-q-tab {
+  flex: 1; border: 0; border-radius: 8px; padding: 6px 0; cursor: pointer;
+  background: rgba(128,128,128,.14); color: rgba(255,255,255,.75); font: 12px var(--am-font);
+}
+.am-q-tab.cur { background: var(--am-accent); color: #fff; font-weight: 600; }
+.am-q-list { flex: 1; overflow-y: auto; padding: 4px 8px 10px; min-height: 0; }
+.am-q-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px; cursor: pointer; }
+.am-q-row:hover { background: rgba(255,255,255,.10); }
+.am-q-row.cur { background: rgba(250,45,85,.20); }
+.am-q-cover { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: rgba(128,128,128,.25); flex: none; }
+.am-q-tx { flex: 1; min-width: 0; }
+.am-q-title { font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-q-sub { font-size: 11px; color: rgba(255,255,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.am-q-dur { font-size: 11px; color: rgba(255,255,255,.55); flex: none; }
+.am-q-empty { color: rgba(255,255,255,.5); font-size: 12px; text-align: center; margin-top: 40px; }
+
+/* ================= V3.2：沉浸式播放界面 ================= */
+.am-imm {
+  position: absolute; inset: 0; z-index: 60; display: none; flex-direction: column;
+  background: var(--am-bg); /* 不透明兜底：无封面时底层界面不能透上来 */
+  overflow: hidden; /* 裁剪外溢的模糊背景层 */
+}
+#am-root.am-imm-on .am-imm { display: flex; }
+.am-imm-bg {
+  position: absolute; inset: -6%; z-index: 0;
+  background-image: var(--am-bgimage, none); background-size: cover; background-position: center;
+  filter: blur(70px) saturate(1.5) brightness(.5); transform: scale(1.15);
+  transition: opacity .6s ease;
+  pointer-events: none;
+}
+/* 无封面时不显示背景图（否则残留上一首的模糊封面） */
+#am-root.am-nobg .am-imm-bg { opacity: 0; }
+#am-root.am-light .am-imm-bg { filter: blur(70px) saturate(1.4) brightness(.9); }
+.am-imm-closebar {
+  position: absolute; top: 14px; right: 16px; z-index: 3; display: flex; gap: 8px;
+  -webkit-app-region: no-drag;
+}
+.am-imm-closebar .am-tbtn { color: #fff; }
+.am-imm-closebar .am-tbtn:hover { background: rgba(255,255,255,.16); color: #fff; }
+.am-imm-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 72px; padding: 56px 72px 40px; }
+.am-imm-left { width: min(44vh, 480px); flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+.am-imm-cover {
+  width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
+  box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);
+}
+.am-imm-title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; margin-top: 6px; }
+.am-imm-sub { font-size: 15px; color: rgba(255,255,255,.78); text-align: center; }
+.am-imm-fmt { font-size: 12px; color: rgba(255,255,255,.55); text-align: center; min-height: 15px; }
+.am-imm-prog { display: flex; align-items: center; gap: 10px; }
+.am-imm-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.28); cursor: pointer; }
+.am-imm-fill { height: 100%; width: 0; border-radius: 3px; background: #fff; }
+.am-imm-time { font-size: 11px; color: rgba(255,255,255,.72); min-width: 36px; text-align: center; }
+.am-imm-ctl { display: flex; align-items: center; justify-content: center; gap: 20px; margin-top: 2px; }
+.am-imm-btn {
+  border: 0; background: transparent; color: #fff; font-size: 20px; cursor: pointer;
+  opacity: .85; padding: 6px; border-radius: 8px; line-height: 1;
+}
+.am-imm-btn:hover { opacity: 1; background: rgba(255,255,255,.14); }
+.am-imm-btn.on { opacity: 1; color: var(--am-accent); }
+.am-imm-play { font-size: 32px; }
+.am-imm-vol { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,.8); }
+.am-imm-volin { width: 78px; accent-color: #fff; }
+/* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词） */
+.am-imm-lyr { display: none; width: 46%; max-height: 100%; overflow-y: auto; padding: 0 8px; position: relative; }
+#am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
+.am-imm-lyr .am-lyr-line { font-size: 26px; font-weight: 700; padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
+.am-imm-lyr .am-lyr-line .tly { font-size: 16px; }
+.am-imm-lyr .am-lyr-line.far { filter: blur(2px); opacity: .45; }
+.am-imm-lyr .am-lyr-line.near { color: rgba(255,255,255,.65); }
+.am-imm-lyr .am-lyr-line.cur { color: #fff; transform: scale(1.03); filter: none; }
+.am-imm-lyr .am-lyr-empty { color: rgba(255,255,255,.5); }
+/* 沉浸队列抽屉（右侧滑出） */
+.am-imm-queue {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 340px; z-index: 2;
+  display: none; flex-direction: column;
+  background: rgba(18,18,22,.66); backdrop-filter: blur(36px); -webkit-backdrop-filter: blur(36px);
+  border-left: 1px solid rgba(255,255,255,.12);
+}
+#am-root.am-imm-q-on .am-imm-queue { display: flex; }
+
+/* ================= V3.2：AM 迷你模式 ================= */
+.am-mini { position: absolute; inset: 0; z-index: 70; display: none; flex-direction: column; background: #1b1b1f; }
+#am-root.am-mini-on .am-mini { display: flex; }
+/* 迷你时隐藏常规 AM 结构 */
+#am-root.am-mini-on .am-topbar, #am-root.am-mini-on .am-body, #am-root.am-mini-on .am-lyrics,
+#am-root.am-mini-on .am-imm, #am-root.am-mini-on::before { display: none; }
+#am-root.am-light .am-mini { background: #f3f3f5; }
+.am-mini-head { display: flex; align-items: center; gap: 10px; padding: 10px 10px 4px; flex: none; -webkit-app-region: drag; }
+.am-mini-head .am-tbtn { -webkit-app-region: no-drag; }
+.am-mini-cover { width: 46px; height: 46px; border-radius: 7px; object-fit: cover; background: rgba(128,128,128,.25); flex: none; }
+.am-mini-info { flex: 1; min-width: 0; }
+.am-mini-title { font-size: 13px; font-weight: 600; color: var(--am-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-mini-sub { font-size: 11px; color: var(--am-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.am-mini-fmt { font-size: 10px; color: var(--am-text-3); margin-top: 1px; min-height: 12px; }
+.am-mini-winbtns { display: flex; gap: 2px; flex: none; }
+.am-mini-prog { display: flex; align-items: center; gap: 8px; padding: 4px 12px 0; flex: none; }
+.am-mini-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(128,128,128,.3); cursor: pointer; }
+.am-mini-fill { height: 100%; width: 0; border-radius: 2px; background: var(--am-accent); }
+.am-mini-time { font-size: 10px; color: var(--am-text-3); min-width: 32px; text-align: center; }
+.am-mini-ctl { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px 8px; flex: none; }
+.am-mini-vol { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--am-text-2); }
+.am-mini-volin { width: 56px; accent-color: var(--am-accent); }
+.am-mini-mid { display: flex; align-items: center; gap: 4px; }
+.am-mini-play { width: 34px; height: 34px; font-size: 16px; }
+.am-mini-right { display: flex; gap: 2px; }
+/* 迷你歌词/队列面板（展开时窗口拉高，二者互斥） */
+.am-mini-lyr { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px; border-top: 1px solid var(--am-sep); }
+#am-root.am-mini-lyr-on .am-mini-lyr { display: block; }
+.am-mini-lyr .am-lyr-line { font-size: 16px; font-weight: 600; padding: 8px 0; }
+.am-mini-queue { display: none; flex: 1; min-height: 0; flex-direction: column; border-top: 1px solid var(--am-sep); }
+#am-root.am-mini-q-on .am-mini-queue { display: flex; }
+/* 迷你面板内的行配色跟随亮暗主题（共享样式默认深色，亮主题覆盖） */
+#am-root.am-light .am-q-tab { background: rgba(0,0,0,.07); color: var(--am-text-2); }
+#am-root.am-light .am-q-tab.cur { background: var(--am-accent); color: #fff; }
+#am-root.am-light .am-q-row:hover { background: rgba(0,0,0,.06); }
+#am-root.am-light .am-q-title { color: var(--am-text); }
+#am-root.am-light .am-q-sub, #am-root.am-light .am-q-dur { color: var(--am-text-3); }
+#am-root.am-light .am-q-empty { color: var(--am-text-3); }

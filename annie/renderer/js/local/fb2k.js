@@ -916,6 +916,7 @@
       }]);
     });
     items.push(['查看属性', function () { showProps(t); }]);
+    items.push(['在线匹配歌词 / 封面…', function () { if (window.annieMatch) window.annieMatch.open({ path: t.path }); }]);
     items.push(['从列表中移除（本次会话）', function () {
       forEachSel(function (x) { S.hiddenPaths.add(x.path); }); S.sel.clear(); rebuildRows();
     }]);
@@ -1406,6 +1407,13 @@
     if (path) { var m = getMeta(path); if (m && m.duration) S.dur = m.duration; }
     updateLyricsVisibility();
   }
+
+  // 在线匹配落盘后：若正在播放该文件，重载歌词并刷新右栏（封面按 mtime 自动失效）
+  document.addEventListener('annie-local-media-updated', function (e) {
+    var p = e.detail && e.detail.path;
+    if (!p || !S.mounted) return;
+    if (state.currentPath === p) { loadLyrics(p); scheduleRightRefresh(); }
+  });
 
   /* ================= 挂载 / 刷新 ================= */
   function refreshAll() {

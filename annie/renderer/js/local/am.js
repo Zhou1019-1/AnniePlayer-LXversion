@@ -898,6 +898,13 @@
     pop.innerHTML = '';
     pop.appendChild(el('div', 'am-pop-item', '添加到播放列表')).style.fontWeight = '600';
     pop.appendChild(el('div', 'am-pop-sep'));
+    var mch = el('button', 'am-pop-item', '🔎 在线匹配歌词 / 封面…');
+    mch.onclick = function () {
+      pop.classList.remove('on');
+      if (window.annieMatch) window.annieMatch.open({ path: trackPath });
+    };
+    pop.appendChild(mch);
+    pop.appendChild(el('div', 'am-pop-sep'));
     S.playlists.forEach(function (pl) {
       var it = el('button', 'am-pop-item', pl.name);
       it.onclick = function () {
@@ -1647,6 +1654,24 @@
     if (e.detail && e.detail.theme === 'am' && S.mounted) { patchStreamPlayNext(); refresh(); }
     // 切离 AM：迷你窗先还原（避免小窗里装别的主题），沉浸层收起
     else if (e.detail && e.detail.theme !== 'am') { if (S.mini) exitMini(); if (S.imm) toggleImmersive(false); }
+  });
+  // 在线匹配落盘后：清封面缓存（新 cover.jpg 生效）；若正在播放该文件则重载歌词与顶栏
+  document.addEventListener('annie-local-media-updated', function (e) {
+    var p = e.detail && e.detail.path;
+    if (!p || !S.mounted) return;
+    var t = null;
+    allTracks().forEach(function (x) { if (x.path === p) t = x; });
+    if (t) {
+      delete S.acover[albumKeyOf(t)];
+      delete S.cover[srcFileOf(t)];
+      delete S.cover[p];
+    }
+    if (state.currentPath === p) {
+      loadLyrics(p, false);
+      if (R.npTitle) R.npTitle.textContent = ''; // 绕过 refreshNowPlaying 同路径早退守卫
+      refreshNowPlaying();
+    }
+    if (S.view === 'albums') renderView(); // 专辑网格封面刷新
   });
 
   window.annieAM = { mount: mount, refresh: refresh };

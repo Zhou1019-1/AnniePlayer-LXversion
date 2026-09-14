@@ -1,7 +1,7 @@
 {
   "name": "annie-player-svlx",
   "productName": "安妮播放器融合版V3",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "AnniePlayer SVLX - Annie Player integrated with lx-music-desktop (Apache-2.0). See THIRDPARTY/lx-music-desktop/NOTICE.LICENSE.",
   "main": "src/main.js",
   "author": "Annie Player Project",
@@ -14,6 +14,7 @@
     "dist:setup": "electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "iconv-lite": "^0.6.3",
     "music-metadata": "^11.14.0"
   },
@@ -25,6 +26,13 @@
     "appId": "com.annieplayer.svlx",
     "productName": "安妮播放器融合版V3",
     "electronDist": "node_modules/electron/dist",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Zhou1019-1",
+        "repo": "AnniePlayer-LXversion"
+      }
+    ],
     "copyright": "Copyright (c) Annie Player Project. Includes material from https://github.com/lyswhut/lx-music-desktop (Apache-2.0).",
     "compression": "maximum",
     "asarUnpack": [

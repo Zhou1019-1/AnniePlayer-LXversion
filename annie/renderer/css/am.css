@@ -181,7 +181,7 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-nav.am-new { color: var(--am-text-2); }
 
 /* 内容区 */
-.am-content { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 28px 40px; }
+.am-content { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 28px 40px; overflow-anchor: none; /* 禁滚动锚定：窗口化重建表格时浏览器异步挪 scrollTop，与可视区脱节（切歌后列表空白） */ }
 .am-view-h { font-size: 26px; font-weight: 700; margin: 4px 0 16px; letter-spacing: -.01em; }
 
 /* 专辑网格 */

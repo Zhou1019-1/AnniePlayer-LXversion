@@ -985,14 +985,27 @@
     renderView();
     setTimeout(function () {
       if (!R.content) return;
-      var row = R.content.querySelector('.am-tr[data-path="' + CSS.escape(p) + '"]');
+      var sel = '.am-tr[data-path="' + CSS.escape(p) + '"]';
+      var row = R.content.querySelector(sel);
+      if (!row && S._tbl) {
+        // 窗口化渲染：目标行不在 DOM，按索引算 scrollTop 滚过去再重建可视区
+        var win = S._tbl, idx = -1;
+        for (var k = 0; k < win.tracks.length; k++) if (win.tracks[k].path === p) { idx = k; break; }
+        if (idx < 0) return;
+        var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
+        var base = win.tb.getBoundingClientRect().top - R.content.getBoundingClientRect().top + R.content.scrollTop + headH;
+        R.content.scrollTop = Math.max(0, base + idx * win.rowH - (R.content.clientHeight - win.rowH) / 2);
+        renderAmWindow();
+        row = R.content.querySelector(sel);
+      } else if (row) {
+        // 非窗口化：手动滚容器——不能用 scrollIntoView，它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
+        var cRect = R.content.getBoundingClientRect();
+        var rRect = row.getBoundingClientRect();
+        var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
+        if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+        else R.content.scrollTop = Math.max(0, target);
+      }
       if (!row) return;
-      // 手动滚容器：不能用 scrollIntoView——它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
-      var cRect = R.content.getBoundingClientRect();
-      var rRect = row.getBoundingClientRect();
-      var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
-      if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
-      else R.content.scrollTop = Math.max(0, target);
       var root = document.getElementById('am-root');
       if (root && root.scrollTop) root.scrollTop = 0; // 防御：壳容器永不允许滚动
       row.classList.remove('locate-flash');
@@ -1062,9 +1075,16 @@
   function refresh() {
     refreshNowPlaying();
     refreshTransport();
+    restoreScrollAround();
+  }
+  /* renderView 重建内容但保持滚动位置，并主动对齐窗口化可视区（不等 scroll 事件，时序不可靠） */
+  function restoreScrollAround() {
     var sc = R.content ? R.content.scrollTop : 0;
     renderView();
-    if (R.content) R.content.scrollTop = sc;
+    if (!R.content) return;
+    void R.content.scrollHeight; // 强制布局，避免恢复值被旧高度钳制
+    R.content.scrollTop = sc;
+    if (S._tbl) { S._tbl.lastStart = -1; renderAmWindow(); }
   }
 
   /* ---------------- 引擎事件 ---------------- */
@@ -1134,7 +1154,11 @@
     if (typeof orig !== 'function' || orig.__amWrapped) return;
     var wrapped = function () {
       var r = orig.apply(this, arguments);
-      if (S.mounted && window.annieTheme && annieTheme.current === 'am') { refreshLibFolders(false); renderSidebar(); renderView(); }
+      if (S.mounted && window.annieTheme && annieTheme.current === 'am') {
+        refreshLibFolders(false); renderSidebar();
+        // playAt 也会触发这里（player.js 更新高亮）——保持滚动位置，否则切歌跳回顶端
+        restoreScrollAround();
+      }
       return r;
     };
     wrapped.__amWrapped = true;

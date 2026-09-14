@@ -1002,10 +1002,16 @@ async function playAt(i, offsetSec = 0) {
   // V1.1.9：延后 1.2s 启动——切歌瞬间引擎 ffmpeg 解码与分析 ffmpeg 同时全速解码会
   // 抢磁盘/CPU，导致分析首批帧延迟随机波动（频谱"渐进 vs 从无到有"差异根因）。
   // 延后等引擎解码进入稳态后，分析稳定快速启动。
-  // SVLX：仅在粒子舞台可见时执行（AM/FB2K 主题下不白跑 ffmpeg 全曲解码）
+  // SVLX：粒子舞台可见时执行；FB2K 主题且频谱开启时同样需要 FFT 帧（右栏频谱柱）。
+  // AM 主题无可视化消费方，不白跑 ffmpeg 全曲解码；流媒体也不分析（避免全速下载整首网络流）。
   if (window.annieViz) {
     const _p = playPath;
-    setTimeout(() => { if (!window.__legacyThemeHidden && (state.currentPath === _p || state.currentStream?.url === _p)) window.annieViz.analyze(_p, null); }, 1200);
+    setTimeout(() => {
+      const wantStage = !window.__legacyThemeHidden;
+      const wantFb2k = window.annieTheme && annieTheme.current === 'fb2k'
+        && window.annieFb2k && typeof annieFb2k.specWanted === 'function' && annieFb2k.specWanted();
+      if ((wantStage || wantFb2k) && (state.currentPath === _p || state.currentStream?.url === _p)) window.annieViz.analyze(_p, null);
+    }, 1200);
   }
 }
 

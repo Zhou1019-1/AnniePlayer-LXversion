@@ -32,6 +32,7 @@
     rightCollapsed: LS.get('annieplayer.fb2k.rightCollapsed', false),
     viewMode: LS.get('annieplayer.fb2k.viewMode', 'list'), // list | split | cover
     specOn: LS.get('annieplayer.fb2k.specOn', true),
+    detailCollapsed: LS.get('annieplayer.fb2k.detailCollapsed', false), // 右侧详细信息收起（保留封面/参数/歌词/频谱）
     sortKey: null, sortAsc: true,
     lyrPath: null, lyrLines: null, lyrCur: -1,
     specFrames: null, specGen: -1, specSmooth: null,
@@ -299,6 +300,12 @@
     var body = el('div', 'f2-right-body');
     var headRow = el('div');
     headRow.style.cssText = 'display:flex;justify-content:flex-end;padding:4px 6px 0;flex:none';
+    // 详情收起开关：隐藏长清单，只留封面 + 参数简显 + 歌词 + 频谱
+    var db = el('button', '', S.detailCollapsed ? '详情 ▸' : '详情 ▾');
+    db.title = S.detailCollapsed ? '展开歌曲详细信息' : '收起歌曲详细信息（保留封面、参数、歌词、频谱）';
+    db.style.cssText = 'border:none;background:transparent;color:#999;cursor:pointer;font-size:12px;margin-right:auto';
+    db.onclick = toggleDetail;
+    headRow.appendChild(db);
     var cb = el('button', '', '«');
     cb.title = '收起右侧栏'; cb.style.cssText = 'border:none;background:transparent;color:#999;cursor:pointer;font-size:12px';
     cb.onclick = toggleRight;
@@ -310,7 +317,9 @@
     cbox.appendChild(R.cover); body.appendChild(cbox);
     R.songName = el('div', 'f2-songname', ''); body.appendChild(R.songName);
     R.formatLine = el('div', 'f2-formatline', ''); body.appendChild(R.formatLine);
-    R.meta = el('div', 'f2-meta'); body.appendChild(R.meta);
+    R.meta = el('div', 'f2-meta');
+    R.meta.style.display = S.detailCollapsed ? 'none' : '';
+    body.appendChild(R.meta);
 
     R.lyrBox = el('div', 'f2-lyrics');
     R.lyrBox.appendChild(el('div', 'f2-sec-title', '歌词'));
@@ -331,6 +340,11 @@
     S.rightCollapsed = !S.rightCollapsed;
     LS.set('annieplayer.fb2k.rightCollapsed', S.rightCollapsed);
     R.main.classList.toggle('right-collapsed', S.rightCollapsed);
+    renderRight(); updateRight(); renderLyrics(); updateSpecVisibility();
+  }
+  function toggleDetail() {
+    S.detailCollapsed = !S.detailCollapsed;
+    LS.set('annieplayer.fb2k.detailCollapsed', S.detailCollapsed);
     renderRight(); updateRight(); renderLyrics(); updateSpecVisibility();
   }
 
@@ -1498,6 +1512,7 @@
       startSpecLoop(); // 切回 FB2K 主题时重启频谱循环（内部防重入）
     },
     refresh: refreshAll,
+    specWanted: function () { return !!S.specOn; }, // player.js 切歌时据此决定是否为 FB2K 频谱跑 FFT 分析
     isDark: function () { return S.dark; },          // V1.1.2
     setDark: function (on) { setDarkMode(on); }      // V1.1.2
   };

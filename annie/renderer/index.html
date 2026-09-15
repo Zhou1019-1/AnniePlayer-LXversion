@@ -6,8 +6,9 @@
 <title>安妮播放器Plus Pro</title>
 <script>
 // 主题早标记：首帧前确定界面主题，避免旧主题闪屏（localStorage key: annieplayer.theme）
-try { document.documentElement.dataset.theme = localStorage.getItem('annieplayer.theme') || 'legacy'; }
-catch (e) { document.documentElement.dataset.theme = 'legacy'; }
+// V3.5.2：新装默认 AM 界面（老用户 LS 已有值，不受影响）
+try { document.documentElement.dataset.theme = localStorage.getItem('annieplayer.theme') || 'am'; }
+catch (e) { document.documentElement.dataset.theme = 'am'; }
 // Plus：配色早标记（localStorage key: annieplayer.palette）
 try { document.documentElement.dataset.palette = localStorage.getItem('annieplayer.palette') || 'gold'; }
 catch (e) { document.documentElement.dataset.palette = 'gold'; }

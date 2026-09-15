@@ -7,7 +7,8 @@
   var VALID = ['legacy', 'fb2k', 'am'];
   var stored = null;
   try { stored = localStorage.getItem(KEY); } catch (e) { }
-  var current = VALID.indexOf(stored) >= 0 ? stored : 'legacy';
+  // V3.5.2：首次安装默认 Apple Music 界面（老用户 localStorage 已有值，不受影响）
+  var current = VALID.indexOf(stored) >= 0 ? stored : 'am';
   var switching = false;
   var swTimer1 = null, swTimer2 = null;
 

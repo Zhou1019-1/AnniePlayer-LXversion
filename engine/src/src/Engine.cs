@@ -173,8 +173,14 @@ public sealed class Engine
             }
             else
             {
-                var dev = (id is null ? WasapiExclusiveBackend.GetDefault() : WasapiExclusiveBackend.FindById(id))
-                    ?? throw new InvalidOperationException("WASAPI 设备不存在: " + id);
+                var dev = id is null ? WasapiExclusiveBackend.GetDefault() : WasapiExclusiveBackend.FindById(id);
+                if (dev is null && id is not null)
+                {
+                    // 设备断电/拔插/重枚举后持久化的 GUID 失效：回退系统默认输出，
+                    // 不再抛"WASAPI 设备不存在"导致整链播放失败（V3.5.2）
+                    dev = WasapiExclusiveBackend.GetDefault();
+                }
+                if (dev is null) throw new InvalidOperationException("无可用 WASAPI 输出设备");
                 _backend = new WasapiExclusiveBackend(dev, exclusive);
                 _backendDeviceId = dev.ID;
             }

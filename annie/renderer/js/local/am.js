@@ -483,6 +483,11 @@
     var lyr = el('aside', 'am-lyrics');
     R.lyrScroll = el('div', 'am-lyr-scroll');
     lyr.appendChild(R.lyrScroll);
+    // 歌词外观设置入口（悬浮 ⚙，hover 面板显现）
+    R.btnLyrSet = el('button', 'am-lyr-set', '⚙');
+    R.btnLyrSet.title = '歌词外观（字号 / 行距）';
+    R.btnLyrSet.onclick = function (e) { e.stopPropagation(); toggleLyrSetPop(); };
+    lyr.appendChild(R.btnLyrSet);
     body.appendChild(R.sidebar); body.appendChild(R.content); body.appendChild(lyr);
 
     /* 添加到播放列表弹出菜单 */
@@ -495,10 +500,12 @@
     document.addEventListener('click', function (e) {
       if (R.pop.classList.contains('on') && !R.pop.contains(e.target)) R.pop.classList.remove('on');
       if (R.timerPop.classList.contains('on') && !R.timerPop.contains(e.target) && e.target !== R.btnTimer) R.timerPop.classList.remove('on');
+      if (R.lyrSetPop && R.lyrSetPop.classList.contains('on') && !R.lyrSetPop.contains(e.target) && e.target !== R.btnLyrSet) R.lyrSetPop.classList.remove('on');
     });
 
     renderSidebar();
     renderView();
+    applyLyrStyle(); // 恢复歌词字号/行距设置（含初次自适应）
   }
 
   /* ---------------- 侧栏 ---------------- */
@@ -969,81 +976,77 @@
     }
     return { text: fullText, words: words };
   }
-  var _karaCanvas = null;
-  function karaMeasureCtx() {
-    if (!_karaCanvas) _karaCanvas = document.createElement('canvas');
-    return _karaCanvas.getContext('2d');
-  }
-  function karaRanges(node, line) {
-    var sig = String(line.text || '') + '|' + ((line.words && line.words.length) || 0);
-    if (node._karaSig === sig && node._karaRanges) return node._karaRanges;
-    var cs = getComputedStyle(node);
-    var ctx = karaMeasureCtx();
-    ctx.font = (cs.fontWeight || '400') + ' ' + (cs.fontSize || '13px') + ' ' + (cs.fontFamily || 'sans-serif');
-    var text = String(line.text || '');
-    var full = Math.max(1, ctx.measureText(text).width);
-    var ranges = (line.words || []).map(function (w) {
-      var c0 = Math.max(0, Math.min(text.length, w.c0 || 0));
-      var c1 = Math.max(c0, Math.min(text.length, w.c1 != null ? w.c1 : c0));
-      return { p0: ctx.measureText(text.slice(0, c0)).width / full, p1: ctx.measureText(text.slice(0, c1)).width / full };
-    });
-    node._karaSig = sig; node._karaRanges = ranges;
-    return ranges;
-  }
-  function karaProgress(node, line, now) {
-    var words = line.words;
-    if (!words || !words.length) return 0;
-    var ranges = karaRanges(node, line);
-    var p = 0;
-    for (var i = 0; i < words.length; i++) {
-      var w = words[i];
+  /* 逐词 span 卡拉OK：每词独立双层（底暗/顶高亮按词内进度裁切），词间自然折行，
+   * 长行不再缩字号而是换行显示；每 tick 只刷当前行（~词数个 style 写入） */
+  function paintKaraLine(node, now) {
+    var arr = node._karaWords;
+    for (var i = 0; i < arr.length; i++) {
+      var w = arr[i].w;
       var ws = w.t, we = w.t + Math.max(0.08, w.d || 0.24);
-      if (now < ws) break;
-      var local = now >= we ? 1 : (now - ws) / Math.max(0.08, we - ws);
-      local = Math.max(0, Math.min(1, local));
-      var r = ranges[i] || { p0: 0, p1: 0 };
-      p = Math.max(p, r.p0 + (r.p1 - r.p0) * local);
-      if (now < we) break;
+      var p;
+      if (now >= we) p = 1;
+      else if (now <= ws) p = 0;
+      else p = (now - ws) / (we - ws);
+      arr[i].hi.style.width = (p * 100).toFixed(1) + '%';
     }
-    return Math.max(0, Math.min(1, p));
   }
-  /* 构建一行歌词元素（逐字时含双层文本），主歌词/沉浸/迷你共用 */
+  function resetKaraLine(node) {
+    var arr = node._karaWords;
+    for (var i = 0; i < arr.length; i++) arr[i].hi.style.width = '0%';
+  }
+  /* 构建一行歌词元素（逐字时每词一个 span 可折行），主歌词/沉浸/迷你共用 */
   function buildLyrLineEl(l, i, cls) {
     var d = el('div', cls + ' far');
     if (l.words && l.words.length && l.text) {
       d.classList.add('kara');
-      var wrap = el('span', 'kara-wrap');
-      var base = el('span', 'kara-base'); base.textContent = l.text;
-      var hi = el('span', 'kara-hi'); hi.textContent = l.text;
-      wrap.appendChild(base); wrap.appendChild(hi);
-      d.appendChild(wrap);
-      d._kara = { line: l, hi: hi };
+      var limit = S.lyrWordLimit | 0; // 每行词数限制（0=按容器宽度自然折行）
+      var wspans = [];
+      l.words.forEach(function (w, wi) {
+        if (limit > 0 && wi > 0 && wi % limit === 0) d.appendChild(document.createElement('br'));
+        var ws = el('span', 'kara-w');
+        var base = el('span', 'kara-wb'); base.textContent = w.text;
+        var hi = el('span', 'kara-wh'); hi.textContent = w.text;
+        ws.appendChild(base); ws.appendChild(hi);
+        d.appendChild(ws);
+        wspans.push({ w: w, hi: hi });
+      });
+      d._karaWords = wspans;
     } else {
       d.appendChild(document.createTextNode(l.text));
     }
     if (l.tly) d.appendChild(el('span', 'tly', l.tly));
     d.onclick = function () { seek(l.t); };
     d._idx = i;
+    d._kt = l.text || ''; // 自适应行宽测量用
     return d;
   }
-  /* 更新容器内当前行逐字进度（每 tick 调用；行切换时重置上一行） */
+  /* 更新容器内当前行逐词进度（每 tick 调用；行切换时重置上一行） */
   function paintKara(container, cur, now) {
     if (!container) return;
     if (container._karaCur !== cur) {
       var old = container._karaCur;
       if (old != null && old >= 0) {
         var on = container.children[old];
-        if (on && on._kara) on._kara.hi.style.width = '0%';
+        if (on && on._karaWords) resetKaraLine(on);
       }
       container._karaCur = cur;
     }
     if (cur < 0) return;
     var node = container.children[cur];
-    if (node && node._kara) node._kara.hi.style.width = (karaProgress(node, node._kara.line, now) * 100).toFixed(2) + '%';
+    if (node && node._karaWords) paintKaraLine(node, now);
   }
   function parseLrc(text) {
     var out = [];
     String(text || '').split(/\r?\n/).forEach(function (line) {
+      // lxlyric 行格式：[起始ms,时长ms]文本（行内 <相对ms,时长ms> 词标签走同一提取）
+      var lx = /^\s*\[(\d+),(\d+)\](.*)$/.exec(line);
+      if (lx) {
+        var lt = (parseInt(lx[1], 10) || 0) / 1000;
+        var lraw = (lx[3] || '').trim();
+        var lex = karaExtractWords(lraw, lt);
+        out.push({ t: lt, text: lex ? lex.text : lraw, words: lex ? lex.words : null });
+        return;
+      }
       var m = line.match(/((\[\d+:\d+(\.\d+)?\])+)(.*)/);
       if (!m) return;
       var raw = m[4].trim();
@@ -1104,6 +1107,7 @@
     S.lyrLines.forEach(function (l, i) {
       box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line'));
     });
+    fitLyrLines(box);
     tickLyrics();
   }
   function tickLyrics() {
@@ -1114,6 +1118,9 @@
     }
     // 逐字扫过：每 tick 更新当前行（不吃下方 line-change 早退）
     paintKara(R.lyrScroll, cur, S.pos);
+    // 沉浸/迷你歌词容器同样每 tick 平滑扫过（否则只在行切换时跳变）
+    if (R.imm && S.imm && S.immLyrOn) paintKara(R.immLyrBox, cur, S.pos);
+    if (R.mini && S.mini && S.miniLyrOn) paintKara(R.miniLyr, cur, S.pos);
     if (cur === S.lyrCur) return;
     S.lyrCur = cur;
     var nodes = R.lyrScroll.children;
@@ -1173,6 +1180,135 @@
       row.classList.add('locate-flash');
       setTimeout(function () { row.classList.remove('locate-flash'); }, 2000);
     }, 60);
+  }
+
+  /* ================= 歌词外观：自适应行宽 + 字号/行距自定义 + 滚动条自动隐藏 ================= */
+  var _fitCanvas = null;
+  function fitCtx() {
+    if (!_fitCanvas) _fitCanvas = document.createElement('canvas');
+    return _fitCanvas.getContext('2d');
+  }
+  /* 逐行自适应：行文本宽于容器则按比例缩字号（最低 55%），卡拉OK行整体缩放不影响扫过比例 */
+  function fitLyrLines(box) {
+    if (!box || !box.clientWidth) return;
+    var avail = box.clientWidth - 30;
+    var nodes = box.children;
+    var ctx = fitCtx();
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n._idx == null || !n._kt) continue;
+      if (!n._fs0 || n._fsv !== S.lyrFsV) { // 字号设置变化后重取基准
+        var cs = getComputedStyle(n);
+        n._fs0 = parseFloat(cs.fontSize) || 15;
+        n._fw = cs.fontWeight || '400';
+        n._ff = cs.fontFamily || 'sans-serif';
+        n._fsv = S.lyrFsV;
+      }
+      ctx.font = n._fw + ' ' + n._fs0 + 'px ' + n._ff;
+      var w = ctx.measureText(n._kt).width;
+      // 仅兜底不可折行的超长词（无空白）；其余行一律自然折行，不再缩字号
+      if (w > avail && !/\s/.test(n._kt)) n.style.fontSize = Math.max(n._fs0 * 0.55, Math.floor(n._fs0 * avail / w * 10) / 10) + 'px';
+      else n.style.fontSize = '';
+    }
+  }
+  function refitAllLyr() {
+    fitLyrLines(R.lyrScroll);
+    if (R.imm && S.imm && S.immLyrOn) fitLyrLines(R.immLyrBox);
+    if (R.mini && S.mini && S.miniLyrOn) fitLyrLines(R.miniLyr);
+  }
+  /* 滚动条仅滚动时出现（停滚 800ms 后隐藏） */
+  function autoHideScrollbar(box) {
+    if (!box) return;
+    var t = 0;
+    box.addEventListener('scroll', function () {
+      box.classList.add('scrolling');
+      clearTimeout(t);
+      t = setTimeout(function () { box.classList.remove('scrolling'); }, 800);
+    }, { passive: true });
+  }
+  /* 字号/行距/每行词数自定义（localStorage 持久化，CSS 变量驱动，三处歌词容器同效） */
+  function applyLyrStyle() {
+    var sc = 1, lh = 1.45, wl = 0;
+    try {
+      sc = Math.min(1.6, Math.max(0.7, parseFloat(localStorage.getItem('annieplayer.am.lyrscale')) || 1));
+      lh = Math.min(2.2, Math.max(1.2, parseFloat(localStorage.getItem('annieplayer.am.lyrlh')) || 1.45));
+      wl = Math.min(20, Math.max(0, parseInt(localStorage.getItem('annieplayer.am.lyrwordlimit'), 10) || 0));
+    } catch (e) { }
+    S.lyrFsV = (S.lyrFsV || 0) + 1; // 递增使各行字号缓存失效
+    S.lyrScale = sc; S.lyrLh = lh; S.lyrWordLimit = wl;
+    var root = document.getElementById('am-root');
+    if (root) {
+      root.style.setProperty('--am-lyr-scale', sc);
+      root.style.setProperty('--am-lyr-lh', lh);
+    }
+    refitAllLyr();
+  }
+  /* 结构级变更（每行词数）后重建三处歌词容器 */
+  function rerenderAllLyr() {
+    renderLyrics();
+    if (R.imm && S.imm && S.immLyrOn) buildLyrInto(R.immLyrBox);
+    if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
+  }
+  function toggleLyrSetPop() {
+    if (!R.lyrSetPop) buildLyrSetPop();
+    var pop = R.lyrSetPop;
+    if (pop.classList.contains('on')) { pop.classList.remove('on'); return; }
+    var r = R.btnLyrSet.getBoundingClientRect();
+    pop.style.left = Math.max(8, r.right - 250) + 'px';
+    pop.style.top = (r.bottom + 8) + 'px';
+    pop.classList.add('on');
+  }
+  function buildLyrSetPop() {
+    var pop = el('div', 'am-pop am-lyrset-pop');
+    pop.appendChild(el('div', 'am-pop-h', '歌词外观'));
+    var row1 = el('div', 'am-pop-row');
+    row1.appendChild(el('span', null, '字号'));
+    var sl1 = document.createElement('input');
+    sl1.type = 'range'; sl1.min = 70; sl1.max = 160; sl1.step = 5;
+    sl1.value = Math.round((S.lyrScale || 1) * 100);
+    sl1.className = 'am-lyrset-slider';
+    var v1 = el('span', 'am-lyrset-v', sl1.value + '%');
+    sl1.oninput = function () {
+      v1.textContent = sl1.value + '%';
+      try { localStorage.setItem('annieplayer.am.lyrscale', String(sl1.value / 100)); } catch (e) { }
+      applyLyrStyle();
+    };
+    row1.appendChild(sl1); row1.appendChild(v1);
+    pop.appendChild(row1);
+    var row2 = el('div', 'am-pop-row');
+    row2.appendChild(el('span', null, '行距'));
+    var sl2 = document.createElement('input');
+    sl2.type = 'range'; sl2.min = 120; sl2.max = 220; sl2.step = 5;
+    sl2.value = Math.round((S.lyrLh || 1.45) * 100);
+    sl2.className = 'am-lyrset-slider';
+    var v2 = el('span', 'am-lyrset-v', (sl2.value / 100).toFixed(2));
+    sl2.oninput = function () {
+      v2.textContent = (sl2.value / 100).toFixed(2);
+      try { localStorage.setItem('annieplayer.am.lyrlh', String(sl2.value / 100)); } catch (e) { }
+      applyLyrStyle();
+    };
+    row2.appendChild(sl2); row2.appendChild(v2);
+    pop.appendChild(row2);
+    // 每行词数（卡拉OK行生效；0=按容器宽度自然折行）
+    var row3 = el('div', 'am-pop-row');
+    row3.appendChild(el('span', null, '每行词数'));
+    var sl3 = document.createElement('input');
+    sl3.type = 'range'; sl3.min = 0; sl3.max = 12; sl3.step = 1;
+    sl3.value = S.lyrWordLimit || 0;
+    sl3.className = 'am-lyrset-slider';
+    var v3 = el('span', 'am-lyrset-v', (S.lyrWordLimit || 0) === 0 ? '自动' : String(S.lyrWordLimit));
+    sl3.oninput = function () {
+      var n = +sl3.value;
+      v3.textContent = n === 0 ? '自动' : String(n);
+      try { localStorage.setItem('annieplayer.am.lyrwordlimit', String(n)); } catch (e) { }
+      S.lyrWordLimit = n;
+      rerenderAllLyr();
+    };
+    row3.appendChild(sl3); row3.appendChild(v3);
+    pop.appendChild(row3);
+    pop.appendChild(el('div', 'am-pop-hint', '超长行自动折行显示（不再缩小字号）；每行词数仅对逐字歌词生效，中文按字计'));
+    document.getElementById('am-root').appendChild(pop);
+    R.lyrSetPop = pop;
   }
 
   /* ================= 播放模式 / 播放定时（仅本地播放生效） ================= */
@@ -1266,6 +1402,7 @@
     S.lyrLines.forEach(function (l, i) {
       box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line'));
     });
+    fitLyrLines(box);
     paintLyrBox(box, S.lyrCur, 0.35);
   }
   function paintLyrBox(box, cur, rate) {
@@ -1412,6 +1549,7 @@
 
     main.appendChild(left);
     R.immLyrBox = el('div', 'am-imm-lyr');
+    autoHideScrollbar(R.immLyrBox);
     main.appendChild(R.immLyrBox);
     ov.appendChild(main);
     R.immQ = el('div', 'am-imm-queue');
@@ -1507,6 +1645,7 @@
     m.appendChild(ctl);
 
     R.miniLyr = el('div', 'am-mini-lyr');
+    autoHideScrollbar(R.miniLyr);
     m.appendChild(R.miniLyr);
     R.miniQ = el('div', 'am-mini-queue');
     m.appendChild(R.miniQ);
@@ -1758,6 +1897,12 @@
   wrapGlobal('renderCurrentView');
   wrapGlobal('renderFolderTree');
 
+  // 窗口尺寸变化：歌词行重新自适应（防抖 250ms）
+  var _lyrRsT = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(_lyrRsT);
+    _lyrRsT = setTimeout(refitAllLyr, 250);
+  });
   document.addEventListener('annie-theme-changed', function (e) {
     if (e.detail && e.detail.theme === 'am' && S.mounted) { patchStreamPlayNext(); refresh(); }
     // 切离 AM：迷你窗先还原（避免小窗里装别的主题），沉浸层收起

@@ -396,6 +396,13 @@ function finalizeLyricLineDurations(lines) {
 function parseLyricText(text) {
   var lines = [], reg = /\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]/g;
   text.split(/\r?\n/).forEach(function (line) {
+    // lxlyric 行格式：[起始ms,时长ms]文本（行内 <相对ms,时长ms> 词标签保留下游提取）
+    var lx = /^\s*\[(\d+),(\d+)\](.*)$/.exec(line);
+    if (lx) {
+      var ltxt = (lx[3] || '').trim();
+      if (ltxt) lines.push({ t: (parseInt(lx[1], 10) || 0) / 1000, text: ltxt, source: 'lrc' });
+      return;
+    }
     var tags = [], times = [], m;
     reg.lastIndex = 0;
     while ((m = reg.exec(line))) {

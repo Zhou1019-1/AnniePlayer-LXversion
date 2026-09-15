@@ -164,15 +164,16 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-lyr .tly { display: block; font-size: 11px; color: #aaa; }
 .f2-lyr.cur { font-weight: 700; color: #2a6b7a; opacity: 1; }
 .f2-lyr.cur .tly { color: #4a8b9a; }
-/* 逐字歌词：双层文本（未唱淡 + 已唱高亮，扫过前缘渐变淡出） */
-.f2-lyr.kara .kara-wrap { position: relative; display: inline-block; white-space: pre; }
-.f2-lyr.kara .kara-base { color: inherit; }
-.f2-lyr.kara.cur .kara-base { color: #b3b3b3; }
-.f2-lyr.kara .kara-hi {
+/* 逐字歌词：逐词 span（词间自然折行；词内双层按进度裁切，扫过前缘渐变淡出） */
+.f2-lyr.kara { white-space: normal; }
+.f2-lyr.kara .kara-w { position: relative; display: inline-block; white-space: pre; }
+.f2-lyr.kara .kara-wb { color: inherit; }
+.f2-lyr.kara.cur .kara-wb { color: #b3b3b3; }
+.f2-lyr.kara .kara-wh {
   position: absolute; left: 0; top: 0; width: 0%; overflow: hidden; white-space: pre;
   color: #0f7a94;
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 8px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 8px), transparent 100%);
 }
 .f2-spec-box { flex: none; border-top: 1px solid #e5e5e5; padding: 8px 14px 12px; }
 #f2-spec { display: block; width: 100%; height: 64px; }
@@ -340,8 +341,8 @@ html[data-theme="fb2k"] ::-webkit-scrollbar-track { background: transparent; }
 #fb2k-root.f2-dark .f2-lyr.cur { color: #8fd0e2; }
 #fb2k-root.f2-dark .f2-lyr.cur .tly { color: #6aa8ba; }
 /* 逐字歌词（暗色）：未唱更暗、已唱更亮，对比更强 */
-#fb2k-root.f2-dark .f2-lyr.kara.cur .kara-base { color: #5f6775; }
-#fb2k-root.f2-dark .f2-lyr.kara .kara-hi { color: #7fe3ff; }
+#fb2k-root.f2-dark .f2-lyr.kara.cur .kara-wb { color: #5f6775; }
+#fb2k-root.f2-dark .f2-lyr.kara .kara-wh { color: #7fe3ff; }
 #fb2k-root.f2-dark .f2-spec-box { border-top-color: #343a48; }
 
 /* 底部控制条 */

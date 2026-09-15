@@ -262,9 +262,9 @@ html[data-theme="am"] #titlebar { display: none !important; }
   background: var(--am-glass-2);
   backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
 }
-.am-lyr-scroll { position: absolute; inset: 0; overflow-y: auto; padding: 40vh 26px; scroll-behavior: smooth; }
+.am-lyr-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 40vh 26px; scroll-behavior: smooth; }
 .am-lyr-line {
-  font-size: 22px; font-weight: 700; line-height: 1.45; letter-spacing: -.01em;
+  font-size: calc(22px * var(--am-lyr-scale, 1)); font-weight: 700; line-height: var(--am-lyr-lh, 1.45); letter-spacing: -.01em;
   padding: 7px 0; cursor: pointer;
   color: var(--am-text-3);
   transition: color .3s, filter .3s, transform .3s, opacity .3s;
@@ -276,20 +276,21 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-lyr-line.cur { color: var(--am-text); transform: scale(1.04); filter: none; }
 .am-lyr-line:hover { color: var(--am-text-2); }
 .am-lyr-empty { color: var(--am-text-3); font-size: 15px; font-weight: 600; text-align: center; margin-top: 30vh; }
-/* ---------- 逐字歌词：双层文本（底层暗色 + 上层高亮，按进度裁切扫过） ---------- */
-.am-lyr-line.kara .kara-wrap { position: relative; display: inline-block; white-space: pre; }
-.am-lyr-line.kara .kara-base { color: var(--am-text-3); }
-.am-lyr-line.kara.cur .kara-base { color: var(--am-text-2); }
-.am-lyr-line.kara .kara-hi {
+/* ---------- 逐字歌词：逐词 span（词间自然折行；词内双层按进度裁切扫过） ---------- */
+.am-lyr-line.kara { white-space: normal; }
+.am-lyr-line.kara .kara-w { position: relative; display: inline-block; white-space: pre; }
+.am-lyr-line.kara .kara-wb { color: var(--am-text-3); }
+.am-lyr-line.kara.cur .kara-wb { color: var(--am-text-2); }
+.am-lyr-line.kara .kara-wh {
   position: absolute; left: 0; top: 0; width: 0%; overflow: hidden; white-space: pre;
   color: var(--am-text); /* 与逐行高亮同色（.cur），非强调色 */
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 8px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 8px), transparent 100%);
 }
 /* 沉浸歌词：深色封面背景上用白色扫过 */
-.am-imm-lyr .am-lyr-line.kara .kara-base { color: rgba(255, 255, 255, .5); }
-.am-imm-lyr .am-lyr-line.kara.cur .kara-base { color: rgba(255, 255, 255, .72); }
-.am-imm-lyr .am-lyr-line.kara .kara-hi { color: #fff; }
+.am-imm-lyr .am-lyr-line.kara .kara-wb { color: rgba(255, 255, 255, .5); }
+.am-imm-lyr .am-lyr-line.kara.cur .kara-wb { color: rgba(255, 255, 255, .72); }
+.am-imm-lyr .am-lyr-line.kara .kara-wh { color: #fff; }
 
 /* 滚动条 */
 .am-side::-webkit-scrollbar, .am-content::-webkit-scrollbar, .am-lyr-scroll::-webkit-scrollbar { width: 8px; }
@@ -297,6 +298,23 @@ html[data-theme="am"] #titlebar { display: none !important; }
   background: var(--am-sep); border-radius: 4px;
 }
 .am-lyr-scroll::-webkit-scrollbar-thumb { background: transparent; }
+/* 沉浸/迷你歌词滚动条：仅滚动时出现（JS 加 .scrolling，停滚 800ms 移除） */
+.am-imm-lyr::-webkit-scrollbar, .am-mini-lyr::-webkit-scrollbar { width: 8px; }
+.am-imm-lyr::-webkit-scrollbar-thumb, .am-mini-lyr::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.am-imm-lyr.scrolling::-webkit-scrollbar-thumb, .am-mini-lyr.scrolling::-webkit-scrollbar-thumb { background: rgba(255,255,255,.32); }
+/* 歌词外观设置：悬浮 ⚙（hover 面板显现）+ 弹层 */
+.am-lyrics { position: relative; }
+.am-lyr-set {
+  position: absolute; top: 10px; right: 10px; z-index: 5;
+  width: 30px; height: 30px; border: 0; border-radius: 50%;
+  background: var(--am-glass-2); color: var(--am-text-2); font-size: 14px; cursor: pointer;
+  opacity: 0; transition: opacity .2s;
+}
+.am-lyrics:hover .am-lyr-set { opacity: 1; }
+.am-lyr-set:hover { color: var(--am-text); }
+.am-lyrset-pop { min-width: 250px; }
+.am-lyrset-slider { flex: 1; accent-color: var(--am-accent); }
+.am-lyrset-v { min-width: 38px; text-align: right; font-size: 11px; color: var(--am-text-3); }
 
 /* "添加到播放列表"弹出菜单 */
 .am-pop {
@@ -438,9 +456,9 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-imm-vol { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,.8); }
 .am-imm-volin { width: 78px; accent-color: #fff; }
 /* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词） */
-.am-imm-lyr { display: none; width: 46%; max-height: 100%; overflow-y: auto; padding: 0 8px; position: relative; }
+.am-imm-lyr { display: none; width: 46%; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
-.am-imm-lyr .am-lyr-line { font-size: 26px; font-weight: 700; padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
+.am-imm-lyr .am-lyr-line { font-size: calc(26px * var(--am-lyr-scale, 1)); font-weight: 700; padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
 .am-imm-lyr .am-lyr-line .tly { font-size: 16px; }
 .am-imm-lyr .am-lyr-line.far { filter: blur(2px); opacity: .45; }
 .am-imm-lyr .am-lyr-line.near { color: rgba(255,255,255,.65); }
@@ -481,9 +499,9 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-mini-play { width: 34px; height: 34px; font-size: 16px; }
 .am-mini-right { display: flex; gap: 2px; }
 /* 迷你歌词/队列面板（展开时窗口拉高，二者互斥） */
-.am-mini-lyr { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px; border-top: 1px solid var(--am-sep); }
+.am-mini-lyr { display: none; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 6px 14px; border-top: 1px solid var(--am-sep); }
 #am-root.am-mini-lyr-on .am-mini-lyr { display: block; }
-.am-mini-lyr .am-lyr-line { font-size: 16px; font-weight: 600; padding: 8px 0; }
+.am-mini-lyr .am-lyr-line { font-size: calc(16px * var(--am-lyr-scale, 1)); font-weight: 600; padding: 8px 0; }
 .am-mini-queue { display: none; flex: 1; min-height: 0; flex-direction: column; border-top: 1px solid var(--am-sep); }
 #am-root.am-mini-q-on .am-mini-queue { display: flex; }
 /* 迷你面板内的行配色跟随亮暗主题（共享样式默认深色，亮主题覆盖） */

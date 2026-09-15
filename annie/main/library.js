@@ -250,11 +250,12 @@ async function readLyrics(filePath) {
 function readEmbeddedLyrics(filePath) {
   return new Promise((resolve) => {
     const { spawn } = require('child_process');
-    // 与 analyzer.js resolveTool 一致的 dev/prod 双路径工具链定位
+    // 与 analyzer.js resolveTool 一致的 dev/prod 工具链定位（dev 需含仓库根 engine/tools）
     const prod = path.join(process.resourcesPath || '', 'engine', 'tools', 'ffprobe.exe');
     const dev = path.join(__dirname, '..', 'engine', 'tools', 'ffprobe.exe');
+    const root = path.join(__dirname, '..', '..', 'engine', 'tools', 'ffprobe.exe');
     let ffprobe = null;
-    for (const p of [prod, dev]) { try { if (fs.existsSync(p)) { ffprobe = p; break; } } catch { } }
+    for (const p of [prod, dev, root]) { try { if (fs.existsSync(p)) { ffprobe = p; break; } } catch { } }
     if (!ffprobe) { resolve({ ok: false, error: 'no-ffprobe' }); return; }
     const proc = spawn(ffprobe, ['-v', 'error', '-show_entries', 'format_tags', '-of', 'json', filePath], { windowsHide: true });
     let out = '';

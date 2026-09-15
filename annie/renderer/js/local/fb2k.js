@@ -1080,48 +1080,35 @@
     return { text: fullText, words: words };
   }
   /* 用行元素实际字体测每个词的字宽占比（缓存到节点，字体/文本变化时重算） */
-  var _karaCanvas = null;
-  function karaMeasureCtx() {
-    if (!_karaCanvas) _karaCanvas = document.createElement('canvas');
-    return _karaCanvas.getContext('2d');
-  }
-  function karaRanges(node, line) {
-    var sig = String(line.txt || '') + '|' + ((line.words && line.words.length) || 0);
-    if (node._karaSig === sig && node._karaRanges) return node._karaRanges;
-    var cs = getComputedStyle(node);
-    var ctx = karaMeasureCtx();
-    ctx.font = (cs.fontWeight || '400') + ' ' + (cs.fontSize || '13px') + ' ' + (cs.fontFamily || 'sans-serif');
-    var text = String(line.txt || '');
-    var full = Math.max(1, ctx.measureText(text).width);
-    var ranges = (line.words || []).map(function (w) {
-      var c0 = Math.max(0, Math.min(text.length, w.c0 || 0));
-      var c1 = Math.max(c0, Math.min(text.length, w.c1 != null ? w.c1 : c0));
-      return { p0: ctx.measureText(text.slice(0, c0)).width / full, p1: ctx.measureText(text.slice(0, c1)).width / full };
-    });
-    node._karaSig = sig; node._karaRanges = ranges;
-    return ranges;
-  }
-  /* 当前行逐字进度 0..1（按词 t/d 插值，词内用字宽占比推进） */
-  function karaProgress(node, line, now) {
-    var words = line.words;
-    if (!words || !words.length) return 0;
-    var ranges = karaRanges(node, line);
-    var p = 0;
-    for (var i = 0; i < words.length; i++) {
-      var w = words[i];
+  /* 逐词 span 卡拉OK：每词独立双层，词间自然折行；每 tick 只刷当前行 */
+  function karaPaintLine(node, now) {
+    var arr = node._karaWords;
+    for (var i = 0; i < arr.length; i++) {
+      var w = arr[i].w;
       var ws = w.t, we = w.t + Math.max(0.08, w.d || 0.24);
-      if (now < ws) break;
-      var local = now >= we ? 1 : (now - ws) / Math.max(0.08, we - ws);
-      local = Math.max(0, Math.min(1, local));
-      var r = ranges[i] || { p0: 0, p1: 0 };
-      p = Math.max(p, r.p0 + (r.p1 - r.p0) * local);
-      if (now < we) break;
+      var p;
+      if (now >= we) p = 1;
+      else if (now <= ws) p = 0;
+      else p = (now - ws) / (we - ws);
+      arr[i].hi.style.width = (p * 100).toFixed(1) + '%';
     }
-    return Math.max(0, Math.min(1, p));
+  }
+  function karaResetLine(node) {
+    var arr = node._karaWords;
+    for (var i = 0; i < arr.length; i++) arr[i].hi.style.width = '0%';
   }
   function parseLrc(text) {
     var map = new Map();
     text.split(/\r?\n/).forEach(function (line) {
+      // lxlyric 行格式：[起始ms,时长ms]文本（行内 <相对ms,时长ms> 词标签走同一提取）
+      var lx = /^\s*\[(\d+),(\d+)\](.*)$/.exec(line);
+      if (lx) {
+        var lt = (parseInt(lx[1], 10) || 0) / 1000;
+        var lraw = (lx[3] || '').trim();
+        var lex = karaExtractWords(lraw, lt);
+        if (!map.has(lt)) map.set(lt, { t: lt, txt: lex ? lex.text : lraw, tly: '', words: lex ? lex.words : null });
+        return;
+      }
       var re = /\[(\d+):(\d+(?:\.\d+)?)\]/g, mm, last = 0, times = [];
       while ((mm = re.exec(line))) { times.push(+mm[1] * 60 + (+mm[2])); last = re.lastIndex; }
       if (!times.length) return;
@@ -1156,14 +1143,18 @@
         var d = el('div', 'f2-lyr');
         d.dataset.i = i;
         if (l.words && l.words.length && l.txt) {
-          // 逐字：双层文本（底层暗色 + 上层高亮，按进度裁切宽度实现平滑扫过）
+          // 逐词 span（词间自然折行；词内双层按进度裁切扫过）
           d.classList.add('kara');
-          var wrap = el('span', 'kara-wrap');
-          var base = el('span', 'kara-base'); base.textContent = l.txt;
-          var hi = el('span', 'kara-hi'); hi.textContent = l.txt;
-          wrap.appendChild(base); wrap.appendChild(hi);
-          d.appendChild(wrap);
-          d._kara = { line: l, hi: hi };
+          var wspans = [];
+          l.words.forEach(function (w) {
+            var ws = el('span', 'kara-w');
+            var base = el('span', 'kara-wb'); base.textContent = w.text;
+            var hi = el('span', 'kara-wh'); hi.textContent = w.text;
+            ws.appendChild(base); ws.appendChild(hi);
+            d.appendChild(ws);
+            wspans.push({ w: w, hi: hi });
+          });
+          d._karaWords = wspans;
         } else {
           d.appendChild(document.createTextNode(l.txt || ' '));
         }
@@ -1180,14 +1171,12 @@
     if (!S.lyrLines || !R.lyrLines) return;
     var cur = -1;
     for (var i = 0; i < S.lyrLines.length; i++) if (S.lyrLines[i].t <= S.pos + 0.15) cur = i; else break;
-    // 逐字扫过：当前行每 tick 更新裁切宽度（不吃下方 line-change 早退）
+    // 逐词扫过：当前行每 tick 更新各词裁切宽度（不吃下方 line-change 早退）
     var q = R.lyrLines.querySelectorAll('.f2-lyr');
-    if (cur >= 0 && q[cur] && q[cur]._kara) {
-      q[cur]._kara.hi.style.width = (karaProgress(q[cur], S.lyrLines[cur], S.pos) * 100).toFixed(2) + '%';
-    }
+    if (cur >= 0 && q[cur] && q[cur]._karaWords) karaPaintLine(q[cur], S.pos);
     if (cur === S.lyrCur) return;
-    // 行切换：重置上一行逐字宽度，避免残留
-    if (S.lyrCur >= 0 && q[S.lyrCur] && q[S.lyrCur]._kara) q[S.lyrCur]._kara.hi.style.width = '0%';
+    // 行切换：重置上一行逐词宽度，避免残留
+    if (S.lyrCur >= 0 && q[S.lyrCur] && q[S.lyrCur]._karaWords) karaResetLine(q[S.lyrCur]);
     S.lyrCur = cur;
     for (var j = 0; j < q.length; j++) q[j].classList.toggle('cur', j === cur);
     if (cur >= 0 && q[cur]) {

@@ -50,6 +50,16 @@ AnniePlayerSVLX.exe (Electron 42, 单进程)
 
 洛雪代码来源与声明见 [THIRDPARTY/lx-music-desktop/](THIRDPARTY/lx-music-desktop/NOTICE.LICENSE)（Apache-2.0）。
 
+## 更新历程
+
+- **V3.5**（1.3.5）：**三主题逐字歌词（卡拉OK逐词扫过，PR #2 by 电狗）**——AM/FB2K 逐词 span 渲染、粒子舞台原生逐字接管；长歌词行**折行显示不再缩字**，支持「每行词数」限制；歌词外观自定义（字号 70–160% / 行距 / 每行词数，持久化）；沉浸/迷你歌词滚动条仅滚动时出现；lxlyric 行格式（`[起始ms,时长ms]`）支持；内嵌歌词读取修复
+- **V3.3.1**（1.3.4）：**在线歌词/封面匹配（一期）**——单曲右键五平台并行搜索、匹配度打分、歌词落盘 .lrc / 封面落盘 cover.jpg（专辑共享）、可选嵌入文件标签；**electron-updater 差量自动更新**（此后更新只需下载几 MB）
+- **V3.3**（1.3.3）：**AM 沉浸式播放界面**（封面氛围模糊底/大字歌词/待播清单·历史记录）与**AM 迷你模式**（360px 小窗、可展开歌词与队列）；**播放模式**五种循环（全文件顺序/列表顺序/全库随机/列表随机/单曲循环，仅本地）；**播放定时**三种（播完列表/定时 N 分钟/单曲循环 N 遍，仅本地）；FB2K 右栏详情收起
+- **V3.2**（1.3.2）：**性能优化专项**——引擎音频线程零分配/零 I/O（电平事件 10Hz 合并）、曲库写入防抖原子化、标签/封面/歌词三级缓存、AM 大列表窗口化渲染、FB2K 滚动合帧与频谱门控、隐藏主题后台降频；独占开关锁定当前设备修复
+- **V3.1**（1.3.0）：AM 流媒体歌词修复、三主题独占开关互通（Bit-Perfect 透传）、AM/FB2K 定位当前播放文件
+- **V3 修复版**（1.2.0 hotfix）：合并**电狗 PR #1**——自定义音源沙箱 Worker 化（卡死不再冻结主进程）、下载写标签（含内嵌歌词/封面）、WASAPI 独占/共享切换、QQ 免签搜索与纯 JS QRC 解密
+- **V3**（1.2.0）：洛雪深度融合定版——三套并列主题（粒子舞台/FB2K/**Apple Music**）、SACD ISO 分轨、自建播放列表、在线搜索单击即播、专辑级封面共享、舞台休眠与可视化分析门控
+
 ## 构建
 
 ```powershell
@@ -67,7 +77,9 @@ npm run dist:setup   # 产出 setupEXE/安妮播放器融合版V3-vX.Y.Z-setup.e
 
 ## 致谢
 
-- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：PR #1 贡献——音源沙箱 Worker 化（脚本卡死不再冻结主进程）、下载元数据/内嵌歌词写入（tagWriter）、WASAPI 独占/共享开关、QQ 免签搜索与纯 JS QRC 歌词解密、国内镜像打包配置、AnnieEngine 引擎源码入库，以及「安妮独家音源」公益 API 的收集整理
+- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：
+  - **PR #2（V3.5）**：三主题逐字歌词——粒子舞台/FB2K/AM（含沉浸与迷你）卡拉OK逐词扫过，兼容增强 LRC 与 lxlyric 两种词标签格式
+  - **PR #1（V3 修复版）**：音源沙箱 Worker 化（脚本卡死不再冻结主进程）、下载元数据/内嵌歌词写入（tagWriter）、WASAPI 独占/共享开关、QQ 免签搜索与纯 JS QRC 歌词解密、国内镜像打包配置、AnnieEngine 引擎源码入库，以及「安妮独家音源」公益 API 的收集整理
 - [洛雪音乐 lx-music-desktop](https://github.com/lyswhut/lx-music-desktop)（Apache-2.0）：流媒体 SDK 与歌词解密方案
 - [Mineradio](https://github.com/XxHuberrr/Mineradio) / [sonic-topography](https://github.com/yin-yizhen/sonic-topography)：粒子舞台视觉栈与声波地形算法
 

@@ -217,6 +217,43 @@
   }
 
   // ================= 歌词 =================
+  // 逐字歌词提取：支持两种词标签（无标签返回 null，行为与原来完全一致）
+  //   1) <mm:ss.xxx>文字        绝对时间（下载文件常见的"增强 LRC"）
+  //   2) <相对ms,时长ms>文字     相对行首（洛雪 lxlyric 格式）
+  function parseWordMark(raw, lineStart) {
+    var s = String(raw || '').trim();
+    var mm = /^(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)$/.exec(s); // mm:ss.xxx
+    if (mm) return { t: (parseInt(mm[1], 10) || 0) * 60 + parseFloat(mm[2] || '0'), d: 0 };
+    var rel = /^(\d+),(\d+)$/.exec(s);                       // 相对ms,时长ms
+    if (rel) return { t: (Number(lineStart) || 0) + (parseInt(rel[1], 10) || 0) / 1000, d: (parseInt(rel[2], 10) || 0) / 1000 };
+    return null;
+  }
+  function extractWordTimes(rawText, lineStart) {
+    var s = String(rawText || '');
+    if (s.indexOf('<') < 0) return null;
+    var re = /<([^<>]+)>/g, m, marks = [];
+    while ((m = re.exec(s))) marks.push({ raw: m[1], index: m.index, end: re.lastIndex });
+    if (!marks.length) return null;
+    var words = [], fullText = '';
+    for (var i = 0; i < marks.length; i++) {
+      var seg = s.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].index : s.length);
+      if (!seg) continue;                                     // 首尾空文本占位 / 纯时间占位
+      var tk = parseWordMark(marks[i].raw, lineStart);
+      if (tk == null) { fullText += seg; continue; }          // 非时间标签：原样保留
+      var c0 = fullText.length;
+      fullText += seg;
+      words.push({ text: seg, t: tk.t, d: tk.d, c0: c0, c1: fullText.length });
+    }
+    if (!words.length) return null;
+    // 缺时长的词用下一词起点推算（末词兜底 0.6s）
+    for (var k = 0; k < words.length; k++) {
+      if (words[k].d > 0) continue;
+      var nxt = words[k + 1];
+      words[k].d = nxt ? Math.max(0.06, nxt.t - words[k].t) : 0.6;
+    }
+    return { text: fullText, words: words };
+  }
+
   // 通用歌词注入：text 为空 → 清空；非空 → 解析 LRC 并激活歌词舞台
   function applyLyricText(text, token) {
     if (token !== trackSwitchToken) return;
@@ -229,15 +266,27 @@
     }
     var lines = parseLyricText(text);
     if (token !== trackSwitchToken) return;
+    // 逐字歌词：从 <词时间> 标签提取 words（逐字卡拉OK由舞台 getLyricLineProgress 自动接管）
+    var hasWordTiming = false;
+    for (var li = 0; li < lines.length; li++) {
+      var ex = extractWordTimes(lines[li].text, lines[li].t);
+      if (ex && ex.words.length) {
+        lines[li].text = ex.text;
+        lines[li].words = ex.words;
+        lines[li].charCount = Math.max(1, ex.text.length);
+        lines[li].source = 'word-lrc';
+        hasWordTiming = true;
+      }
+    }
     originalLyricsState = {
       lines: lines,
-      hasNativeKaraoke: false,
-      timingSource: 'lrc',
+      hasNativeKaraoke: hasWordTiming,
+      timingSource: hasWordTiming ? 'word-lrc' : 'lrc',
       translationLines: [],
       translationSource: 'none'
     };
     lyricsLines = lines;
-    lyricsTimingSource = 'lrc';
+    lyricsTimingSource = hasWordTiming ? 'word-lrc' : 'lrc';
     // 激活歌词舞台（对齐上游 toggleLyricsPanel(true) 的开启序列）
     try {
       fx.particleLyrics = true;

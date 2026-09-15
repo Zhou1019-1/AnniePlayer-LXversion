@@ -2615,6 +2615,11 @@ function lyricKaraokeWordRanges(line) {
   return ranges;
 }
 function lyricLineHasNativeKaraoke(line) {
+  // 逐字歌词总开关（设置中心·歌词页，LS annieplayer.karaoke，默认开）；
+  // 关闭时按整行进度扫过渲染（数据保留，开关切回即时恢复）
+  try {
+    if (localStorage.getItem('annieplayer.karaoke') === '0') return false;
+  } catch (e) { }
   return !!(line && Array.isArray(line.words) && line.words.length && Number(line.charCount) > 0);
 }
 function getLyricLineProgress(line, nextLine, now) {

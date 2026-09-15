@@ -815,6 +815,65 @@ ipcMain.handle('stream:hotSearch', (_e, params) => streaming.hotSearch(params));
   analyzer.register(ipcMain, () => mainWindow);
 }
 
+// V3.3.1：GitHub Releases 差量自动更新（electron-updater，仅打包版运行）
+// 用户侧体验：后台静默下载差量包（几 MB），下完弹窗询问是否重启安装；选"稍后"则下次启动生效。
+// 注意：SVLX/非 SVLX 两种启动模式共用（原定义在 else 分支内，SVLX 模式下永不执行）
+let __manualCheckUpdate = null;
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;
+  let autoUpdater;
+  try { ({ autoUpdater } = require('electron-updater')); } catch (e) { console.warn('[update] electron-updater 不可用:', e.message); return; }
+  autoUpdater.autoDownload = true;
+  // 更新日志落盘（%APPDATA%\<productName>\logs\main.log），便于排查“没收到更新”
+  try { autoUpdater.logger = require('electron-log'); } catch (e) { }
+  const ulog = autoUpdater.logger || console;
+  autoUpdater.autoInstallOnAppQuit = true;
+  // 设置中心「更新」页状态推送（checking/available/latest/downloading/ready/error）
+  const sendUpd = (status, data) => {
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:updateStatus', { status, data }); } catch { }
+  };
+  autoUpdater.on('checking-for-update', () => { ulog.info('[updater] checking'); sendUpd('checking'); });
+  autoUpdater.on('update-available', (info) => { ulog.info('[updater] available: ' + (info && info.version)); sendUpd('available', info && info.version); });
+  autoUpdater.on('update-not-available', () => { ulog.info('[updater] none'); sendUpd('latest'); });
+  autoUpdater.on('download-progress', (p) => sendUpd('downloading', Math.round((p && p.percent) || 0)));
+  autoUpdater.on('update-downloaded', async (info) => {
+    ulog.info('[updater] downloaded: ' + (info && info.version));
+    sendUpd('ready', info && info.version);
+    try {
+      const r = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: '更新已就绪',
+        message: '新版本 V' + (info && info.version) + ' 已下载完成',
+        detail: '现在重启应用完成更新？（选"稍后"则下次启动时自动生效）',
+        buttons: ['立即重启更新', '稍后'],
+        defaultId: 0, cancelId: 1,
+      });
+      if (r.response === 0) autoUpdater.quitAndInstall();
+    } catch { }
+  });
+  autoUpdater.on('error', (e) => { console.warn('[update] 更新检查失败(不打扰用户):', e && e.message); sendUpd('error', String(e && e.message || e)); });
+  // 设置中心「检查更新」按钮：手动触发（自动检查仍会周期性静默进行）
+  __manualCheckUpdate = async () => {
+    try { await autoUpdater.checkForUpdates(); return { ok: true }; }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  };
+  // 启动 15s 后首查（让开启动带宽），之后每 6 小时复查
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => { }), 15000);
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => { }), 6 * 3600 * 1000);
+}
+
+// 设置中心：版本号 / 手动检查更新 / 打开外链（两种启动模式都注册）
+ipcMain.handle('app:getVersion', () => app.getVersion());
+ipcMain.handle('app:openExternal', (_e, url) => {
+  const u = String(url || '');
+  if (/^https?:\/\//i.test(u)) { const { shell } = require('electron'); shell.openExternal(u); }
+});
+ipcMain.handle('app:checkUpdate', async () => {
+  if (!app.isPackaged) return { dev: true };
+  if (!__manualCheckUpdate) return { ok: false, error: 'updater 未初始化' };
+  return __manualCheckUpdate();
+});
+
 // ---------- 生命周期 ----------
 // SVLX 模式下跳过锁 + whenReady（已由 src/main.js 接管）
 if (global.__svlxBoot) {
@@ -825,6 +884,7 @@ if (global.__svlxBoot) {
   // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
   engine.call('devices.list', {}, 90000).catch(() => { });
   createWindow();
+  setupAutoUpdate(); // V3.3.1：GitHub 差量自动更新（仅打包版生效）
   global.__svlxAnnieOpen = () => {
     try { if (!mainWindow) createWindow(); else { mainWindow.show(); mainWindow.focus(); } } catch { }
   };
@@ -839,34 +899,6 @@ if (!gotLock) {
   app.on('second-instance', () => {
     if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
   });
-
-  // V3.3.1：GitHub Releases 差量自动更新（electron-updater，仅打包版运行）
-  // 用户侧体验：后台静默下载差量包（几 MB），下完弹窗询问是否重启安装；选"稍后"则下次启动生效。
-  function setupAutoUpdate() {
-    if (!app.isPackaged) return;
-    let autoUpdater;
-    try { ({ autoUpdater } = require('electron-updater')); } catch (e) { console.warn('[update] electron-updater 不可用:', e.message); return; }
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.on('update-available', (info) => console.log('[update] 发现新版本:', info && info.version));
-    autoUpdater.on('update-downloaded', async (info) => {
-      try {
-        const r = await dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: '更新已就绪',
-          message: '新版本 V' + (info && info.version) + ' 已下载完成',
-          detail: '现在重启应用完成更新？（选"稍后"则下次启动时自动生效）',
-          buttons: ['立即重启更新', '稍后'],
-          defaultId: 0, cancelId: 1,
-        });
-        if (r.response === 0) autoUpdater.quitAndInstall();
-      } catch { }
-    });
-    autoUpdater.on('error', (e) => console.warn('[update] 更新检查失败(不打扰用户):', e && e.message));
-    // 启动 15s 后首查（让开启动带宽），之后每 6 小时复查
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => { }), 15000);
-    setInterval(() => autoUpdater.checkForUpdates().catch(() => { }), 6 * 3600 * 1000);
-  }
 
   app.whenReady().then(() => {
     registerIpc();

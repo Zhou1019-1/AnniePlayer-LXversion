@@ -53,12 +53,13 @@
     sRow.appendChild(kwIn); sRow.appendChild(bSearch);
     dlg.appendChild(sRow);
 
-    // 选项行
+    // 选项行（歌词/封面/嵌入的默认勾选读设置中心·歌词页的保存项配置）
+    var defOf = function (k, d) { try { var v = localStorage.getItem('annieplayer.match.def.' + k); return v === null ? d : v !== '0'; } catch (e) { return d; } };
     var oRow = el('div', 'match-opts');
-    var ckLrc = mkCheck(oRow, '保存歌词（旁挂 .lrc）', true);
-    var ckCover = mkCheck(oRow, '保存封面（cover.jpg）', true);
+    var ckLrc = mkCheck(oRow, '保存歌词（旁挂 .lrc）', defOf('lrc', true));
+    var ckCover = mkCheck(oRow, '保存封面（cover.jpg）', defOf('cover', true));
     var ckOverwrite = mkCheck(oRow, '覆盖已有封面', false);
-    var ckEmbed = mkCheck(oRow, '同时嵌入文件标签', false);
+    var ckEmbed = mkCheck(oRow, '同时嵌入文件标签', defOf('embed', false));
     dlg.appendChild(oRow);
 
     // 候选列表 + 状态行

@@ -63,6 +63,16 @@ contextBridge.exposeInMainWorld('mine', {
   streamCoverProxy: (url) => ipcRenderer.invoke('stream:coverProxy', url),
   streamHotSearch: (params) => ipcRenderer.invoke('stream:hotSearch', params),
 
+  // 设置中心：版本 / 手动检查更新 / 外链 / 更新状态订阅
+  appVersion: () => ipcRenderer.invoke('app:getVersion'),
+  checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  onUpdateStatus: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('app:updateStatus', listener);
+    return () => ipcRenderer.removeListener('app:updateStatus', listener);
+  },
+
   // 洛雪式音源管理
   streamSourcesList: () => ipcRenderer.invoke('stream:sources:list'),
   streamSourcesImport: () => ipcRenderer.invoke('stream:sources:import'),

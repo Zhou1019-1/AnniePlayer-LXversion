@@ -141,6 +141,12 @@
   window.annieIsExclusive = () => exclusive;
   // SVLX：全局切换接口（FB2K / AM 主题的开关按钮调用），返回切换后的状态
   window.annieExclusiveToggle = toggle;
+  // 设置中心用：显式设置目标状态（与当前相同则不动，避免重复断流重建）
+  window.annieExclusiveSet = function (v) {
+    v = !!v;
+    if (v === exclusive) return Promise.resolve(exclusive);
+    return toggle();
+  };
   // EQ 注入完成后调用（eq.js 在 exclusive.js 之前加载，DOM ready 后 EQ 按钮已存在）
   window.annieMountExclusiveBtn = mount;
 

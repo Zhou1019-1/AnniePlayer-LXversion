@@ -444,6 +444,10 @@
     R.btnMiniM = el('button', 'am-tbtn', '🗕'); R.btnMiniM.title = '迷你模式';
     R.btnMiniM.onclick = function () { enterMini(); };
     right.appendChild(R.btnMiniM);
+    // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
+    var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
+    btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };
+    right.appendChild(btnSet);
     R.btnLyr = el('button', 'am-tbtn' + (S.lyricsOn ? ' on' : ''), '💬'); R.btnLyr.title = '歌词面板';
     R.btnLyr.onclick = function () {
       S.lyricsOn = !S.lyricsOn;
@@ -994,10 +998,12 @@
     var arr = node._karaWords;
     for (var i = 0; i < arr.length; i++) arr[i].hi.style.width = '0%';
   }
+  /* 逐字歌词总开关（设置中心·歌词页，LS annieplayer.karaoke，默认开） */
+  function karaOn() { try { return localStorage.getItem('annieplayer.karaoke') !== '0'; } catch (e) { return true; } }
   /* 构建一行歌词元素（逐字时每词一个 span 可折行），主歌词/沉浸/迷你共用 */
   function buildLyrLineEl(l, i, cls) {
     var d = el('div', cls + ' far');
-    if (l.words && l.words.length && l.text) {
+    if (l.words && l.words.length && l.text && karaOn()) {
       d.classList.add('kara');
       var limit = S.lyrWordLimit | 0; // 每行词数限制（0=按容器宽度自然折行）
       var wspans = [];
@@ -1928,6 +1934,10 @@
   });
 
   window.annieAM = { mount: mount, refresh: refresh };
+  // 设置中心·歌词页联动：AM 字号/行距重应用、每行词数/逐字开关变更后重建歌词
+  window.amLyrStyle = applyLyrStyle;
+  window.amLyrRerender = rerenderAllLyr;
+  document.addEventListener('annie-karaoke-changed', function () { if (S.mounted) rerenderAllLyr(); });
 
   // 启动即是 am 主题时自挂载（theme.js 先于本文件执行 apply()）
   if (window.annieTheme && annieTheme.current === 'am') mount();

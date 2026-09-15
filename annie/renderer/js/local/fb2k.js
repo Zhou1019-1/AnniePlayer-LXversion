@@ -213,6 +213,8 @@
         ['添加音乐文件夹…', '', function () { $('#btn-add-folder').click(); }],
         ['重新扫描媒体库', 'F5', function () { $('#btn-rescan').click(); }],
         ['-', null, null],
+        ['设置中心…', 'Ctrl+,', function () { window.annieSettings.togglePanel(); }],
+        ['-', null, null],
         ['退出', '', function () { window.mine.winClose(); }]
       ]],
       ['编辑', [
@@ -222,7 +224,7 @@
       ]],
       ['视图', [
         ['切换到粒子舞台主题', '', function () { window.annieTheme.switch('legacy'); }],
-        ['主题与外观设置…', '', function () { window.annieSettings.togglePanel(); }],
+        ['设置中心…', 'Ctrl+,', function () { window.annieSettings.togglePanel(); }],
         ['-', null, null],
         ['列表视图', '', function () { setViewMode('list'); }],
         ['分栏视图', '', function () { setViewMode('split'); }],
@@ -1133,6 +1135,10 @@
       renderLyrics();
     }).catch(function () { renderLyrics(); });
   }
+  /* 逐字歌词总开关（设置中心·歌词页，LS annieplayer.karaoke，默认开） */
+  function karaOn() { try { return localStorage.getItem('annieplayer.karaoke') !== '0'; } catch (e) { return true; } }
+  // 开关变更后重建歌词行（撤下/恢复逐词扫过）
+  document.addEventListener('annie-karaoke-changed', function () { renderLyrics(); });
   function renderLyrics() {
     if (!R.lyrLines) return;
     R.lyrLines.innerHTML = '';
@@ -1142,7 +1148,7 @@
       S.lyrLines.forEach(function (l, i) {
         var d = el('div', 'f2-lyr');
         d.dataset.i = i;
-        if (l.words && l.words.length && l.txt) {
+        if (l.words && l.words.length && l.txt && karaOn()) {
           // 逐词 span（词间自然折行；词内双层按进度裁切扫过）
           d.classList.add('kara');
           var wspans = [];

@@ -67,11 +67,14 @@ if (!TOKEN) die('gh 未登录');
 const TITLE = `安妮播放器融合版 V${VER}`;
 const NOTES = opt.notes || `安妮播放器融合版 V${VER}（详见提交记录）`;
 
-let relId;
-try {
-  relId = JSON.parse(gh(['api', `repos/${OWNER}/${REPO}/releases/tags/${TAG}`])).id;
-  log(`release ${TAG} 已存在（id=${relId}），复用`);
-} catch {
+let relId = null;
+{ // tag 查询允许 404（不存在则新建），不能用会 exit 的 gh()
+  const q = spawnSync('gh', ['api', `repos/${OWNER}/${REPO}/releases/tags/${TAG}`],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, HTTPS_PROXY: PROXY } });
+  if (q.status === 0) { try { relId = JSON.parse(q.stdout).id; } catch { } }
+}
+if (relId) log(`release ${TAG} 已存在（id=${relId}），复用`);
+else {
   relId = JSON.parse(gh(['api', `repos/${OWNER}/${REPO}/releases`, '-f', `tag_name=${TAG}`,
     '-f', `name=${TITLE}`, '-f', `body=${NOTES}`, '-F', 'draft=true'])).id;
   log(`已创建草稿 release（id=${relId}）`);

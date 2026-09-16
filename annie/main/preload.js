@@ -62,6 +62,11 @@ contextBridge.exposeInMainWorld('mine', {
   streamGetPic: (params) => ipcRenderer.invoke('stream:getPic', params),
   streamCoverProxy: (url) => ipcRenderer.invoke('stream:coverProxy', url),
   streamHotSearch: (params) => ipcRenderer.invoke('stream:hotSearch', params),
+  // 发现音乐：排行榜 / 歌单广场（V3.5.4）
+  streamLeaderboards: (params) => ipcRenderer.invoke('stream:leaderboards', params),
+  streamLeaderboardList: (params) => ipcRenderer.invoke('stream:leaderboardList', params),
+  streamSongLists: (params) => ipcRenderer.invoke('stream:songLists', params),
+  streamSongListDetail: (params) => ipcRenderer.invoke('stream:songListDetail', params),
 
   // 设置中心：版本 / 手动检查更新 / 外链 / 更新状态订阅
   appVersion: () => ipcRenderer.invoke('app:getVersion'),

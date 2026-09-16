@@ -347,6 +347,17 @@ html[data-theme="am"] #titlebar { display: none !important; }
   border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
   border-radius: 8px; padding: 5px 8px; font: 12px var(--am-font); outline: none; cursor: pointer;
 }
+/* V3.5.4 发现音乐：榜单 chips 更紧凑 + 歌单卡片网格 */
+.am-bd-pfs { margin-bottom: 10px; }
+.am-bd-pfs .am-chip { padding: 4px 11px; font-size: 11.5px; }
+.am-sl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+.am-sl-card { cursor: pointer; border-radius: 10px; padding: 8px; transition: background .15s; }
+.am-sl-card:hover { background: var(--am-hover); }
+.am-sl-cover { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
+  background: var(--am-glass-2); display: block; }
+.am-sl-name { margin-top: 7px; font: 12.5px var(--am-font); color: var(--am-text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.am-sl-meta { margin-top: 3px; font: 11px var(--am-font); color: var(--am-text-3, var(--am-text-2)); }
 .am-st-inputrow { display: flex; gap: 10px; margin-bottom: 10px; }
 .am-st-input {
   flex: 1; min-width: 0; border: 1px solid var(--am-sep); outline: none;

@@ -47,6 +47,12 @@ async function getPic(params) {
   return lxsdk.getPic(params);
 }
 
+/* 发现音乐：排行榜 / 歌单广场（V3.5.4） */
+async function leaderboards(params) { return lxsdk.leaderboards(params); }
+async function leaderboardList(params) { return lxsdk.leaderboardList(params); }
+async function songLists(params) { return lxsdk.songLists(params); }
+async function songListDetail(params) { return lxsdk.songListDetail(params); }
+
 /**
  * 封面代理：把 HTTP(S) 图片转成 dataURL 交给渲染层。
  * 用途：kwcdn.kuwo.cn 的 https 证书无效、部分 CDN 图被 CSP 拦 http——
@@ -223,6 +229,7 @@ async function writeDownloadedTags(dest, song, provider, opts) {
 
 module.exports = {
   init, search, songUrl, lyric, getPic, coverProxy, hotSearch, download, downloadDir, setDownloadDir,
+  leaderboards, leaderboardList, songLists, songListDetail,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层
 };

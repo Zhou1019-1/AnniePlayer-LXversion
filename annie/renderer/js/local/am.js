@@ -32,9 +32,14 @@
     pos: 0, dur: 0, playing: false,
     fmt: '',              // 音质徽标文本（引擎 format 事件 / 流式音质）
     lyricsOn: true,
-    // 洛雪在线搜索
+    // 洛雪在线搜索 / 发现音乐（V3.5.4：排行榜 + 歌单广场）
     stProvider: 'kg', stKw: '', stPage: 0, stAllPage: 1, stResults: [], stIndex: -1,
-    stSearching: false, stQuality: 'flac'
+    stSearching: false, stQuality: 'flac',
+    stTab: 'search',           // search | boards | lists
+    tabSongs: {},              // 每个页签各自的歌曲列表缓存（切页签恢复）
+    boards: [], boardsProvider: '', boardSel: '', boardName: '', bdPage: 0, bdAllPage: 1,
+    slLists: [], slProvider: '', slPage: 0, slLimit: 30, slTotal: 0,
+    slDetailId: '', slDetailName: '', slDPage: 0, slDLimit: 100, slDTotal: 0
   };
   var R = {};             // DOM 引用表
 
@@ -527,7 +532,7 @@
     }
 
     sb.appendChild(el('div', 'am-side-h', '媒体库'));
-    sb.appendChild(nav('🔍', '在线搜索', 'stream'));
+    sb.appendChild(nav('🔍', '在线音乐', 'stream'));
     // 添加文件夹：只作入口，文件夹列表不外显在 AM 界面（与粒子舞台/FB2K 不同）
     var addFolder = el('button', 'am-nav am-new');
     addFolder.appendChild(el('span', 'am-nav-ico', '＋'));
@@ -821,49 +826,67 @@
     win.body.appendChild(frag);
   }
 
-  /* ---------------- 在线搜索视图（洛雪 musicSdk，AM 外观） ---------------- */
-  function renderStreamView(c) {
-    c.appendChild(el('div', 'am-view-h', '在线搜索'));
+  /* ---------------- 发现音乐：数据加载（V3.5.4） ---------------- */
+  function switchStreamTab(tab) {
+    if (S.stTab === tab) return;
+    S.tabSongs[S.stTab] = S.stResults; // 缓存旧页签列表
+    S.stTab = tab;
+    S.stResults = S.tabSongs[tab] || [];
+    S.stIndex = -1;
+    if (tab === 'boards' && (S.boardsProvider !== S.stProvider || !S.boards.length)) { renderView(); loadBoards(); return; }
+    if (tab === 'lists' && !S.slDetailId && (S.slProvider !== S.stProvider || !S.slLists.length)) { renderView(); loadSongLists(1); return; }
+    renderView();
+  }
+  function switchStreamProvider(k) {
+    if (S.stProvider === k) return;
+    S.stProvider = k;
+    if (S.stTab === 'search') { if (S.stKw) doStreamSearch(true); else renderView(); }
+    else if (S.stTab === 'boards') { renderView(); loadBoards(); }
+    else { S.slDetailId = ''; S.slDetailName = ''; renderView(); loadSongLists(1); }
+  }
+  function loadBoards() {
+    var provider = S.stProvider;
+    renderStreamStatus('加载' + PLATFORMS[provider] + '排行榜…');
+    window.mine.streamLeaderboards({ provider: provider }).then(function (r) {
+      if (S.stProvider !== provider) return;
+      S.boards = r.list || []; S.boardsProvider = provider; S.boardSel = ''; S.boardName = '';
+      renderView();
+      renderStreamStatus(S.boards.length ? '' : '该平台暂无排行榜');
+    }).catch(function (e) { renderStreamStatus('排行榜加载失败：' + (e.message || e), true); });
+  }
+  function loadBoardList(bangid, name, page) {
+    renderStreamStatus('加载「' + name + '」…');
+    window.mine.streamLeaderboardList({ provider: S.stProvider, bangid: bangid, page: page || 1 }).then(function (r) {
+      S.stResults = page > 1 ? S.stResults.concat(r.songs || []) : (r.songs || []);
+      S.stIndex = -1; S.boardSel = bangid; S.boardName = name;
+      S.bdPage = r.page || 1; S.bdAllPage = r.allPage || 1;
+      renderView();
+      renderStreamStatus('「' + name + '」共 ' + (r.total || S.stResults.length) + ' 首 · 已加载 ' + S.stResults.length + ' 首');
+    }).catch(function (e) { renderStreamStatus('榜单加载失败：' + (e.message || e), true); });
+  }
+  function loadSongLists(page) {
+    var provider = S.stProvider;
+    renderStreamStatus('加载歌单广场…');
+    window.mine.streamSongLists({ provider: provider, page: page || 1 }).then(function (r) {
+      if (S.stProvider !== provider) return;
+      S.slLists = page > 1 ? S.slLists.concat(r.list || []) : (r.list || []);
+      S.slProvider = provider; S.slPage = r.page || 1; S.slLimit = r.limit || 30; S.slTotal = r.total || 0;
+      renderView(); renderStreamStatus('');
+    }).catch(function (e) { renderStreamStatus('歌单加载失败：' + (e.message || e), true); });
+  }
+  function loadSongListDetail(id, name, page) {
+    renderStreamStatus('加载歌单「' + name + '」…');
+    window.mine.streamSongListDetail({ provider: S.stProvider, id: id, page: page || 1 }).then(function (r) {
+      S.stResults = page > 1 ? S.stResults.concat(r.songs || []) : (r.songs || []);
+      S.stIndex = -1; S.slDetailId = id; S.slDetailName = name;
+      S.slDPage = r.page || 1; S.slDLimit = r.limit || 100; S.slDTotal = r.total || 0;
+      renderView();
+      renderStreamStatus('「' + name + '」共 ' + (r.total || S.stResults.length) + ' 首 · 已加载 ' + S.stResults.length + ' 首');
+    }).catch(function (e) { renderStreamStatus('歌单详情加载失败：' + (e.message || e), true); });
+  }
 
-    var bar = el('div', 'am-st-bar');
-    var pf = el('div', 'am-st-pfs');
-    Object.keys(PLATFORMS).forEach(function (k) {
-      var chip = el('button', 'am-chip' + (S.stProvider === k ? ' cur' : ''), PLATFORMS[k]);
-      chip.onclick = function () {
-        S.stProvider = k;
-        pf.querySelectorAll('.am-chip').forEach(function (x) { x.classList.toggle('cur', x === chip); });
-        if (S.stKw) doStreamSearch(true);
-      };
-      pf.appendChild(chip);
-    });
-    bar.appendChild(pf);
-    var qSel = document.createElement('select');
-    qSel.className = 'am-st-quality';
-    [['flac24bit', 'Hi-Res'], ['flac', 'FLAC'], ['320k', '320K'], ['128k', '128K']].forEach(function (q) {
-      var o = document.createElement('option'); o.value = q[0]; o.textContent = q[1]; qSel.appendChild(o);
-    });
-    qSel.value = S.stQuality;
-    qSel.onchange = function () { S.stQuality = qSel.value; };
-    bar.appendChild(qSel);
-    c.appendChild(bar);
-
-    var inpRow = el('div', 'am-st-inputrow');
-    var inp = document.createElement('input');
-    inp.className = 'am-st-input'; inp.placeholder = '搜索歌曲、艺人、专辑…（洛雪全平台音源）'; inp.value = S.stKw;
-    inp.onkeydown = function (e) { if (e.key === 'Enter') { S.stKw = inp.value.trim(); doStreamSearch(true); } };
-    var bGo = el('button', 'am-btn am-btn-accent', '搜索');
-    bGo.onclick = function () { S.stKw = inp.value.trim(); doStreamSearch(true); };
-    inpRow.appendChild(inp); inpRow.appendChild(bGo);
-    c.appendChild(inpRow);
-
-    R.stStatus = el('div', 'am-st-status');
-    c.appendChild(R.stStatus);
-
-    if (!S.stResults.length) {
-      c.appendChild(el('div', 'am-empty', S.stKw ? '无结果' : '输入关键词，从五大平台搜索在线音乐'));
-      return;
-    }
-
+  /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播） */
+  function renderSongsTable(c) {
     var tb = el('table', 'am-table');
     tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:110px">音质</th></tr></thead>';
     var body = el('tbody');
@@ -887,19 +910,127 @@
         tdQ.appendChild(el('span', 'am-qbadge' + (hq ? ' hq' : ''), TYPE_LABEL[t.type] || t.type));
       });
       tr.appendChild(tdQ);
-      // 单击即播（与洛雪流媒体面板一致；用户习惯来自那里，双击保留兼容）
       tr.onclick = function () { playStreamAt(i); };
       tr.ondblclick = function () { playStreamAt(i); };
       body.appendChild(tr);
     });
     tb.appendChild(body);
     c.appendChild(tb);
+  }
+  function renderMoreBtn(c, label, fn) {
+    var more = el('button', 'am-btn', label);
+    more.style.marginTop = '14px';
+    more.onclick = fn;
+    c.appendChild(more);
+  }
 
+  /* ---------------- 在线音乐视图（搜索 / 排行榜 / 歌单广场） ---------------- */
+  function renderStreamView(c) {
+    c.appendChild(el('div', 'am-view-h', '在线音乐'));
+
+    // 页签 + 音质
+    var bar = el('div', 'am-st-bar');
+    var tabBox = el('div', 'am-st-pfs');
+    [['search', '搜索'], ['boards', '排行榜'], ['lists', '歌单广场']].forEach(function (t) {
+      var chip = el('button', 'am-chip' + (S.stTab === t[0] ? ' cur' : ''), t[1]);
+      chip.onclick = function () { switchStreamTab(t[0]); };
+      tabBox.appendChild(chip);
+    });
+    bar.appendChild(tabBox);
+    var qSel = document.createElement('select');
+    qSel.className = 'am-st-quality';
+    [['flac24bit', 'Hi-Res'], ['flac', 'FLAC'], ['320k', '320K'], ['128k', '128K']].forEach(function (q) {
+      var o = document.createElement('option'); o.value = q[0]; o.textContent = q[1]; qSel.appendChild(o);
+    });
+    qSel.value = S.stQuality;
+    qSel.onchange = function () { S.stQuality = qSel.value; };
+    bar.appendChild(qSel);
+    c.appendChild(bar);
+
+    // 平台
+    var pfBar = el('div', 'am-st-bar');
+    var pf = el('div', 'am-st-pfs');
+    Object.keys(PLATFORMS).forEach(function (k) {
+      var chip = el('button', 'am-chip' + (S.stProvider === k ? ' cur' : ''), PLATFORMS[k]);
+      chip.onclick = function () { switchStreamProvider(k); };
+      pf.appendChild(chip);
+    });
+    pfBar.appendChild(pf);
+    c.appendChild(pfBar);
+
+    // 搜索输入行（仅搜索页签）
+    if (S.stTab === 'search') {
+      var inpRow = el('div', 'am-st-inputrow');
+      var inp = document.createElement('input');
+      inp.className = 'am-st-input'; inp.placeholder = '搜索歌曲、艺人、专辑…（洛雪全平台音源）'; inp.value = S.stKw;
+      inp.onkeydown = function (e) { if (e.key === 'Enter') { S.stKw = inp.value.trim(); doStreamSearch(true); } };
+      var bGo = el('button', 'am-btn am-btn-accent', '搜索');
+      bGo.onclick = function () { S.stKw = inp.value.trim(); doStreamSearch(true); };
+      inpRow.appendChild(inp); inpRow.appendChild(bGo);
+      c.appendChild(inpRow);
+    }
+
+    R.stStatus = el('div', 'am-st-status');
+    c.appendChild(R.stStatus);
+
+    if (S.stTab === 'boards') {
+      // 榜单 chips（网格流式排列）
+      var bdBox = el('div', 'am-st-pfs am-bd-pfs');
+      S.boards.forEach(function (b) {
+        var chip = el('button', 'am-chip' + (S.boardSel === b.bangid ? ' cur' : ''), b.name);
+        chip.onclick = function () { loadBoardList(b.bangid, b.name, 1); };
+        bdBox.appendChild(chip);
+      });
+      c.appendChild(bdBox);
+      if (!S.stResults.length) {
+        c.appendChild(el('div', 'am-empty', S.boards.length ? '选择一个榜单查看歌曲' : '正在加载榜单…'));
+        return;
+      }
+      renderSongsTable(c);
+      if (S.bdPage < S.bdAllPage) renderMoreBtn(c, '加载更多（' + S.bdPage + '/' + S.bdAllPage + '）', function () { loadBoardList(S.boardSel, S.boardName, S.bdPage + 1); });
+      return;
+    }
+
+    if (S.stTab === 'lists') {
+      if (!S.slDetailId) {
+        // 歌单卡片网格
+        if (!S.slLists.length) { c.appendChild(el('div', 'am-empty', '正在加载歌单…')); return; }
+        var grid = el('div', 'am-sl-grid');
+        S.slLists.forEach(function (pl) {
+          var card = el('div', 'am-sl-card');
+          var img = el('img', 'am-sl-cover'); img.alt = ''; img.loading = 'lazy';
+          if (pl.img) { img.src = pl.img; img.onerror = function () { img.style.visibility = 'hidden'; }; }
+          else img.style.visibility = 'hidden';
+          card.appendChild(img);
+          card.appendChild(el('div', 'am-sl-name', esc(pl.name)));
+          card.appendChild(el('div', 'am-sl-meta', (pl.playCount ? pl.playCount + ' 播放' : '') + (pl.total ? ' · ' + pl.total + ' 首' : '')));
+          card.onclick = function () { loadSongListDetail(pl.id, pl.name, 1); };
+          grid.appendChild(card);
+        });
+        c.appendChild(grid);
+        if (S.slPage * S.slLimit < S.slTotal) renderMoreBtn(c, '加载更多歌单（' + S.slLists.length + '/' + S.slTotal + '）', function () { loadSongLists(S.slPage + 1); });
+        return;
+      }
+      // 歌单详情（返回 + 歌曲表）
+      var back = el('button', 'am-btn', '‹ 返回歌单广场');
+      back.style.marginBottom = '10px';
+      back.onclick = function () { S.slDetailId = ''; S.slDetailName = ''; S.stResults = S.tabSongs.lists = []; renderView(); };
+      c.appendChild(back);
+      c.appendChild(el('div', 'am-view-h', esc(S.slDetailName)));
+      if (!S.stResults.length) { c.appendChild(el('div', 'am-empty', '正在加载歌单歌曲…')); return; }
+      renderSongsTable(c);
+      if (S.slDPage * S.slDLimit < S.slDTotal) renderMoreBtn(c, '加载更多（已加载 ' + S.stResults.length + '/' + S.slDTotal + '）', function () { loadSongListDetail(S.slDetailId, S.slDetailName, S.slDPage + 1); });
+      return;
+    }
+
+    // 搜索页签
+    if (!S.stResults.length) {
+      c.appendChild(el('div', 'am-empty', S.stKw ? '无结果' : '输入关键词，从五大平台搜索在线音乐'));
+      return;
+    }
+    renderSongsTable(c);
     if (S.stPage < S.stAllPage && !S.stSearching) {
-      var more = el('button', 'am-btn', '加载更多（' + S.stPage + '/' + S.stAllPage + '）');
-      more.style.marginTop = '14px';
-      more.onclick = function () { doStreamSearch(false); };
-      c.appendChild(more);
+      renderMoreBtn(c, '加载更多（' + S.stPage + '/' + S.stAllPage + '）', function () { doStreamSearch(false); });
     }
   }
 

@@ -767,6 +767,11 @@ function registerIpc() {
 ipcMain.handle('stream:getPic', (_e, params) => streaming.getPic(params));
 ipcMain.handle('stream:coverProxy', (_e, url) => streaming.coverProxy(url));
 ipcMain.handle('stream:hotSearch', (_e, params) => streaming.hotSearch(params));
+// 发现音乐：排行榜 / 歌单广场（V3.5.4）
+ipcMain.handle('stream:leaderboards', (_e, params) => streaming.leaderboards(params));
+ipcMain.handle('stream:leaderboardList', (_e, params) => streaming.leaderboardList(params));
+ipcMain.handle('stream:songLists', (_e, params) => streaming.songLists(params));
+ipcMain.handle('stream:songListDetail', (_e, params) => streaming.songListDetail(params));
 
   // —— 洛雪式音源管理（导入/删除/启停）——
   ipcMain.handle('stream:sources:list', () => streaming.sources.list());

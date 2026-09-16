@@ -524,4 +524,59 @@ async function mgAlbumDetail(meta, out) {
   return out;
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, normalize };
+/* ---------------- 发现音乐：排行榜 / 歌单广场（V3.5.4） ---------------- */
+async function leaderboards({ provider }) {
+  const sdk = await loadSdk();
+  const mod = sdk[provider];
+  if (!mod || !mod.leaderboard) throw new Error('该平台不支持排行榜');
+  const r = await mod.leaderboard.getBoards();
+  return {
+    provider,
+    list: (r.list || []).map(b => ({ id: String(b.id), name: b.name, bangid: String(b.bangid || b.id) })),
+  };
+}
+
+async function leaderboardList({ provider, bangid, page }) {
+  const sdk = await loadSdk();
+  const mod = sdk[provider];
+  if (!mod || !mod.leaderboard) throw new Error('该平台不支持排行榜');
+  const r = await mod.leaderboard.getList(String(bangid), page || 1);
+  const limit = r.limit || 100;
+  return {
+    provider,
+    songs: (r.list || []).map((info) => normalize(provider, info)),
+    total: r.total || 0,
+    page: r.page || page || 1,
+    allPage: Math.max(1, Math.ceil((r.total || 0) / limit)),
+  };
+}
+
+async function songLists({ provider, sortId, tagId, page }) {
+  const sdk = await loadSdk();
+  const mod = sdk[provider];
+  if (!mod || !mod.songList) throw new Error('该平台不支持歌单广场');
+  const r = await mod.songList.getList(sortId || '', tagId || '', page || 1);
+  return {
+    provider,
+    list: (r.list || []).map((it) => ({
+      id: String(it.id), name: it.name, author: it.author || '',
+      playCount: String(it.play_count || ''), img: httpsCover(it.img || ''),
+      total: it.total || 0, desc: it.desc || '',
+    })),
+    total: r.total || 0, page: r.page || page || 1, limit: r.limit || 30,
+  };
+}
+
+async function songListDetail({ provider, id, page }) {
+  const sdk = await loadSdk();
+  const mod = sdk[provider];
+  if (!mod || !mod.songList) throw new Error('该平台不支持歌单');
+  const r = await mod.songList.getListDetail(String(id), page || 1);
+  return {
+    provider,
+    songs: (r.list || []).map((info) => normalize(provider, info)),
+    total: r.total || 0, page: r.page || page || 1, limit: r.limit || 100,
+  };
+}
+
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, normalize, leaderboards, leaderboardList, songLists, songListDetail };

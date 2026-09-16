@@ -11,7 +11,8 @@
     "start": "electron .",
     "pack:dir": "electron-builder --dir --win",
     "dist": "electron-builder --win nsis --publish never",
-    "dist:setup": "electron-builder --win nsis --x64 --publish never"
+    "dist:setup": "electron-builder --win nsis --x64 --publish never",
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -85,7 +86,7 @@
       "shortcutName": "安妮播放器融合版V3",
       "runAfterFinish": false,
       "menuCategory": false,
-      "artifactName": "安妮播放器融合版V3.5-setup.${ext}"
+      "artifactName": "annie-player-svlx-setup-${version}.${ext}"
     }
   }
 }

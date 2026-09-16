@@ -913,6 +913,21 @@ function proToast(text, ms = 4200) {
   proToastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
+/* V3.5.3：输出设备失效自愈——播放因设备问题（GUID 失效/热拔插/ASIO 驱动丢失）失败时，
+ * 自动回退系统默认 WASAPI 输出并重试一次；用户无感，不再整链"播放失败"。 */
+async function enginePlayRecover(method, params) {
+  try { return await window.mine.engine(method, params, 30000); }
+  catch (e) {
+    const msg = String((e && e.message) || e);
+    if (!/WASAPI|ASIO|设备|AudioClient|0x8889/i.test(msg)) throw e; // 非设备问题（网络流/解码失败等）原样抛出
+    const ex = typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true;
+    await window.mine.engine('devices.select', { kind: 'wasapi', id: null, exclusive: ex });
+    try { window.mine.saveSettings({ backend: 'wasapi' }); } catch { } // 覆盖失效的持久化设备
+    try { proToast('输出设备失效，已回退到系统默认设备'); } catch { }
+    return window.mine.engine(method, params, 30000); // 重试一次，仍失败则抛给上层提示
+  }
+}
+
 /* Pro beat0.0.1：Bit-perfect 直通状态（绿点=直通 / 黄点+原因） */
 function updateBpChip(d) {
   const chip = document.getElementById('bp-chip');
@@ -993,7 +1008,7 @@ async function playAt(i, offsetSec = 0) {
   }
   const method = cf > 0 && playOffset === 0 ? 'play.crossfade' : 'play';
   try {
-    await window.mine.engine(method, { path: playPath, offsetSec: playOffset, loudGain }, 30000);
+    await enginePlayRecover(method, { path: playPath, offsetSec: playOffset, loudGain });
   } catch (e) {
     setFormatChips([{ text: '播放失败: ' + e.message, cls: 'warn' }]);
   }
@@ -1049,7 +1064,7 @@ window.annieStreamPlay = async function (track) {
     // V1.1.4：流媒体切歌同样走 crossfade（设备保持）——与本地 playAt 一致，避免高频设备开关
     const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
     const method = cf > 0 ? 'play.crossfade' : 'play';
-    await window.mine.engine(method, { path: track.url, offsetSec: 0, headers: track.headers }, 30000);
+    await enginePlayRecover(method, { path: track.url, offsetSec: 0, headers: track.headers });
   } catch (e) {
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);
     return false; // SVLX：返回值供 AM 主题弹出错误提示

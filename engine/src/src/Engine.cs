@@ -166,10 +166,23 @@ public sealed class Engine
 
             if (kind == "asio")
             {
-                var name = id ?? AsioBackend.Enumerate().FirstOrDefault()
-                    ?? throw new InvalidOperationException("未找到任何 ASIO 驱动。");
-                _backend = new AsioBackend(name);
-                _backendDeviceId = name;
+                var drivers = AsioBackend.Enumerate();
+                var name = id ?? drivers.FirstOrDefault();
+                // V3.5.2+：持久化的 ASIO 驱动已不存在/加载失败 → 回退 WASAPI 默认输出而不是报错
+                if (name is not null && !drivers.Contains(name)) name = null;
+                if (name is not null)
+                {
+                    try { _backend = new AsioBackend(name); _backendDeviceId = name; }
+                    catch { name = null; _backend = null; }
+                }
+                if (name is null)
+                {
+                    var dev = WasapiExclusiveBackend.GetDefault()
+                        ?? throw new InvalidOperationException("ASIO 驱动不可用且无 WASAPI 输出设备");
+                    _backendKind = "wasapi";
+                    _backend = new WasapiExclusiveBackend(dev, exclusive);
+                    _backendDeviceId = dev.ID;
+                }
             }
             else
             {

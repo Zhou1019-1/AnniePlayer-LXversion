@@ -296,6 +296,19 @@ body.no-tly .am-lyr-line .tly, body.no-tly .f2-lyr .tly { display: none; }
   font-size: 12.5px; }
 .set-lib-del { flex: none; width: 24px; height: 24px; border-radius: 50%; color: var(--dim); font-size: 11px; }
 .set-lib-del:hover { background: rgba(250,45,85,.18); color: #ff5f7e; }
+/* V3.5.3：发现新版本红点（设置齿轮 + 导航"更新与关于"）+ 更新日志框 */
+body.upd-has #btn-settings, body.upd-has #btn-am-settings { position: relative; }
+body.upd-has #btn-settings::after, body.upd-has #btn-am-settings::after {
+  content: ''; position: absolute; top: 2px; right: 2px; width: 8px; height: 8px;
+  border-radius: 50%; background: #fa2d55; box-shadow: 0 0 6px rgba(250,45,85,.8); }
+body.upd-has .set-nav-btn[data-page=update]::after {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 7px;
+  border-radius: 50%; background: #fa2d55; vertical-align: middle; }
+.set-upd-notes { margin: 4px 0 8px; padding: 12px 16px; border-radius: 12px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.06);
+  font-size: 12px; color: var(--dim); white-space: pre-wrap; line-height: 1.7;
+  max-height: 220px; overflow-y: auto; }
+.set-upd-notes.hidden { display: none; }
 /* 更新与关于 / 扩展 卡片 */
 .set-about-card { border-radius: 14px; padding: 16px 18px; }
 .set-about-name { font-size: 15px; font-weight: 700; }

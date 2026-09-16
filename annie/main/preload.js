@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('mine', {
     ipcRenderer.on('app:updateStatus', listener);
     return () => ipcRenderer.removeListener('app:updateStatus', listener);
   },
+  getReleaseNotes: (ver) => ipcRenderer.invoke('app:getReleaseNotes', ver), // 新版本更新日志（V3.5.3）
 
   // 洛雪式音源管理
   streamSourcesList: () => ipcRenderer.invoke('stream:sources:list'),

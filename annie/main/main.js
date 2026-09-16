@@ -848,7 +848,13 @@ function setupAutoUpdate() {
         buttons: ['立即重启更新', '稍后'],
         defaultId: 0, cancelId: 1,
       });
-      if (r.response === 0) autoUpdater.quitAndInstall();
+      if (r.response === 0) {
+        // 修复：托盘模式下进程可能退不干净导致 NSIS 提示"无法关闭"——
+        // 先置退出标记并停引擎，再走 quitAndInstall（V3.5.3）
+        try { global.__svlxQuitting = true; } catch { }
+        try { engine.stop(); } catch { }
+        autoUpdater.quitAndInstall();
+      }
     } catch { }
   });
   autoUpdater.on('error', (e) => { console.warn('[update] 更新检查失败(不打扰用户):', e && e.message); sendUpd('error', String(e && e.message || e)); });
@@ -872,6 +878,18 @@ ipcMain.handle('app:checkUpdate', async () => {
   if (!app.isPackaged) return { dev: true };
   if (!__manualCheckUpdate) return { ok: false, error: 'updater 未初始化' };
   return __manualCheckUpdate();
+});
+// 更新日志（设置中心·更新页展示）：net.fetch 走系统代理；失败返回 null 静默
+ipcMain.handle('app:getReleaseNotes', async (_e, ver) => {
+  try {
+    const { net } = require('electron');
+    const v = String(ver || '').replace(/[^\d.]/g, '');
+    const r = await net.fetch('https://api.github.com/repos/Zhou1019-1/AnniePlayer-LXversion/releases/tags/v' + v,
+      { headers: { 'User-Agent': 'annie-player' } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j && j.body) ? String(j.body) : null;
+  } catch { return null; }
 });
 
 // ---------- 生命周期 ----------

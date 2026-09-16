@@ -928,6 +928,20 @@
     upWrap.appendChild(upBtn); upWrap.appendChild(upStatus);
     upRow.appendChild(upLab); upRow.appendChild(upWrap);
     sUp.appendChild(upRow);
+    // V3.5.3：更新日志展示 + 发现新版本红点（齿轮 / 导航"更新与关于"）
+    var upNotes = markItem(el('div', 'set-upd-notes hidden'), '更新日志 更新内容 changelog release notes');
+    sUp.appendChild(upNotes);
+    var __notesVer = null;
+    async function loadNotes(ver) {
+      if (!ver || __notesVer === ver) return;
+      __notesVer = ver;
+      upNotes.classList.remove('hidden');
+      upNotes.textContent = '正在获取 V' + ver + ' 更新日志…';
+      try {
+        var n = window.mine.getReleaseNotes ? await window.mine.getReleaseNotes(ver) : null;
+        upNotes.textContent = n ? ('V' + ver + ' 更新内容\n' + n) : '（未能获取更新日志，可到 GitHub release 页查看）';
+      } catch (e) { upNotes.textContent = '（未能获取更新日志）'; }
+    }
     function updText(status, data) {
       switch (status) {
         case 'checking': return '正在检查更新…';
@@ -953,6 +967,12 @@
       window.mine.onUpdateStatus(function (p) {
         if (!p) return;
         upStatus.textContent = updText(p.status, p.data);
+        if (p.status === 'available' || p.status === 'ready') {
+          document.body.classList.add('upd-has'); // 齿轮/导航红点
+          loadNotes(p.data);
+        } else if (p.status === 'latest') {
+          document.body.classList.remove('upd-has');
+        }
       });
     }
 
@@ -1068,6 +1088,14 @@
   });
   // 翻译行开关（LS annieplayer.lyrtly）：启动即应用，不必先打开设置中心
   document.body.classList.toggle('no-tly', lsGet('annieplayer.lyrtly', '1') === '0');
+  // 全局：发现新版本红点（不必先打开设置中心；面板内状态条由 buildPanel 里的监听负责）
+  if (window.mine && window.mine.onUpdateStatus) {
+    window.mine.onUpdateStatus(function (p) {
+      if (!p) return;
+      if (p.status === 'available' || p.status === 'ready') document.body.classList.add('upd-has');
+      else if (p.status === 'latest') document.body.classList.remove('upd-has');
+    });
+  }
 
   console.log('[settings] 设置中心就绪');
 })();

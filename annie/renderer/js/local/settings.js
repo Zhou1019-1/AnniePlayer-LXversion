@@ -472,8 +472,11 @@
         return;
       }
       arr.forEach(function (d) {
+        // 引擎契约：wasapi 是 {id,name} 对象，asio 是纯字符串（驱动名）——两种形态都兼容
+        var id = (d && d.id) || d;
+        var name = (d && d.name) || d;
         var op = document.createElement('option');
-        op.value = d.id; op.textContent = d.name || d.id;
+        op.value = id; op.textContent = name;
         devSel.appendChild(op);
       });
       if (currentId) devSel.value = currentId;

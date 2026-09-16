@@ -860,9 +860,13 @@ function setupAutoUpdate() {
       if (r.response === 0) {
         // 修复：托盘模式下进程可能退不干净导致 NSIS 提示"无法关闭"——
         // 先置退出标记并停引擎，再走 quitAndInstall（V3.5.3）
+        // V3.5.5 双保险：优雅退出若被托盘/Worker 拖住，5s 后 app.exit 强退，
+        // 保证 NSIS「无法关闭」重试一次即过（根因：NSIS 用 WM_CLOSE 关程序，
+        // 而我们窗口关闭后进程留托盘，被判定无法关闭）
         try { global.__svlxQuitting = true; } catch { }
         try { engine.stop(); } catch { }
         autoUpdater.quitAndInstall();
+        setTimeout(() => { try { app.exit(0); } catch { } }, 5000);
       }
     } catch { }
   });
@@ -920,6 +924,9 @@ if (global.__svlxBoot) {
   app.on('window-all-closed', () => {
     if (global.__svlxQuitting) { engine.stop(); app.quit(); }
   });
+  // V3.5.5：任何退出路径（含用户选"稍后"后 autoInstallOnAppQuit 触发的安装）
+  // 都在退出前停引擎，避免 AnnieEngine.exe 残留占用安装目录文件导致覆盖失败
+  app.on('before-quit', () => { try { engine.stop(); } catch { } });
 } else {
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

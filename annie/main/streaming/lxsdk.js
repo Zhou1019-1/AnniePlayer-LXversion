@@ -31,10 +31,12 @@ function loadSdk() {
 }
 
 /** 音源桥：SDK 的 apis(source) 经 globalThis.__svlxApis 调到自定义音源运行时 */
+let lastSourceName = ''; // 最近一次成功响应的自定义音源名（音质标签展示用）
 globalThis.__svlxApis = {
   async call(source, action, info) {
-    const { result } = await sources.handleRequest(action, { source, info });
-    return result;
+    const r = await sources.handleRequest(action, { source, info });
+    lastSourceName = r.sourceName || '';
+    return r.result;
   },
 };
 
@@ -268,7 +270,7 @@ async function songUrl({ provider, song, quality = 'hires' }) {
           } else {
             return {
               provider, playable: true, url, headers: '',
-              quality: `音源·${QUALITY_LABEL[type] || type}`,
+              quality: `${lastSourceName || '音源'}·${QUALITY_LABEL[type] || type}`,
               format: (urlExt(url) || 'mp3').toLowerCase(),
               level: type, viaSource: true,
               requestedType: requested,

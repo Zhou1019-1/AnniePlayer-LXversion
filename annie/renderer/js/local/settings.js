@@ -1008,11 +1008,73 @@
     thRow.appendChild(thLab); thRow.appendChild(thWrap);
     sThanks.appendChild(thRow);
 
-    /* ================= 扩展（占位） ================= */
-    var sExt = section(pgExt, '扩展');
-    var extCard = markItem(el('div', 'set-ext-card'), '扩展 插件 生态 plugin extension 敬请期待');
+    /* ================= 扩展（音源插件管理 + 生态占位） ================= */
+    var sExt = section(pgExt, '音源插件');
+    var extStat = el('div', 'set-hint', '');
+    var extList = markItem(el('div', 'set-lib-list'), '扩展 插件 音源 洛雪 自定义源 脚本 plugin source import');
+    sExt.appendChild(extList);
+    sExt.appendChild(extStat);
+    var extBtnRow = markItem(el('div', 'set-row'), '导入音源 脚本 洛雪 import');
+    var extBtnLab = el('div'); extBtnLab.appendChild(el('div', '', '管理'));
+    extBtnLab.appendChild(el('div', 'set-hint', '支持洛雪自定义音源脚本（.js），导入后播放/歌词优先走音源'));
+    var extBtnWrap = el('div', 'set-ctrl');
+    var extImportBtn = el('button', 'btn-ghost', '导入音源脚本…');
+    extImportBtn.onclick = async function () {
+      extImportBtn.disabled = true;
+      extStat.textContent = '正在导入音源…';
+      try {
+        var r = await window.mine.streamSourcesImport();
+        if (r && r.canceled) extStat.textContent = '已取消导入';
+        else if (r && r.error) extStat.textContent = '导入失败：' + r.error;
+        else if (r && r.source) extStat.textContent = '音源「' + r.source.name + '」导入成功并已启用';
+      } catch (e) { extStat.textContent = '导入失败：' + (e.message || e); }
+      extImportBtn.disabled = false;
+      renderExtSources();
+    };
+    extBtnWrap.appendChild(extImportBtn);
+    extBtnRow.appendChild(extBtnLab); extBtnRow.appendChild(extBtnWrap);
+    sExt.appendChild(extBtnRow);
+    function renderExtSources() {
+      if (!window.mine || !window.mine.streamSourcesList) return;
+      window.mine.streamSourcesList().then(function (list) {
+        list = list || [];
+        extList.innerHTML = '';
+        var active = list.filter(function (s) { return s.enabled && s.loaded; });
+        extStat.textContent = !list.length ? '未导入音源（使用内置解析）'
+          : (active.length ? '已启用 ' + active.length + ' 个音源：' + active.map(function (s) { return s.name; }).join('、')
+            : '音源已全部停用（使用内置解析）');
+        if (!list.length) {
+          extList.appendChild(el('div', 'set-hint', '尚未导入音源脚本'));
+          return;
+        }
+        list.forEach(function (s) {
+          var row = el('div', 'set-lib-item');
+          var name = el('span', 'set-lib-path', (s.enabled ? '🟢 ' : '⚪ ') + s.name + (s.version ? ' v' + s.version : ''));
+          name.title = (s.description || '') + (s.author ? '\n作者：' + s.author : '') +
+            ((s.enabled && !s.loaded) ? '\n（加载失败，请重新导入）' : '');
+          var tgl = el('button', 'btn-ghost', s.enabled ? '停用' : '启用');
+          tgl.onclick = async function () {
+            try { await window.mine.streamSourcesSetEnabled({ id: s.id, enabled: !s.enabled }); }
+            catch (e) { extStat.textContent = '操作失败：' + (e.message || e); }
+            renderExtSources();
+          };
+          var del = el('button', 'set-lib-del', '✕'); del.title = '删除音源';
+          del.onclick = async function () {
+            if (!confirm('删除音源「' + s.name + '」？')) return;
+            try { await window.mine.streamSourcesRemove({ id: s.id }); } catch (e) { }
+            renderExtSources();
+          };
+          row.appendChild(name); row.appendChild(tgl); row.appendChild(del);
+          extList.appendChild(row);
+        });
+      }).catch(function () { extStat.textContent = '音源服务不可用'; });
+    }
+    renderExtSources();
+    onOpenHooks.push(renderExtSources);
+    // 生态占位（可视化/主题/歌词源等后续开放）
+    var extCard = markItem(el('div', 'set-ext-card'), '扩展 插件 生态 可视化 主题 歌词源 plugin extension 敬请期待');
     extCard.appendChild(el('div', 'set-ext-icon', '🧩'));
-    extCard.appendChild(el('div', 'set-ext-text', '安妮播放器后续将支持丰富插件生态，目前正在加紧制作，敬请期待。'));
+    extCard.appendChild(el('div', 'set-ext-text', '可视化、主题、歌词源等更多插件类型正在加紧制作，敬请期待。'));
     extCard.appendChild(el('div', 'set-ext-sub', '章鱼出品，必属精品'));
     sExt.appendChild(extCard);
 

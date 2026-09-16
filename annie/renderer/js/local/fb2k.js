@@ -239,7 +239,10 @@
         ['停止', 'Ctrl+S', function () { window.mine.engine('stop').catch(function () { }); }],
         ['-', null, null],
         ['音量 +', 'Ctrl+↑', function () { setVolumeUI(Math.min(1, volGain() + 0.05)); }],
-        ['音量 -', 'Ctrl+↓', function () { setVolumeUI(Math.max(0, volGain() - 0.05)); }]
+        ['音量 -', 'Ctrl+↓', function () { setVolumeUI(Math.max(0, volGain() - 0.05)); }],
+        ['-', null, null],
+        // V3.5.6：均衡器快捷入口（打开设置中心播放页，风格与 FB2K 菜单一致）
+        ['均衡器…', '', function () { if (window.annieSettings) window.annieSettings.openPage('playback'); }]
       ]],
       ['媒体库', [
         ['默认列表', '', function () { setActiveList('default'); }],

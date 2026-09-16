@@ -97,11 +97,23 @@
     for (const raw of String(text || '').split(/\r?\n/)) {
       const tags = raw.match(/\[\d+:\d+(?:\.\d+)?\]/g);
       if (!tags) continue;
-      const txt = raw.replace(/\[[^\]]*\]/g, '').trim();
+      const txt = raw.replace(/\[[^\]]*\]/g, '').replace(/<[^>]*>/g, '').trim();
       if (!txt) continue;
+      // V3.5.5+：逐字（A2 增强标签 <mm:ss.xx>词）——有则带上，桌面歌词做 karaoke 填充
+      let words = null;
+      if (raw.includes('<')) {
+        words = [];
+        const segs = raw.split(/(<\d+:\d+(?:\.\d+)?>)/).slice(1);
+        for (let s = 0; s + 1 < segs.length; s += 2) {
+          const wm = /<(\d+):(\d+(?:\.\d+)?)>/.exec(segs[s]);
+          const wtxt = segs[s + 1];
+          if (wm && wtxt) words.push({ t: (+wm[1]) * 60 + (+wm[2]), w: wtxt });
+        }
+        if (!words.length) words = null;
+      }
       for (const tag of tags) {
         const mm = /\[(\d+):(\d+(?:\.\d+)?)\]/.exec(tag);
-        out.push({ t: (+mm[1]) * 60 + (+mm[2]), text: txt });
+        out.push({ t: (+mm[1]) * 60 + (+mm[2]), text: txt, words });
       }
     }
     out.sort((a, b) => a.t - b.t);
@@ -122,7 +134,14 @@
     let i = -1;
     for (let k = 0; k < lyrLines.length; k++) { if (lyrLines[k].t <= lyrAbs + 0.15) i = k; else break; }
     if (i < 0) return { cur: '', next: lyrLines[0].text };
-    return { cur: lyrLines[i].text, next: i + 1 < lyrLines.length ? lyrLines[i + 1].text : '' };
+    const L = lyrLines[i];
+    return {
+      cur: L.text,
+      next: i + 1 < lyrLines.length ? lyrLines[i + 1].text : '',
+      words: L.words || null,                    // 逐字时间轴（增强 LRC 才有）
+      lineT: L.t,
+      nextT: i + 1 < lyrLines.length ? lyrLines[i + 1].t : L.t + 8, // 末词结束时间兜底
+    };
   }
   window.mine.onEngineEvent((event, d) => {
     if (event !== 'position') return;
@@ -133,7 +152,11 @@
     if (!dlyrOn) return;
     const l = getLyric();
     const t = state.queue[state.index];
-    window.mine.dlyricsLine({ cur: l.cur, next: l.next, title: t ? t.name.replace(/\.[^.]+$/, '') : '' });
+    // V3.5.5：附逐字时间轴与当前位置——桌面歌词窗渲染 karaoke 填充
+    window.mine.dlyricsLine({
+      cur: l.cur, next: l.next, title: t ? t.name.replace(/\.[^.]+$/, '') : '',
+      words: l.words, lineT: l.lineT, nextT: l.nextT, pos: lyrAbs,
+    });
   }, 350);
 
   /* ================== Now Playing 全屏信息页 ================== */

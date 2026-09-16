@@ -29,6 +29,9 @@
     preload: false,        // 整轨预载到内存
     crossfadeSec: 0.5,       // 交叉淡入 0–10s（0=关闭）
     loudMode: 'off',        // 响度均衡：off | track | album
+    eqOn: false,           // 15 段均衡器开关（引擎 PCM 域 biquad 链，独占/ASIO 共享）
+    eqPreset: 'flat',      // 预设：flat | pop | rock | classical | vocal | bass | treble | custom
+    eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
     downloadDir: '',
     saveLrc: true,         // 下载时在目录生成旁挂 .lrc 歌词文件（嵌入标签始终做）
@@ -637,6 +640,73 @@
     loudRow.appendChild(loudLab); loudRow.appendChild(loudSel);
     sPlay.appendChild(loudRow);
 
+    // —— 15 段均衡器（引擎 PCM 域，热更新不破音） ——
+    var EQ_FREQS = ['32', '50', '80', '125', '200', '315', '500', '800', '1.2k', '2k', '3.1k', '5k', '8k', '12.5k', '16k'];
+    var EQ_PRESETS = {
+      flat:      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      pop:       [-1, 0, 1, 2, 3, 2, 1, 0, -1, -1, 0, 1, 2, 3, 3],
+      rock:      [3, 2, 1, 0, -1, -2, -1, 0, 1, 2, 3, 3, 3, 2, 2],
+      classical: [2, 1, 0, 0, 0, 0, -1, -1, -1, 0, 1, 2, 2, 3, 3],
+      vocal:     [-2, -3, -3, -2, -1, 0, 1, 2, 3, 3, 2, 1, 0, -1, -2],
+      bass:      [6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      treble:    [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 6]
+    };
+    var eqSendTimer = null;
+    function eqPush() { // 热更新到引擎（独占/ASIO 共享，实时不破音）；拖动时 60ms 节流
+      if (eqSendTimer) clearTimeout(eqSendTimer);
+      eqSendTimer = setTimeout(function () {
+        window.mine.engine('eq.set', { gains: ui.eqGains.slice(0, 15), enabled: !!ui.eqOn }).catch(function () { });
+      }, 60);
+    }
+    var sEq = section(pgPlayback, '均衡器（15 段）');
+    var eqRow = markItem(el('div', 'set-row'), '均衡器 eq equalizer 音效 低音增强 高音增强 人声 流行 摇滚 古典');
+    eqRow.style.flexDirection = 'column'; eqRow.style.alignItems = 'stretch'; eqRow.style.gap = '10px';
+    var eqTop = el('div'); eqTop.style.display = 'flex'; eqTop.style.justifyContent = 'space-between'; eqTop.style.alignItems = 'center'; eqTop.style.gap = '10px';
+    var eqLab = el('div'); eqLab.appendChild(el('div', '', '均衡器（15 段，32Hz–16kHz）'));
+    eqLab.appendChild(el('div', 'set-hint', '引擎 PCM 域实时处理，拖动即时生效不破音；独占/ASIO 同样有效'));
+    var eqCtrls = el('div', 'set-ctrl');
+    var eqChk = document.createElement('input'); eqChk.type = 'checkbox'; eqChk.checked = !!ui.eqOn;
+    var eqSel = document.createElement('select');
+    [['flat', '平直'], ['pop', '流行'], ['rock', '摇滚'], ['classical', '古典'], ['vocal', '人声'], ['bass', '低音增强'], ['treble', '高音增强'], ['custom', '自定义']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; eqSel.appendChild(op);
+    });
+    eqSel.value = ui.eqPreset in EQ_PRESETS || ui.eqPreset === 'custom' ? ui.eqPreset : 'flat';
+    eqChk.onchange = function () { ui.eqOn = eqChk.checked; save(); eqPush(); };
+    eqSel.onchange = function () {
+      ui.eqPreset = eqSel.value;
+      if (EQ_PRESETS[ui.eqPreset]) {
+        ui.eqGains = EQ_PRESETS[ui.eqPreset].slice();
+        eqSliders.forEach(function (sl, i) { sl.value = ui.eqGains[i]; });
+        if (!ui.eqOn) { ui.eqOn = true; eqChk.checked = true; } // 选预设即启用
+      }
+      save(); eqPush();
+    };
+    eqCtrls.appendChild(eqChk); eqCtrls.appendChild(eqSel);
+    eqTop.appendChild(eqLab); eqTop.appendChild(eqCtrls);
+    eqRow.appendChild(eqTop);
+    // 15 根竖向推子
+    var eqWrap = el('div', 'eq-wrap');
+    var eqSliders = EQ_FREQS.map(function (f, i) {
+      var band = el('div', 'eq-band');
+      var sl = document.createElement('input');
+      sl.type = 'range'; sl.min = -12; sl.max = 12; sl.step = 0.5;
+      sl.value = ui.eqGains[i] || 0; sl.title = f + 'Hz';
+      sl.oninput = function () {
+        ui.eqGains[i] = +sl.value;
+        if (ui.eqPreset !== 'custom') { ui.eqPreset = 'custom'; eqSel.value = 'custom'; }
+        if (!ui.eqOn) { ui.eqOn = true; eqChk.checked = true; } // 动手即启用
+        save(); eqPush();
+      };
+      band.appendChild(sl);
+      band.appendChild(el('div', 'eq-f', f));
+      eqWrap.appendChild(band);
+      return sl;
+    });
+    eqRow.appendChild(eqWrap);
+    sEq.appendChild(eqRow);
+    // 启动时把持久化的 EQ 推给引擎（引擎不自行持久化）
+    eqPush();
+
     /* ================= 歌词 ================= */
     // —— 全局（AM / FB2K / 舞台逐字） ——
     var sLg = section(pgLyrics, '全局（AM / FB2K / 舞台）');
@@ -1119,6 +1189,11 @@
   window.annieSettings = {
     ui: ui,
     togglePanel: togglePanel,
+    // V3.5.6：打开设置中心并定位到指定页（AM/FB2K 的均衡器等快捷入口用）
+    openPage: function (id) {
+      togglePanel(true);
+      if (id && pageEls[id]) showPage(id);
+    },
     applyAll: applyAll,
     save: save,
     /* Pro beat0.0.1：命令面板用——配色切换与任意字段更新 */

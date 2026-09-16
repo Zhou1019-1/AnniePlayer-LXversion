@@ -449,6 +449,10 @@
     R.btnMiniM = el('button', 'am-tbtn', '🗕'); R.btnMiniM.title = '迷你模式';
     R.btnMiniM.onclick = function () { enterMini(); };
     right.appendChild(R.btnMiniM);
+    // 均衡器快捷入口（打开设置中心并定位到播放页）
+    var btnEq = el('button', 'am-tbtn', '≣'); btnEq.title = '均衡器';
+    btnEq.onclick = function () { if (window.annieSettings) window.annieSettings.openPage('playback'); };
+    right.appendChild(btnEq);
     // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
     var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
     btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };

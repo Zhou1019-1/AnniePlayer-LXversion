@@ -88,8 +88,15 @@
     const r = await window.mine.dlyricsToggle().catch(() => null);
     if (!r) return;
     dlyrOn = !!r.shown;
+    document.dispatchEvent(new CustomEvent('annie-dlyrics-changed', { detail: { on: dlyrOn } }));
   }
-  window.mine.onDlyricsClosed(() => { dlyrOn = false; });
+  window.mine.onDlyricsClosed(() => {
+    dlyrOn = false;
+    document.dispatchEvent(new CustomEvent('annie-dlyrics-changed', { detail: { on: false } }));
+  });
+  // V3.5.6+：暴露给三主题入口（AM 🎤 / FB2K 视图菜单 / 设置中心歌词页）
+  window.annieDlyricsToggle = toggleDlyrics;
+  window.annieDlyricsOn = () => dlyrOn;
   /* ---- 自同步歌词轨（主题无关：直读 .lrc，按引擎绝对位置同步；CUE 分轨时间轴天然对齐整轨 lrc） ---- */
   let lyrFor = null, lyrLines = [], lyrAbs = 0;
   function parseLrc(text) {

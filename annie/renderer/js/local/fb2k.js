@@ -230,7 +230,8 @@
         ['分栏视图', '', function () { setViewMode('split'); }],
         ['封面视图', '', function () { setViewMode('cover'); }],
         ['-', null, null],
-        ['收起 / 展开右侧栏', '', toggleRight]
+        ['收起 / 展开右侧栏', '', toggleRight],
+        ['桌面歌词', 'Alt+L', function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); }]
       ]],
       ['播放', [
         ['播放 / 暂停', 'Space', transportPlayPause],

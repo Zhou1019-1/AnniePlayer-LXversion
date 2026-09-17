@@ -449,6 +449,12 @@
     R.btnMiniM = el('button', 'am-tbtn', '🗕'); R.btnMiniM.title = '迷你模式';
     R.btnMiniM.onclick = function () { enterMini(); };
     right.appendChild(R.btnMiniM);
+    // 桌面歌词快捷入口（Alt+L；状态跟随 annie-dlyrics-changed）
+    var btnDlyr = el('button', 'am-tbtn' + ((window.annieDlyricsOn && window.annieDlyricsOn()) ? ' on' : ''), '🎤');
+    btnDlyr.title = '桌面歌词（Alt+L）';
+    btnDlyr.onclick = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
+    document.addEventListener('annie-dlyrics-changed', function (e) { btnDlyr.classList.toggle('on', !!(e.detail && e.detail.on)); });
+    right.appendChild(btnDlyr);
     // 均衡器快捷入口（打开设置中心并定位到播放页）
     var btnEq = el('button', 'am-tbtn', '≣'); btnEq.title = '均衡器';
     btnEq.onclick = function () { if (window.annieSettings) window.annieSettings.openPage('playback'); };

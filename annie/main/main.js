@@ -305,6 +305,15 @@ function registerIpc() {
     return saveStore({ folders });
   });
 
+  // VST实验区：选择 .vst3 插件文件
+  ipcMain.handle('vst:pickPlugin', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [{ name: 'VST3 插件', extensions: ['vst3'] }]
+    });
+    return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
+  });
+
   // EXP 7.28：移除文件夹即时生效（内存过滤，无需重扫磁盘）
   ipcMain.handle('lib:removeFolder', async (_e, folder) => {
     const store = loadStore();

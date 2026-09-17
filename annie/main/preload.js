@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('mine', {
     return () => ipcRenderer.removeListener('engine-event', listener);
   },
 
+  // VST实验区：VST3 效果器（选择 .vst3 文件）
+  vstPickPlugin: () => ipcRenderer.invoke('vst:pickPlugin'),
+
   // 流媒体平台（洛雪 musicSdk：酷狗 / 酷我 / 咪咕 / QQ / 网易）
   streamSearch: (params) => ipcRenderer.invoke('stream:search', params),
   streamSongUrl: (params) => ipcRenderer.invoke('stream:songUrl', params),

@@ -131,6 +131,14 @@ public sealed class DopSource : IWaveProvider
 
     public void Deactivate() { _active = false; }
 
+    public int Read(Span<byte> buffer)
+    {
+        var tmp = new byte[buffer.Length];
+        int n = Read(tmp, 0, tmp.Length);
+        tmp.AsSpan(0, n).CopyTo(buffer);
+        return n;
+    }
+
     public int Read(byte[] buffer, int offset, int count)
     {
         if (!_active) { Array.Clear(buffer, offset, count); return count; }

@@ -296,6 +296,14 @@ body.no-tly .am-lyr-line .tly, body.no-tly .f2-lyr .tly { display: none; }
   font-size: 12.5px; }
 .set-lib-del { flex: none; width: 24px; height: 24px; border-radius: 50%; color: var(--dim); font-size: 11px; }
 .set-lib-del:hover { background: rgba(250,45,85,.18); color: #ff5f7e; }
+/* VST实验区：效果器链槽位 + 参数面板 */
+.fx-slot input[type=checkbox] { flex: none; accent-color: #fa2d55; }
+.fx-slot .fx-ops { flex: none; display: flex; gap: 4px; }
+.fx-slot .fx-ops .set-lib-del { position: static; }
+.fx-slot.broken .set-lib-path { color: #ffb84d; }
+.fx-params { border-radius: 14px; padding: 10px 12px; margin: 4px 0 10px;
+  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07); }
+.fx-params-title { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; color: var(--fg, #eee); }
 /* V3.5.3：发现新版本红点（设置齿轮 + 导航"更新与关于"）+ 更新日志框 */
 body.upd-has #btn-settings, body.upd-has #btn-am-settings { position: relative; }
 body.upd-has #btn-settings::after, body.upd-has #btn-am-settings::after {

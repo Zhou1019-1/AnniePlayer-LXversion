@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using NAudio.Vst3;
 using NAudio.Wave;
 
 namespace MineEngine;
@@ -27,6 +28,11 @@ public sealed class Engine
     private float _gain = 1.0f;
     private double[] _eqGains = new double[EqChain.BandCount]; // EXP 7.28：15 段 EQ 增益（dB）
     private bool _eqEnabled = true;
+    /* ---------------- VST实验区：VST3 效果器链 ---------------- */
+    private readonly List<VstFxSlot> _vstSlots = new();   // 槽位配置（路径/启用/状态），实例按源私有
+    private readonly HashSet<string> _vstCrashNotified = new(); // 崩溃通知去重（音频线程置 Broken，定时器线程发通知）
+    private VstEditorWindow? _vstEditor;       // 当前打开的插件原生界面（一期半：同时只允许一个）
+    private VstFxInstance? _vstEditorInst;     // 编辑器挂接的活实例（可能是 Orphaned 的退役实例）
     /* ---------------- Pro beat0.0.1：音质链路增强 ---------------- */
     private string _dsdMode = "pcm";       // pcm（转 PCM）| dop（DoP 直通）| native（ASIO DSD，暂回退）
     private int _bufferMs = 150;          // 独占缓冲 50–500ms（V1.1.4：默认 150ms，50ms 过小易欠载爆音）
@@ -123,6 +129,20 @@ public sealed class Engine
             "volume.set" => SetVolume(p["gain"]?.GetValue<double>() ?? 1.0),
 
             "eq.set" => SetEq(p),
+
+            /* ---------------- VST实验区：VST3 效果器 ---------------- */
+            "vst.scan" => VstScan(),
+            "vst.list" => VstList(),
+            "vst.add" => VstAdd(Req(p, "path")),
+            "vst.remove" => VstRemove(Req(p, "id")),
+            "vst.enable" => VstEnable(Req(p, "id"), p["on"]?.GetValue<bool>() ?? true),
+            "vst.move" => VstMove(Req(p, "id"), p["dir"]?.GetValue<int>() ?? 0),
+            "vst.params" => VstParams(Req(p, "id")),
+            "vst.setParam" => VstSetParam(Req(p, "id"), p["paramId"]?.GetValue<uint>() ?? 0, p["value"]?.GetValue<double>() ?? 0),
+            "vst.state" => VstGetState(Req(p, "id")),
+            "vst.setState" => VstSetState(Req(p, "id"), p["stateB64"]?.GetValue<string>() ?? ""),
+            "vst.openEditor" => VstOpenEditor(Req(p, "id")),
+            "vst.closeEditor" => VstCloseEditor(Req(p, "id")),
 
             /* ---------------- Pro beat0.0.1 ---------------- */
             "dsd.setMode" => SetDsdMode(p["mode"]?.GetValue<string>() ?? "pcm"),
@@ -240,6 +260,233 @@ public sealed class Engine
             _source.Eq = eq = new EqChain(_source.WaveFormat.SampleRate, _source.WaveFormat.Channels);
         eq.Update(_eqGains);
     }
+
+    /* ==================== VST实验区：VST3 效果器链 ==================== */
+
+    private static object VstSlotInfo(VstFxSlot s) => new { id = s.Id, path = s.Path, name = s.Name, enabled = s.Enabled, broken = s.Broken, editorOpen = _editorSlotIdStatic == s.Id };
+    // VstSlotInfo 是静态方法，编辑器状态经此静态字段透传（Engine 单例）
+    private static string? _editorSlotIdStatic;
+
+    private object VstScan()
+    {
+        try
+        {
+            var items = Vst3PluginScanner.EnumerateInstalled().Select(m => new { path = m.Path, name = m.Name }).ToArray();
+            return new { ok = true, items };
+        }
+        catch (Exception ex) { return new { ok = false, error = ex.Message }; }
+    }
+
+    private object VstList() { lock (_gate) return new { ok = true, slots = _vstSlots.Select(VstSlotInfo).ToArray() }; }
+
+    private object VstAdd(string path)
+    {
+        var slot = new VstFxSlot { Id = Guid.NewGuid().ToString("N")[..8], Path = path };
+        try { slot.LoadModule(); }
+        catch (Exception ex) { try { slot.Dispose(); } catch { } return new { ok = false, error = ex.Message }; }
+        lock (_gate) { _vstSlots.Add(slot); ReattachVstLocked(); }
+        return new { ok = true, slot = VstSlotInfo(slot) };
+    }
+
+    private object VstRemove(string id)
+    {
+        lock (_gate)
+        {
+            var slot = _vstSlots.FirstOrDefault(s => s.Id == id);
+            if (slot is null) return new { ok = false, error = "槽位不存在" };
+            if (_vstEditor is not null && _vstEditor.SlotId == id) CloseVstEditorLocked(); // 先关界面再卸模块
+            _vstSlots.Remove(slot); _vstCrashNotified.Remove(id);
+            ReattachVstLocked(); // 先重建链（摘掉该插件实例），再释放模块
+            try { slot.Dispose(); } catch { }
+        }
+        return new { ok = true };
+    }
+
+    private object VstEnable(string id, bool on)
+    {
+        lock (_gate)
+        {
+            var slot = _vstSlots.FirstOrDefault(s => s.Id == id);
+            if (slot is null) return new { ok = false, error = "槽位不存在" };
+            slot.Enabled = on;
+            if (on) { slot.Broken = false; _vstCrashNotified.Remove(id); } // 重新启用 = 给它一次复活机会
+            ReattachVstLocked();
+        }
+        return new { ok = true };
+    }
+
+    private object VstMove(string id, int dir)
+    {
+        lock (_gate)
+        {
+            int i = _vstSlots.FindIndex(s => s.Id == id);
+            int j = i + (dir < 0 ? -1 : 1);
+            if (i < 0) return new { ok = false, error = "槽位不存在" };
+            if (j < 0 || j >= _vstSlots.Count) return new { ok = true }; // 到顶/到底不动
+            (_vstSlots[i], _vstSlots[j]) = (_vstSlots[j], _vstSlots[i]);
+            ReattachVstLocked();
+        }
+        return new { ok = true };
+    }
+
+    private object VstParams(string id)
+    {
+        VstFxSlot? slot; VstFxInstance? live;
+        lock (_gate) { slot = _vstSlots.FirstOrDefault(s => s.Id == id); live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id); }
+        if (slot is null) return new { ok = false, error = "槽位不存在" };
+        VstFxInstance? temp = null;
+        try
+        {
+            var plugin = live?.Plugin ?? (temp = slot.CreateInstanceFor(48000, 2)).Plugin; // 未播放时临时实例读参数表
+            var arr = plugin.Parameters
+                .Where(pr => !pr.IsHidden)
+                .Select(pr => new
+                {
+                    id = pr.Id, title = pr.Title, units = pr.Units,
+                    value = pr.NormalizedValue, display = pr.DisplayValue,
+                    readOnly = pr.IsReadOnly, discrete = pr.IsDiscrete || pr.StepCount > 0, steps = pr.StepCount
+                }).ToArray();
+            return new { ok = true, name = slot.Name, @params = arr };
+        }
+        catch (Exception ex) { return new { ok = false, error = ex.Message }; }
+        finally { if (temp is not null) try { temp.Dispose(); } catch { } }
+    }
+
+    private object VstSetParam(string id, uint paramId, double value)
+    {
+        VstFxInstance? live; VstFxSlot? slot;
+        lock (_gate) { slot = _vstSlots.FirstOrDefault(s => s.Id == id); live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id); }
+        if (slot is null) return new { ok = false, error = "槽位不存在" };
+        if (live is null) return new { ok = true, display = "" }; // 未播放：参数暂存不了（一期限制），UI 侧仅展示
+        try
+        {
+            // 经主机参数队列转发，线程安全；显示值回读给 UI
+            string display = "";
+            if (live.Plugin.Parameters.TryGetById(paramId, out var prm) && prm is not null)
+            {
+                prm.NormalizedValue = Math.Clamp(value, 0, 1);
+                display = prm.DisplayValue;
+            }
+            return new { ok = true, display };
+        }
+        catch (Exception ex) { return new { ok = false, error = ex.Message }; }
+    }
+
+    private object VstGetState(string id)
+    {
+        VstFxSlot? slot; VstFxInstance? live;
+        lock (_gate) { slot = _vstSlots.FirstOrDefault(s => s.Id == id); live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id); }
+        if (slot is null) return new { ok = false, error = "槽位不存在" };
+        try
+        {
+            if (live is not null) slot.SavedState = live.Plugin.SaveState(); // 收编当前实例状态
+            return new { ok = true, stateB64 = slot.SavedState is null ? "" : Convert.ToBase64String(slot.SavedState) };
+        }
+        catch (Exception ex) { return new { ok = false, error = ex.Message }; }
+    }
+
+    private object VstSetState(string id, string stateB64)
+    {
+        VstFxSlot? slot; VstFxInstance? live;
+        lock (_gate) { slot = _vstSlots.FirstOrDefault(s => s.Id == id); live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id); }
+        if (slot is null) return new { ok = false, error = "槽位不存在" };
+        try
+        {
+            slot.SavedState = string.IsNullOrEmpty(stateB64) ? null : Convert.FromBase64String(stateB64);
+            if (live is not null && slot.SavedState is not null) live.Plugin.LoadState(slot.SavedState);
+            return new { ok = true };
+        }
+        catch (Exception ex) { return new { ok = false, error = ex.Message }; }
+    }
+
+    /* ---------- 插件原生界面（FB2K 式独立悬浮窗） ---------- */
+
+    /// <summary>打开插件原生界面。必须挂在"正在处理音频的活实例"上（分析仪才能看到信号），未播放时拒绝。</summary>
+    private object VstOpenEditor(string id)
+    {
+        VstFxSlot? slot; VstFxInstance? live;
+        lock (_gate)
+        {
+            slot = _vstSlots.FirstOrDefault(s => s.Id == id);
+            live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id);
+            if (slot is null) return new { ok = false, error = "槽位不存在" };
+            if (live is null) return new { ok = false, error = "请先播放音乐，再打开插件界面（界面挂在正在处理音频的实例上）" };
+            if (_vstEditor is not null)
+            {
+                if (_vstEditorInst is not null && _vstEditorInst.Slot.Id == id) return new { ok = true }; // 已开着
+                CloseVstEditorLocked(); // 换另一个插件：先关旧的
+            }
+            live.EditorAttached = true;
+            _vstEditorInst = live;
+        }
+        try
+        {
+            var win = new VstEditorWindow { SlotId = id, OnClosed = VstEditorCleanup };
+            win.Open(live.Plugin, slot.Name + " — 安妮播放器"); // 阻塞到窗口建好或失败（≤15s）
+            lock (_gate) { _vstEditor = win; _editorSlotIdStatic = id; }
+            return new { ok = true };
+        }
+        catch (Exception ex)
+        {
+            lock (_gate) { if (_vstEditorInst is not null) _vstEditorInst.EditorAttached = false; _vstEditorInst = null; }
+            return new { ok = false, error = ex.Message };
+        }
+    }
+
+    private object VstCloseEditor(string id)
+    {
+        lock (_gate)
+        {
+            if (_vstEditor is null || _vstEditor.SlotId != id) return new { ok = true };
+            CloseVstEditorLocked();
+        }
+        return new { ok = true };
+    }
+
+    /// <summary>关编辑器（须持 _gate）。实际清理在 UI 线程完成后经 VstEditorCleanup 回调。</summary>
+    private void CloseVstEditorLocked()
+    {
+        var win = _vstEditor;
+        _vstEditor = null; _editorSlotIdStatic = null;
+        try { win?.Close(); } catch { }
+        // 若窗口线程已不在（异常情况），就地兜底回收
+        var inst = _vstEditorInst;
+        if (win is null && inst is not null) { inst.EditorAttached = false; _vstEditorInst = null; if (inst.Orphaned) { try { inst.Plugin.Dispose(); } catch { } } }
+    }
+
+    /// <summary>窗口销毁回调（编辑器 UI 线程触发）：收编状态 + 回收退役实例的插件对象。</summary>
+    private void VstEditorCleanup(VstEditorWindow win)
+    {
+        lock (_gate)
+        {
+            if (ReferenceEquals(_vstEditor, win)) { _vstEditor = null; _editorSlotIdStatic = null; }
+            var inst = _vstEditorInst;
+            if (inst is null || win.SlotId != inst.Slot.Id) return;
+            _vstEditorInst = null;
+            inst.EditorAttached = false;
+            try { inst.Slot.SavedState = inst.Plugin.SaveState(); } catch { } // 编辑器里调的参数收编回槽位
+            if (inst.Orphaned) { try { inst.Plugin.Dispose(); } catch { } }     // 源已退役：这里兜底释放
+        }
+    }
+
+    /// <summary>把启用的效果器链挂到源上（每源私有实例；旧实例先收编状态再释放）。可在锁外调用。</summary>
+    private void AttachVst(PcmFloatSource source)
+    {
+        var old = source.VstFx; source.VstFx = null;
+        if (old is not null) foreach (var i in old) { try { i.Dispose(); } catch { } }
+        if (_vstSlots.Count == 0) return;
+        int rate = source.WaveFormat.SampleRate, ch = source.WaveFormat.Channels;
+        var list = new List<VstFxInstance>();
+        foreach (var s in _vstSlots)
+        {
+            if (!s.Enabled || s.Broken) continue;
+            try { list.Add(s.CreateInstanceFor(rate, ch)); }
+            catch (Exception ex) { s.Broken = true; _rpc.Emit("notify", new { text = $"VST 插件「{s.Name}」加载失败已旁通：{ex.Message}" }); }
+        }
+        source.VstFx = list.Count > 0 ? list.ToArray() : null;
+    }
+
+    private void ReattachVstLocked() { if (_source is not null) AttachVst(_source); }
 
     /// <summary>Pro：把防削波链路（自动前级 + 限幅器）应用到活动源（须持有 _gate）。</summary>
     private void ApplyDspLocked()
@@ -394,9 +641,10 @@ public sealed class Engine
                 {
                     return PlayWithBackend(path, offsetSec, headers, info, backend, gen, quickStart);
                 }
-                catch (Exception) when (openRetry < 6 && gen == _playGeneration)
+                catch (Exception openEx) when (openRetry < 6 && gen == _playGeneration)
                 {
-                    Console.Error.WriteLine($"[engine] 打开输出设备失败，600ms 后重试 ({openRetry + 1}/6)");
+                    Console.Error.WriteLine($"[engine] 打开输出设备失败，600ms 后重试 ({openRetry + 1}/6)：{openEx.GetType().Name}: {openEx.Message}");
+                    if (openRetry == 0) Console.Error.WriteLine("[engine] openEx stack: " + openEx.StackTrace);
                     Thread.Sleep(600);
                 }
             }
@@ -433,6 +681,7 @@ public sealed class Engine
             var pcm = FfmpegPcmStream.Start(path, offsetSec, resampled ? rate : 0, rate, channels, headers, CapacityFor(info, rate, channels));
             var source = new PcmFloatSource(pcm, rate, channels) { Gain = _gain, LoudGain = _loudGain };
             if (_eqEnabled) { source.Eq = new EqChain(rate, channels); source.Eq.Update(_eqGains); }
+            AttachVst(source); // VST实验区：效果器链（每源私有实例）
             // 双声道电平：rms/peak 保留为两声道较大值（向后兼容），rmsL/peakL/rmsR/peakR 为分声道值
             // 音频回调线程只写缓存字段，level 事件由 position 定时器（10Hz）顺带发送
             source.OnLevel += OnLevelSample;
@@ -639,6 +888,7 @@ public sealed class Engine
             var pcm = FfmpegPcmStream.Start(path, 0, resampled ? mixRate : 0, mixRate, mixCh, headers, CapacityFor(info, mixRate, mixCh));
             var source = new PcmFloatSource(pcm, mixRate, mixCh) { Gain = _gain, LoudGain = (float)Math.Clamp(loudGain, 0.05, 4.0) };
             if (_eqEnabled) { source.Eq = new EqChain(mixRate, mixCh); source.Eq.Update(_eqGains); }
+            AttachVst(source); // VST实验区：效果器链（交叉淡入新源私有实例，与淡出旧源无共享）
             // 音频回调线程只写缓存字段，level 事件由 position 定时器（10Hz）顺带发送
             source.OnLevel += OnLevelSample;
 
@@ -879,6 +1129,10 @@ public sealed class Engine
 
         lock (_gate)
         {
+            // VST实验区：音频线程置的 Broken 在此（10Hz 定时器线程）转成用户通知，去重
+            foreach (var s in _vstSlots)
+                if (s.Broken && _vstCrashNotified.Add(s.Id))
+                    _rpc.Emit("notify", new { text = $"VST 插件「{s.Name}」处理异常，已自动旁通（重新启用可复活）" });
             if (_track is null) return;
             if (_dopActive && _dopSource is not null)
             {

@@ -39,3 +39,6 @@ Thumbs.db
 
 # ---- 引擎 junction（开发态镜像，指向 engine/）----
 annie/engine/
+
+# ---- VST 实验区（施工副本，成果已并入主工程，副本本身不入库）----
+VST实验区/

@@ -66,6 +66,8 @@ public sealed class PcmFloatSource : IWaveProvider
     public bool Limiter = true;
     /// <summary>15 段 EQ 链（EXP 7.28）：null = 直通。由 Engine 在创建源/收到 eq.set 时挂载。</summary>
     public EqChain? Eq;
+    /// <summary>VST实验区：本源私有的 VST3 效果器实例链（EQ 之前处理）；null/空 = 直通。</summary>
+    public VstFxInstance[]? VstFx;
     public WaveFormat WaveFormat { get; }
     public event Action<float, float, float, float>? OnLevel; // rmsL, peakL, rmsR, peakR
     public long FramesRead => System.Threading.Interlocked.Read(ref _framesRead);
@@ -92,7 +94,13 @@ public sealed class PcmFloatSource : IWaveProvider
     }
 
     /// <summary>标记源为不活跃，使 SourceEnded 立即返回 true，避免外部线程在已释放的流上继续读取。</summary>
-    public void Deactivate() { _active = false; }
+    public void Deactivate()
+    {
+        _active = false;
+        // VST实验区：源退役 → 收编插件状态回槽位并释放原生实例（防每换歌泄漏一份原生资源）
+        var fx = VstFx; VstFx = null;
+        if (fx is not null) foreach (var inst in fx) { try { inst.Dispose(); } catch { } }
+    }
 
     /// <summary>
     /// V1.1.7：开始增益渐变（to=0 淡出，to=1 淡入）。音频线程在 Read 中逐帧线性插值，
@@ -107,6 +115,15 @@ public sealed class PcmFloatSource : IWaveProvider
             _fadeTotalFrames = Math.Max(1, (long)(WaveFormat.SampleRate * ms / 1000.0));
             _fadeRemainFrames = _fadeTotalFrames;
         }
+    }
+
+    /// <summary>net9 目标要求 IWaveProvider 的 Span 重载：委托给字节数组版本（调用方是 NAudio 内部辅助路径，非音频热路径）。</summary>
+    public int Read(Span<byte> buffer)
+    {
+        var tmp = new byte[buffer.Length];
+        int n = Read(tmp, 0, tmp.Length);
+        tmp.AsSpan(0, n).CopyTo(buffer);
+        return n;
     }
 
     public int Read(byte[] buffer, int offset, int count)
@@ -162,6 +179,23 @@ public sealed class PcmFloatSource : IWaveProvider
             fixed (byte* p = buffer)
             {
                 float* f = (float*)(p + offset);
+                // VST实验区：效果器链在 EQ 之前处理（块级、逐槽独立实例；崩溃自动旁通）
+                var vst = VstFx;
+                if (vst is not null && vst.Length > 0 && frames > 0)
+                {
+                    var block = new Span<float>(f, frames * chs);
+                    foreach (var inst in vst)
+                    {
+                        if (inst.Slot.Broken || !inst.Slot.Enabled) continue;
+                        try
+                        {
+                            if (inst.Scratch is null || inst.Scratch.Length < block.Length) inst.Scratch = new float[block.Length];
+                            block.CopyTo(inst.Scratch); // 不原地处理：个别插件 in==out 有兼容问题
+                            inst.Plugin.Process(inst.Scratch.AsSpan(0, block.Length), block, frames);
+                        }
+                        catch { inst.Slot.Broken = true; } // 护栏：异常即旁通，引擎侧稍后发通知
+                    }
+                }
                 if (eq is not null)
                     for (int fr = 0; fr < frames; fr++) eq.ProcessFrame(f + fr * chs);
                 for (int i = 0; i < count / 4; i++)
@@ -228,11 +262,19 @@ public sealed class IntPcmConverter : IWaveProvider
         WaveFormat = new WaveFormat(floatSource.WaveFormat.SampleRate, targetBits, floatSource.WaveFormat.Channels);
     }
 
+    public int Read(Span<byte> buffer)
+    {
+        var tmp = new byte[buffer.Length];
+        int n = Read(tmp, 0, tmp.Length);
+        tmp.AsSpan(0, n).CopyTo(buffer);
+        return n;
+    }
+
     public int Read(byte[] buffer, int offset, int count)
     {
         int floatBytesNeeded = count / _bytesPerSample * 4;
         if (_floatBuf.Length < floatBytesNeeded) _floatBuf = new byte[floatBytesNeeded];
-        int read = _floatSource.Read(_floatBuf, 0, floatBytesNeeded);
+        int read = _floatSource.Read(_floatBuf.AsSpan(0, floatBytesNeeded)); // net9：IWaveProvider 仅 Span 重载
         int samples = read / 4;
         int outBytes = samples * _bytesPerSample;
 

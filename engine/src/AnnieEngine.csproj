@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net9.0-windows7.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -13,9 +13,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="NAudio.Asio" Version="2.2.1" />
-    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <!-- VST实验区：NAudio 3.x 全线统一（Vst3 强制 Core 3.1.0，Wasapi/Asio 留 2.x 会二进制不兼容，
+         症状为 WASAPI 独占 Init 抛 E_INVALIDARG、IsFormatSupported 全拒） -->
+    <PackageReference Include="NAudio.Wasapi" Version="3.1.0" />
+    <PackageReference Include="NAudio.Asio" Version="3.1.0" />
+    <!-- VST实验区：VST3 效果器宿主（NAudio 官方新包，Mark Heath 发布） -->
+    <PackageReference Include="NAudio.Vst3" Version="3.1.0" />
   </ItemGroup>
 
 </Project>

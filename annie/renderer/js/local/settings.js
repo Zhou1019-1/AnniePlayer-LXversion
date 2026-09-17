@@ -126,6 +126,7 @@
     ['general', '常规'],
     ['audio', '音频输出'],
     ['playback', '播放'],
+    ['fx', '效果器'],
     ['lyrics', '歌词'],
     ['visual', '视觉舞台'],
     ['library', '媒体库'],
@@ -363,6 +364,7 @@
     panel.appendChild(win);
 
     var pgGeneral = pageEls.general, pgAudio = pageEls.audio, pgPlayback = pageEls.playback,
+      pgFx = pageEls.fx,
       pgLyrics = pageEls.lyrics, pgVisual = pageEls.visual, pgLibrary = pageEls.library,
       pgTools = pageEls.tools,
       pgDownload = pageEls.download, pgUpdate = pageEls.update, pgExt = pageEls.ext;
@@ -718,6 +720,16 @@
     var tlyRow = lsCheckRow(sLg, '显示翻译行', 'annieplayer.lyrtly', true, function (on) {
       document.body.classList.toggle('no-tly', !on);
     }, '翻译行 译文 罗马音 tly translation');
+    // —— 桌面歌词开关（窗口开关，状态跟随 annie-dlyrics-changed） ——
+    var dlRow = markItem(el('div', 'set-row'), '桌面歌词 desktop lyrics 悬浮 置顶 逐字');
+    var dlLab = el('div'); dlLab.appendChild(el('div', '', '桌面歌词'));
+    dlLab.appendChild(el('div', 'set-hint', '屏幕上方悬浮歌词条，本地逐字歌词有卡拉OK填充；快捷键 Alt+L'));
+    var dlChk = document.createElement('input'); dlChk.type = 'checkbox';
+    dlChk.checked = !!(window.annieDlyricsOn && window.annieDlyricsOn());
+    dlChk.onchange = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
+    document.addEventListener('annie-dlyrics-changed', function (e) { dlChk.checked = !!(e.detail && e.detail.on); });
+    dlRow.appendChild(dlLab); dlRow.appendChild(dlChk);
+    sLg.appendChild(dlRow);
     lsSliderRow(sLg, 'AM 歌词字号', 'annieplayer.am.lyrscale', 0.7, 1.6, 0.05, 1, fmt2, function () {
       if (window.amLyrStyle) window.amLyrStyle();
     }, 'am 歌词字号 字体大小 apple music font size');
@@ -764,6 +776,162 @@
     sliderRow(s2, '节拍震屏', 'cinemaShake', 0, 1, 0.05, fmt2, applyVisual, '节拍震屏 shake');
     sliderRow(s2, '封面粒子密度', 'coverResolution', 0.75, 1.55, 0.05, fmt2, applyVisual, '封面粒子密度 cover resolution');
     s2.appendChild(el('div', 'set-hint', '封面粒子密度在切歌后生效'));
+
+    /* ================= VST实验区：效果器（VST3 链） ================= */
+    (function buildFxPage() {
+      var fx = window.annieFx;
+      var sFx = section(pgFx, 'VST3 效果器链');
+      var fxBox = markItem(el('div', 'set-lib-list'), '效果器 vst vst3 插件 混响 压缩 effect plugin fx');
+      sFx.appendChild(fxBox);
+      var fxStat = el('div', 'set-hint', 'VST3 效果器在引擎音频链中处理（均衡器之前），崩溃自动旁通；未播放时参数仅可查看');
+      sFx.appendChild(fxStat);
+      if (!fx) { fxBox.appendChild(el('div', 'set-hint', '效果器模块未加载')); return; }
+
+      // —— 参数面板（点「参数」展开） ——
+      var paramPanel = el('div', 'fx-params');
+      paramPanel.style.display = 'none';
+      sFx.appendChild(paramPanel);
+      var paramSlotId = null;
+
+      function renderParams(id, path) {
+        paramSlotId = id;
+        paramPanel.innerHTML = '';
+        paramPanel.style.display = '';
+        paramPanel.appendChild(el('div', 'set-hint', '正在读取参数…'));
+        fx.params(id).then(function (r) {
+          if (paramSlotId !== id) return; // 已切换
+          paramPanel.innerHTML = '';
+          paramPanel.appendChild(el('div', 'fx-params-title', '🎛 ' + (r.name || '') + '（' + r.params.length + ' 个参数）'));
+          if (!r.params.length) { paramPanel.appendChild(el('div', 'set-hint', '该插件没有可编辑参数')); return; }
+          r.params.forEach(function (p) {
+            if (p.readOnly) return;
+            var row = el('div', 'set-row');
+            var head = el('div', 'set-row-head');
+            head.appendChild(el('span', 'set-label', p.title));
+            var val = el('span', 'set-val', p.display || String(Math.round(p.value * 100) / 100));
+            head.appendChild(val);
+            row.appendChild(head);
+            var slider = document.createElement('input');
+            slider.type = 'range'; slider.min = 0; slider.max = 1;
+            slider.step = (p.discrete && p.steps > 0) ? (1 / p.steps) : 0.001;
+            slider.value = p.value;
+            slider.oninput = function () {
+              val.textContent = slider.value;
+              fx.setParam(id, path, p.id, parseFloat(slider.value)).then(function (rr) {
+                if (rr && rr.display) val.textContent = rr.display;
+              }).catch(function () { });
+            };
+            row.appendChild(slider);
+            paramPanel.appendChild(row);
+          });
+        }).catch(function (e) {
+          paramPanel.innerHTML = '';
+          paramPanel.appendChild(el('div', 'set-hint', '读取参数失败：' + (e && e.message ? e.message : e)));
+        });
+      }
+
+      function renderFxSlots() {
+        paramSlotId = null; paramPanel.style.display = 'none'; paramPanel.innerHTML = '';
+        fxBox.innerHTML = '';
+        fx.ensureReady().then(function (slots) {
+          fxBox.innerHTML = '';
+          var cfgs = fx.cfg.slots;
+          if (!slots.length && !cfgs.length) {
+            fxBox.appendChild(el('div', 'set-hint', '尚未添加效果器，点击下方「扫描」或「添加 .vst3 文件」'));
+            return;
+          }
+          slots.forEach(function (s) {
+            var row = el('div', 'set-lib-item fx-slot' + (s.broken ? ' broken' : ''));
+            var chk = document.createElement('input');
+            chk.type = 'checkbox'; chk.checked = !!s.enabled; chk.title = '启用 / 旁通';
+            chk.onchange = function () { fx.enable(s.id, s.path, chk.checked).catch(function (e) { chk.checked = !chk.checked; fxStat.textContent = '操作失败：' + e.message; }); };
+            row.appendChild(chk);
+            var nm = el('span', 'set-lib-path', (s.broken ? '⚠ ' : '') + (s.name || s.path));
+            nm.title = s.path + (s.broken ? '\n已旁通：插件处理异常，重新启用可复活' : '');
+            row.appendChild(nm);
+            var ops = el('span', 'fx-ops');
+            [['🖥', '打开插件原生界面（需播放中）', function () {
+                fx.openEditor(s.id).catch(function (e) { fxStat.textContent = e && e.message ? e.message : String(e); });
+              }],
+             ['🎛', '参数', function () { renderParams(s.id, s.path); }],
+             ['↑', '上移', function () { fx.move(s.id, s.path, -1).catch(function () { }); }],
+             ['↓', '下移', function () { fx.move(s.id, s.path, 1).catch(function () { }); }],
+             ['✕', '移除', function () { fx.remove(s.id, s.path).catch(function (e) { fxStat.textContent = '移除失败：' + e.message; }); }]]
+              .forEach(function (b) {
+                var btn = el('button', 'set-lib-del', b[0]); btn.title = b[1]; btn.onclick = b[2];
+                ops.appendChild(btn);
+              });
+            row.appendChild(ops);
+            fxBox.appendChild(row);
+          });
+          // 配置里有但引擎没加载上的（文件缺失等）
+          cfgs.forEach(function (c) {
+            if (slots.some(function (s) { return s.path === c.path; })) return;
+            var row = el('div', 'set-lib-item fx-slot broken');
+            row.appendChild(el('span', 'set-lib-path', '✕ ' + (c.name || c.path) + '（未加载）'));
+            var del = el('button', 'set-lib-del', '✕'); del.title = '从链中移除';
+            del.onclick = function () {
+              var i = fx.cfg.slots.indexOf(c);
+              if (i >= 0) { fx.cfg.slots.splice(i, 1); }
+              try { localStorage.setItem('annieplayer.vstfx', JSON.stringify(fx.cfg)); } catch (e) { }
+              renderFxSlots();
+            };
+            row.appendChild(del);
+            fxBox.appendChild(row);
+          });
+        }).catch(function () {
+          fxBox.innerHTML = '';
+          fxBox.appendChild(el('div', 'set-hint', '引擎未就绪，稍后重试'));
+        });
+      }
+      renderFxSlots();
+      onOpenHooks.push(renderFxSlots);
+      fx.onChange(function () { if (currentPage === 'fx') renderFxSlots(); });
+
+      // —— 管理按钮行 ——
+      var fxBtnRow = el('div', 'set-row');
+      var fxBtnLab = el('div'); fxBtnLab.appendChild(el('div', '', '管理'));
+      fxBtnLab.appendChild(el('div', 'set-hint', '扫描系统 VST3 目录，或手动选择 .vst3 文件'));
+      var fxBtnWrap = el('div', 'set-ctrl');
+      var scanBtn = el('button', 'btn-ghost', '扫描系统插件');
+      scanBtn.onclick = function () {
+        scanBtn.disabled = true; scanBtn.textContent = '扫描中…';
+        fx.scan().then(function (items) {
+          scanBtn.disabled = false; scanBtn.textContent = '扫描系统插件';
+          if (!items.length) { fxStat.textContent = '未在系统 VST3 目录发现插件'; return; }
+          // 扫描结果以临时列表呈现，点击即添加
+          fxBox.innerHTML = '';
+          fxBox.appendChild(el('div', 'set-hint', '发现 ' + items.length + ' 个插件，点击添加（再次打开本页回到链视图）'));
+          items.forEach(function (it) {
+            var row = el('div', 'set-lib-item');
+            row.appendChild(el('span', 'set-lib-path', it.name || it.path));
+            var add = el('button', 'set-lib-del', '＋'); add.title = '添加到效果器链';
+            add.onclick = function () {
+              add.disabled = true;
+              fx.addPath(it.path).then(function () { add.textContent = '✓'; })
+                .catch(function (e) { add.disabled = false; fxStat.textContent = '添加失败：' + e.message; });
+            };
+            row.appendChild(add);
+            fxBox.appendChild(row);
+          });
+        }).catch(function (e) {
+          scanBtn.disabled = false; scanBtn.textContent = '扫描系统插件';
+          fxStat.textContent = '扫描失败：' + e.message;
+        });
+      };
+      var pickBtn = el('button', 'btn-ghost', '添加 .vst3 文件…');
+      pickBtn.onclick = async function () {
+        pickBtn.disabled = true;
+        try {
+          var p = await window.mine.vstPickPlugin();
+          if (p) await fx.addPath(p);
+        } catch (e) { fxStat.textContent = '添加失败：' + (e && e.message ? e.message : e); }
+        pickBtn.disabled = false;
+      };
+      fxBtnWrap.appendChild(scanBtn); fxBtnWrap.appendChild(pickBtn);
+      fxBtnRow.appendChild(fxBtnLab); fxBtnRow.appendChild(fxBtnWrap);
+      sFx.appendChild(fxBtnRow);
+    })();
 
     /* ================= 媒体库 ================= */
     // 与侧栏「添加音乐文件夹 / 重新扫描」同一套逻辑（pickFolder / removeFolder / startLibraryScan）

@@ -427,8 +427,20 @@ async function playStreamAt(i) {
 window.annieStream = {
   // V1.1.4：快速切歌合并（150ms 窗口连点只执行最后一次目标）——减少引擎设备开关
   playNext() {
+    // V3.5.8：播放定时对在线播放生效（单曲循环 N 遍 / 播完当前列表停止）
+    const t = window.annieSleepTimer && window.annieSleepTimer.get && window.annieSleepTimer.get();
+    if (t && t.type === 'repeatN') {
+      t.played++;
+      if (t.played < t.total) { playStreamAt(streamState.index); return; }
+      window.annieSleepTimer.clear();
+      try { if (typeof proToast === 'function') proToast('单曲循环 ' + t.total + ' 遍已播完，已停止'); } catch { }
+      return;
+    }
     if (streamState.results.length && streamState.index < streamState.results.length - 1) {
       queueStreamSwitch(1);
+    } else if (t && t.type === 'queue') {
+      window.annieSleepTimer.clear();
+      try { if (typeof proToast === 'function') proToast('当前列表已播完，已停止'); } catch { }
     }
   },
   playPrev(positionSec) {

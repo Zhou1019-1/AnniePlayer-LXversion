@@ -2,7 +2,7 @@
 // 安妮播放器 V1 预览版 (Annie Player V1 Preview) —— Electron 主进程
 // 职责：窗口、引擎子进程生命周期、曲库/标签/歌词 IPC。
 
-const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut, nativeImage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads'); // EXP 7.28：曲库扫描 Worker
@@ -259,7 +259,56 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
+  setupThumbar();        // V3.5.8：任务栏缩略图播放控制
+  applyGlobalHotkeys();  // V3.5.8：全局快捷键
 }
+
+// ---------- V3.5.8：任务栏缩略图按钮（悬停任务栏图标即可播控） ----------
+let thumbarApply = null;
+let thumbarState = { playing: false, title: '' };
+let _thumbIcons = null;
+function thumbIcons() {
+  if (_thumbIcons) return _thumbIcons;
+  const dir = path.join(__dirname, '..', 'build', 'thumbar');
+  const mk = (n) => nativeImage.createFromPath(path.join(dir, n + '.png'));
+  _thumbIcons = { prev: mk('prev'), play: mk('play'), pause: mk('pause'), next: mk('next') };
+  return _thumbIcons;
+}
+function sendPlayerAction(action) { try { mainWindow?.webContents.send('tray:action', action); } catch { } }
+function setupThumbar() {
+  if (!mainWindow || process.platform !== 'win32') return;
+  const ic = thumbIcons();
+  thumbarApply = () => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.setThumbarButtons([
+        { tooltip: '上一首', icon: ic.prev, click: () => sendPlayerAction('prev') },
+        { tooltip: thumbarState.playing ? '暂停' : '播放', icon: thumbarState.playing ? ic.pause : ic.play, click: () => sendPlayerAction('toggle') },
+        { tooltip: '下一首', icon: ic.next, click: () => sendPlayerAction('next') },
+      ]);
+      if (thumbarState.title) mainWindow.setTitle(thumbarState.title + ' · 安妮播放器');
+    } catch { }
+  };
+  thumbarApply();
+}
+
+// ---------- V3.5.8：全局快捷键（媒体键 + Ctrl+Alt 组合；store.globalHotkeys=false 关闭） ----------
+const HOTKEY_MAP = [
+  ['MediaPlayPause', 'toggle'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'prev'],
+  ['Ctrl+Alt+Space', 'toggle'], ['Ctrl+Alt+Right', 'next'], ['Ctrl+Alt+Left', 'prev'],
+  ['Ctrl+Alt+Up', 'volup'], ['Ctrl+Alt+Down', 'voldn'],
+];
+let hotkeysOn = false;
+function applyGlobalHotkeys() {
+  try { globalShortcut.unregisterAll(); } catch { }
+  hotkeysOn = false;
+  if (loadStore().globalHotkeys === false) return;
+  for (const [acc, act] of HOTKEY_MAP) {
+    try { globalShortcut.register(acc, () => sendPlayerAction(act)); } catch { } // 被占用就跳过，不影响其他键
+  }
+  hotkeysOn = true;
+}
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { } });
 
 // ---------- 系统托盘（Pro beat0.0.1：含迷你模式 / 桌面歌词入口） ----------
 let tray = null;
@@ -287,6 +336,44 @@ function createTray() {
   } catch (e) { console.warn('[tray] 创建失败', e.message); }
 }
 
+// ---------- V3.5.8：媒体库文件夹监听（新增/删除音频文件自动增量入库，3s 防抖合并） ----------
+let libWatchers = [], libWatchTimer = 0, libWatchRunning = false;
+function setupLibraryWatch() {
+  for (const w of libWatchers) { try { w.close(); } catch { } }
+  libWatchers = [];
+  for (const f of (loadStore().folders || [])) {
+    try {
+      const w = fs.watch(f, { recursive: true }, () => {
+        clearTimeout(libWatchTimer);
+        libWatchTimer = setTimeout(applyWatchChanges, 3000);
+        if (libWatchTimer.unref) libWatchTimer.unref();
+      });
+      w.on('error', () => { });
+      libWatchers.push(w);
+    } catch { }
+  }
+}
+function applyWatchChanges() {
+  if (libWatchRunning) { // 上次 diff 未完成：推迟再试
+    clearTimeout(libWatchTimer);
+    libWatchTimer = setTimeout(applyWatchChanges, 3000);
+    return;
+  }
+  libWatchRunning = true;
+  try {
+    const store = loadStore();
+    const fresh = library.scanFolders(store.folders || []); // 纯文件遍历，轻量
+    const oldPaths = new Set((store.tracks || []).map(t => t.path));
+    const newPaths = new Set(fresh.map(t => t.path));
+    const added = fresh.filter(t => !oldPaths.has(t.path)).length;
+    const removed = (store.tracks || []).filter(t => !newPaths.has(t.path)).length;
+    if (!added && !removed) return;
+    saveStore({ tracks: fresh });
+    // fallback:true → 渲染侧全量重拉曲库刷新（与手动重扫兜底同路径）
+    broadcastScan({ type: 'done', found: fresh.length, fallback: true, watch: true, added, removed });
+  } catch { } finally { libWatchRunning = false; }
+}
+
 // ---------- IPC ----------
 function registerIpc() {
   ipcMain.handle('win:min', () => mainWindow?.minimize());
@@ -296,13 +383,29 @@ function registerIpc() {
   });
   ipcMain.handle('win:close', () => mainWindow?.close());
 
+  // V3.5.8：全局快捷键开关（持久化在 store.globalHotkeys，默认开）
+  ipcMain.handle('hotkeys:get', () => loadStore().globalHotkeys !== false);
+  ipcMain.handle('hotkeys:setEnabled', (_e, on) => {
+    saveStore({ globalHotkeys: !!on });
+    applyGlobalHotkeys();
+    return hotkeysOn;
+  });
+  // V3.5.8：渲染侧上报播放状态 → 刷新缩略图播放/暂停图标与窗口标题
+  ipcMain.on('player:state', (_e, s) => {
+    thumbarState = { playing: !!(s && s.playing), title: String((s && s.title) || '').slice(0, 80) };
+    if (thumbarApply) thumbarApply();
+    try { if (tray) tray.setToolTip(thumbarState.title ? '安妮播放器 · ' + thumbarState.title : '安妮播放器'); } catch { }
+  });
+
   // EXP 7.28：选目录只更新文件夹列表，扫描交由 lib:scanStart（Worker 异步批量回传）
   ipcMain.handle('lib:pickFolder', async () => {
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'multiSelections'] });
     if (r.canceled || !r.filePaths.length) return loadStore();
     const store = loadStore();
     const folders = Array.from(new Set([...store.folders, ...r.filePaths]));
-    return saveStore({ folders });
+    const out = saveStore({ folders });
+    setupLibraryWatch(); // V3.5.8：文件夹变更后重建监听
+    return out;
   });
 
   // VST实验区：选择 .vst3 插件文件
@@ -324,7 +427,9 @@ function registerIpc() {
       const nd = norm(t.dir);
       return !(nd === nf || nd.startsWith(nf + '\\'));
     });
-    return saveStore({ folders, tracks });
+    const out = saveStore({ folders, tracks });
+    setupLibraryWatch(); // V3.5.8
+    return out;
   });
 
   // EXP 7.28：Worker 扫描（批量回传 + 进度 + 可取消；Worker 不可用时同步兜底）
@@ -365,6 +470,53 @@ function registerIpc() {
   });
 
   ipcMain.handle('lib:get', () => loadStore());
+
+  // V3.5.8：重复歌曲检测——按"规范化标题+艺人"分组（metaCache 无标签时回退文件名）
+  ipcMain.handle('lib:duplicates', () => {
+    const store = loadStore();
+    const mc = store.metaCache || {};
+    const norm = (s) => String(s || '').toLowerCase()
+      .replace(/[\s\-_·、,，.。!！?？'"\[\]（）()【】~～]/g, '');
+    const groups = new Map();
+    for (const t of (store.tracks || [])) {
+      if (t.cue) continue; // CUE 虚拟分轨不参与查重
+      const m = mc[t.path] || {};
+      const title = norm(m.title) || norm(String(t.name || '').replace(/\.[^.]+$/, ''));
+      if (!title) continue;
+      const key = title + '|' + norm(m.artist);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({
+        path: t.path, name: t.name, dir: t.dir, size: t.size || 0,
+        title: m.title || '', artist: m.artist || '', album: m.album || '',
+      });
+    }
+    const out = [];
+    for (const arr of groups.values()) {
+      if (arr.length < 2) continue;
+      arr.sort((a, b) => b.size - a.size); // 组内按体积降序（最大者通常音质最好，默认保留）
+      out.push(arr);
+    }
+    return out.sort((a, b) => b.length - a.length);
+  });
+
+  // V3.5.8：批量删除文件（移入回收站）并同步曲库/收藏
+  ipcMain.handle('lib:deleteFiles', async (_e, paths) => {
+    const done = [], failed = [];
+    for (const p of (paths || [])) {
+      try { await shell.trashItem(p); done.push(p); }
+      catch (e) { failed.push({ path: p, error: String(e && e.message || e) }); }
+    }
+    if (done.length) {
+      const store = loadStore();
+      const del = new Set(done);
+      saveStore({
+        tracks: (store.tracks || []).filter(t => !del.has(t.path)),
+        favorites: (store.favorites || []).filter(p => !del.has(p)),
+      });
+      broadcastScan({ type: 'done', found: (loadStore().tracks || []).length, fallback: true });
+    }
+    return { done, failed };
+  });
 
   // 喜爱列表：切换收藏状态，返回最新 favorites 数组
   ipcMain.handle('lib:toggleFavorite', (_e, trackPath) => {
@@ -920,6 +1072,7 @@ ipcMain.handle('app:getReleaseNotes', (_e, ver) => fetchReleaseNotes(ver));
 // SVLX 模式下跳过锁 + whenReady（已由 src/main.js 接管）
 if (global.__svlxBoot) {
   registerIpc();
+  setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
   setupImageReferer();
   engine.start();
@@ -947,6 +1100,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     registerIpc();
+    setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入
     engine.start(); // 引擎拉起失败不阻塞 UI，调用时再报错

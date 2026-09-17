@@ -376,6 +376,22 @@
     checkRow(s4, '封面氛围背景', 'albumBg', applyInterface, '封面氛围背景 模糊 background blur');
     sliderRow(s4, '背景模糊', 'albumBgBlur', 40, 200, 10, fmtPx, applyInterface, '背景模糊 blur');
 
+    // —— V3.5.8：全局快捷键（状态存主进程 store，IPC 开关） ——
+    var sHk = section(pgGeneral, '全局快捷键');
+    var hkRow = markItem(el('label', 'set-check'), '全局快捷键 媒体键 后台播放 global hotkey media keys');
+    var hkInput = document.createElement('input');
+    hkInput.type = 'checkbox';
+    hkRow.appendChild(hkInput);
+    hkRow.appendChild(el('span', '', '启用全局快捷键（软件在后台/最小化时也能控制播放）'));
+    sHk.appendChild(hkRow);
+    sHk.appendChild(el('div', 'set-hint', '播放/暂停 Ctrl+Alt+Space · 上一首/下一首 Ctrl+Alt+←/→ · 音量 Ctrl+Alt+↑/↓；支持键盘媒体键。任务栏图标悬停也有播放控制按钮。'));
+    if (window.mine.hotkeysGet) {
+      window.mine.hotkeysGet().then(function (on) { hkInput.checked = !!on; }).catch(function () { });
+      hkInput.onchange = function () {
+        window.mine.hotkeysSetEnabled(hkInput.checked).catch(function () { });
+      };
+    } else hkInput.disabled = true;
+
     // —— 外观：界面主题（一键切换，无需重启） ——
     var s5 = section(pgGeneral, '外观 · 界面主题');
     var themeGrid = markItem(el('div', 'theme-grid'), '界面主题 粒子舞台 fb2k apple music 换肤 theme');
@@ -1068,6 +1084,63 @@
     fkExpWrap.appendChild(fkCsvBtn); fkExpWrap.appendChild(fkHtmlBtn);
     fkExpRow.appendChild(fkExpLab); fkExpRow.appendChild(fkExpWrap);
     sFk.appendChild(fkExpRow);
+
+    // —— V3.5.8：重复歌曲清理 ——
+    var dupRow = markItem(el('div', 'set-row'), '重复歌曲 清理 查重 duplicates 去重');
+    var dupLab = el('div'); dupLab.appendChild(el('div', '', '重复歌曲清理'));
+    dupLab.appendChild(el('div', 'set-hint', '按"标题+艺人"查重；同组默认保留体积最大的文件，其余勾选后移入回收站'));
+    var dupBtn = el('button', 'btn-ghost', '扫描重复');
+    dupRow.appendChild(dupLab); dupRow.appendChild(dupBtn);
+    sFk.appendChild(dupRow);
+    var dupBox = el('div');
+    sFk.appendChild(dupBox);
+    function renderDupGroups(dupGroups) {
+      dupBox.innerHTML = '';
+      if (!dupGroups.length) { dupBox.appendChild(el('div', 'set-hint', '未发现重复歌曲 ✓')); return; }
+      var total = 0;
+      dupGroups.forEach(function (g) { total += g.length - 1; });
+      dupBox.appendChild(el('div', 'set-hint', '发现 ' + dupGroups.length + ' 组重复（可多删 ' + total + ' 个文件）；默认勾选每组除最大文件外的全部'));
+      dupGroups.slice(0, 100).forEach(function (g) {
+        var box = el('div', 'set-dup-group');
+        box.appendChild(el('div', 'set-dup-head', (g[0].title || g[0].name) + ' · ' + (g[0].artist || '未知艺人') + '（' + g.length + ' 个副本）'));
+        g.forEach(function (t, i) {
+          var row = el('label', 'set-dup-item');
+          var cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.checked = i > 0; cb.dataset.path = t.path; // 组内已按体积降序，默认保留第 0 个
+          row.appendChild(cb);
+          row.appendChild(el('span', 'set-dup-name', t.name + '（' + (t.size / 1048576).toFixed(1) + 'MB）'));
+          row.appendChild(el('span', 'set-dup-dir', t.dir));
+          box.appendChild(row);
+        });
+        dupBox.appendChild(box);
+      });
+      if (dupGroups.length > 100) dupBox.appendChild(el('div', 'set-hint', '仅显示前 100 组，处理后可再次扫描'));
+      var delBtn = el('button', 'btn-ghost', '删除选中（移入回收站）');
+      delBtn.onclick = function () {
+        var paths = [];
+        dupBox.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { paths.push(cb.dataset.path); });
+        if (!paths.length) return;
+        if (!confirm('将 ' + paths.length + ' 个文件移入回收站？\n（可从系统回收站恢复）')) return;
+        delBtn.disabled = true; delBtn.textContent = '删除中…';
+        window.mine.libDeleteFiles(paths).then(function (r) {
+          var msg = '已删除 ' + (r.done ? r.done.length : 0) + ' 个文件' + ((r.failed && r.failed.length) ? '，失败 ' + r.failed.length + ' 个' : '');
+          delBtn.disabled = false; delBtn.textContent = '删除选中（移入回收站）';
+          try { if (typeof proToast === 'function') proToast(msg, 5000); } catch (e) { }
+          dupBox.innerHTML = '';
+          dupBox.appendChild(el('div', 'set-hint', msg + '，可重新扫描确认'));
+        }).catch(function () { delBtn.disabled = false; delBtn.textContent = '删除选中（移入回收站）'; });
+      };
+      dupBox.appendChild(delBtn);
+    }
+    dupBtn.onclick = function () {
+      if (!window.mine.libDuplicates) return;
+      dupBtn.disabled = true; dupBtn.textContent = '扫描中…';
+      dupBox.innerHTML = '';
+      window.mine.libDuplicates().then(function (groups) {
+        dupBtn.disabled = false; dupBtn.textContent = '扫描重复';
+        renderDupGroups(groups || []);
+      }).catch(function () { dupBtn.disabled = false; dupBtn.textContent = '扫描重复'; });
+    };
 
     // —— 诊断信息导出（Pro beat0.0.1：崩溃报障用） ——
     var diagRow = markItem(el('div', 'set-row'), '导出诊断信息 报障 日志 zip 崩溃');

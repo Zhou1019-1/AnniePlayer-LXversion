@@ -52,8 +52,7 @@
       var t = state.sleepTimer;
       if (!t || t.type !== 'time') return;
       if (Date.now() < t.at) return;
-      // 仅本地播放生效：正在播流媒体时不执行
-      if (state.currentStream) { window.annieSleepTimer.clear(); toast('播放定时仅对本地播放生效，本次未执行'); return; }
+      // V3.5.8：定时停止对在线播放同样生效（pause 对流媒体有效）
       window.annieSleepTimer.clear();
       if (state.playing) stopPlayback('定时时间到，已停止播放');
     }, 3000);

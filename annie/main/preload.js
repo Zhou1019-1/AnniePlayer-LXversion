@@ -9,11 +9,18 @@ contextBridge.exposeInMainWorld('mine', {
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),
 
+  // V3.5.8：全局快捷键 / 播放状态上报（任务栏缩略图）
+  hotkeysGet: () => ipcRenderer.invoke('hotkeys:get'),
+  hotkeysSetEnabled: (on) => ipcRenderer.invoke('hotkeys:setEnabled', on),
+  playState: (s) => ipcRenderer.send('player:state', s),
+
   // 曲库
   pickFolder: () => ipcRenderer.invoke('lib:pickFolder'),
   removeFolder: (f) => ipcRenderer.invoke('lib:removeFolder', f),
   rescan: () => ipcRenderer.invoke('lib:rescan'),
   getLibrary: () => ipcRenderer.invoke('lib:get'),
+  libDuplicates: () => ipcRenderer.invoke('lib:duplicates'),       // V3.5.8：重复歌曲检测
+  libDeleteFiles: (paths) => ipcRenderer.invoke('lib:deleteFiles', paths), // V3.5.8：移入回收站
   toggleFavorite: (p) => ipcRenderer.invoke('lib:toggleFavorite', p),
   metaBatch: (paths) => ipcRenderer.invoke('lib:metaBatch', paths),
   metaFullBatch: (paths) => ipcRenderer.invoke('lib:metaFullBatch', paths), // V3.1：批量完整 meta（含封面）

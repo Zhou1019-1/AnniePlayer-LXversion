@@ -431,10 +431,17 @@
     else if (e.code === 'KeyM' && e.ctrlKey) { e.preventDefault(); toggleMini(); }
   });
 
+  // V3.5.8：托盘 / 全局快捷键 / 任务栏缩略图共用此通道；
+  // 播控统一走主界面按钮（修复旧实现直接 playAt 导致流媒体队列错乱的 bug），音量走 #volume 滑条
   window.mine.onTrayAction((action) => {
     if (action === 'toggle') $('#btn-play').click();
-    else if (action === 'next') playAt(state.index + 1);
-    else if (action === 'prev') { if (state.position > 3) playAt(state.index); else playAt(Math.max(0, state.index - 1)); }
+    else if (action === 'next') $('#btn-next').click();
+    else if (action === 'prev') $('#btn-prev').click();
+    else if (action === 'volup' || action === 'voldn') {
+      const v = $('#volume'); if (!v) return;
+      v.value = Math.max(0, Math.min(100, +v.value + (action === 'volup' ? 5 : -5)));
+      if (v.oninput) v.oninput({ target: v });
+    }
     else if (action === 'mini') toggleMini();
     else if (action === 'dlyrics') toggleDlyrics();
   });

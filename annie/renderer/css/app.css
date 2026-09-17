@@ -274,6 +274,18 @@ body.no-tly .am-lyr-line .tly, body.no-tly .f2-lyr .tly { display: none; }
   border-radius: 14px; padding: 12px; }
 .set-section > .set-hint { margin: 6px 4px 0; }
 .set-hint { font-size: 11.5px; color: var(--dim); margin-top: 6px; }
+
+/* ---- V3.5.8：重复歌曲清理 ---- */
+.set-dup-group { margin: 10px 4px 2px; padding: 10px 12px; border-radius: 12px;
+  background: rgba(255,255,255,.045); border: 1px solid var(--line); }
+.set-dup-head { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.set-dup-item { display: flex; align-items: center; gap: 8px; padding: 4px 2px; cursor: pointer;
+  font-size: 12px; border-radius: 6px; }
+.set-dup-item:hover { background: rgba(255,255,255,.05); }
+.set-dup-item input { accent-color: var(--gold, #d4a24a); }
+.set-dup-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-dup-dir { color: var(--dim); font-size: 11px; margin-left: auto; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 46%; direction: rtl; text-align: left; }
 .set-row-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
 .set-label { color: var(--text); font-size: 13px; }
 .set-val { color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }

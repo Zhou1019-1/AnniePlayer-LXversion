@@ -522,3 +522,13 @@ html[data-theme="am"] #titlebar { display: none !important; }
 #am-root.am-light .am-q-title { color: var(--am-text); }
 #am-root.am-light .am-q-sub, #am-root.am-light .am-q-dur { color: var(--am-text-3); }
 #am-root.am-light .am-q-empty { color: var(--am-text-3); }
+
+/* ================= V3.5.8：在线歌曲下载按钮 / 歌单收藏 ================= */
+.am-dl-btn { background:none; border:none; color:rgba(255,255,255,.45); font-size:14px; cursor:pointer; padding:2px 6px; border-radius:6px; min-width:30px; }
+.am-dl-btn:hover { color:#fff; background:rgba(255,255,255,.12); }
+.am-dl-btn:disabled { opacity:.7; cursor:default; }
+.am-light .am-dl-btn { color:rgba(0,0,0,.4); }
+.am-light .am-dl-btn:hover { color:#000; background:rgba(0,0,0,.08); }
+.am-chip-x { opacity:.45; margin-left:6px; font-size:11px; }
+.am-chip-x:hover { opacity:1; color:#ff6b6b; }
+span.am-chip { cursor:pointer; display:inline-flex; align-items:center; }

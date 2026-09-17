@@ -1072,6 +1072,7 @@ window.annieStreamPlay = async function (track) {
   // 悬浮信息层
   $('#thumb-title').textContent = track.title || '未知曲目';
   $('#thumb-artist').textContent = [track.artist, track.album].filter(Boolean).join(' · ');
+  reportPlayerState(); // V3.5.8
   // V1.1.8：http 封面（kwcdn.kuwo.cn 等）经代理转 dataURL 再显示——
   // 直接赋 http 会被 CSP img-src 拦截，且会覆盖 doInject 已代理好的 dataURL
   if (track.cover) {
@@ -1093,6 +1094,7 @@ async function showMeta(p) {
   const m = state.metaCache.get(p);
   if (state.currentPath !== p) return;
   $('#thumb-title').textContent = m.title || '未知曲目';
+  reportPlayerState(); // V3.5.8
   $('#thumb-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
   if (m.cover) $('#thumb-cover').src = m.cover;
   // V1.1.8：本地无封面时清除残留——旧实现只在新封面存在时赋值，
@@ -1149,6 +1151,7 @@ window.mine.onEngineEvent((event, d) => {
     case 'state':
       state.playing = d.state === 'playing';
       $('#btn-play').textContent = state.playing ? '⏸' : '▶';
+      reportPlayerState(); // V3.5.8：同步任务栏缩略图图标
       { const bp = $('#btn-play'); bp.classList.remove('pop'); void bp.offsetWidth; bp.classList.add('pop'); } // Plus：播放键回弹
       // V1.1.7：暂停→停止插值（position 冻结）；恢复→重置锚点（下一 position 事件重新起算）
       if (!state.playing) cancelProgressInterp();
@@ -1216,6 +1219,20 @@ window.mine.onEngineEvent((event, d) => {
       break;
   }
 });
+
+/* ---------------- V3.5.8：播放状态上报（任务栏缩略图 / 窗口标题） ---------------- */
+let _psTimer = 0;
+function reportPlayerState() {
+  if (_psTimer) return; // 合并连发（state 事件密集时）
+  _psTimer = setTimeout(() => {
+    _psTimer = 0;
+    try {
+      const t = $('#thumb-title') ? $('#thumb-title').textContent : '';
+      const a = $('#thumb-artist') ? $('#thumb-artist').textContent : '';
+      window.mine.playState({ playing: state.playing, title: t && t !== '—' ? (a ? t + ' · ' + a : t) : '' });
+    } catch { }
+  }, 120);
+}
 
 function setFormatChips(chips) {
   $('#np-format').innerHTML = chips.map(c => `<span class="fmt-chip ${c.cls}">${c.text}</span>`).join('');

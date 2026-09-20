@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('mine', {
   metaFullBatch: (paths) => ipcRenderer.invoke('lib:metaFullBatch', paths), // V3.1：批量完整 meta（含封面）
   matchSearch: (params) => ipcRenderer.invoke('match:search', params), // V3.3.1：在线歌词/封面匹配
   matchApply: (params) => ipcRenderer.invoke('match:apply', params),
+  tagPickCover: () => ipcRenderer.invoke('tag:pickCover'),            // V3.5.9：标签编辑选封面
+  tagEdit: (params) => ipcRenderer.invoke('tag:edit', params),        // V3.5.9：写回标签
 
   // SVLX 1.3.0：自建播放列表（AM 主题）
   playlists: () => ipcRenderer.invoke('lib:playlists'),

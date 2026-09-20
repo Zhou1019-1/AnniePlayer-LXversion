@@ -166,6 +166,13 @@ async function readMeta(filePath) {
       album: c.album || '',
       genre: (Array.isArray(c.genre) && c.genre[0]) || '',
       year: c.year || 0,
+      // V3.5.9：标签编辑器扩展字段（专辑艺术家/曲目号/碟号/作曲家/注释/发行方）
+      albumArtist: c.albumartist || '',
+      track: (c.track && (c.track.no || c.track.of)) ? String(c.track.no || '') + (c.track.of ? '/' + c.track.of : '') : '',
+      disc: (c.disk && (c.disk.no || c.disk.of)) ? String(c.disk.no || '') + (c.disk.of ? '/' + c.disk.of : '') : '',
+      composer: (Array.isArray(c.composer) && c.composer[0]) || '',
+      comment: (Array.isArray(c.comment) && c.comment[0] && (typeof c.comment[0] === 'string' ? c.comment[0] : c.comment[0].text)) || '',
+      publisher: (Array.isArray(c.label) && c.label[0]) || c.publisher || '',
       duration: meta.format?.duration || 0,
       codec: meta.format?.codec || '',
       sampleRate: meta.format?.sampleRate || 0,

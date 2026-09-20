@@ -159,6 +159,28 @@ class EngineClient {
     setTimeout(() => { try { proc.kill(); } catch { } }, 1500);
     this.proc = null;
   }
+
+  /* V3.5.9：停止并等待引擎进程真正退出（更新安装前调用）。
+   * 旧 stop() 发完 shutdown 就返回，AnnieEngine.exe 可能还活着，
+   * 安装器覆盖 engine 目录文件失败 → "Failed to uninstall old application files"。 */
+  async stopAndWait(timeoutMs = 4000) {
+    const proc = this.proc;
+    if (!proc) return;
+    this._stopIntentional = true;
+    this.proc = null;
+    try { proc.stdin.write(JSON.stringify({ id: 0, method: 'shutdown', params: {} }) + '\n'); } catch { }
+    const t0 = Date.now();
+    while (proc.exitCode === null && !proc.killed) {
+      if (Date.now() - t0 > timeoutMs) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (proc.exitCode === null && !proc.killed) { try { proc.kill(); } catch { } }
+    // kill 后再给 500ms 让 OS 回收句柄（释放安装目录文件锁）
+    const t1 = Date.now();
+    while (proc.exitCode === null && Date.now() - t1 < 1500) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
 }
 
 module.exports = { EngineClient, resolveEnginePath };

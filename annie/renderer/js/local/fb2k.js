@@ -922,6 +922,7 @@
       }]);
     });
     items.push(['查看属性', function () { showProps(t); }]);
+    items.push(['编辑标签…', function () { if (window.annieTagEdit) window.annieTagEdit.open({ path: t.path }); }]);
     items.push(['在线匹配歌词 / 封面…', function () { if (window.annieMatch) window.annieMatch.open({ path: t.path }); }]);
     items.push(['从列表中移除（本次会话）', function () {
       forEachSel(function (x) { S.hiddenPaths.add(x.path); }); S.sel.clear(); rebuildRows();

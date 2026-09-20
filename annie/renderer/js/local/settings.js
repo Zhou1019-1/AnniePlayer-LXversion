@@ -35,7 +35,8 @@
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
     downloadDir: '',
     saveLrc: true,         // 下载时在目录生成旁挂 .lrc 歌词文件（嵌入标签始终做）
-    saveCover: true        // 下载时在目录生成封面图片文件（嵌入标签始终做）
+    saveCover: true,        // 下载时在目录生成封面图片文件（嵌入标签始终做）
+    closeToTray: false      // V3.5.9：关闭主窗口后驻留系统托盘（默认关=关窗即退出，保证更新顺利安装）
   };
   var ui = Object.assign({}, DEFAULTS);
   var saveTimer = null;
@@ -375,6 +376,8 @@
     checkRow(s4, '粒子总开关', 'particlesEnabled', applyInterface, '粒子总开关 舞台粒子 particles');
     checkRow(s4, '封面氛围背景', 'albumBg', applyInterface, '封面氛围背景 模糊 background blur');
     sliderRow(s4, '背景模糊', 'albumBgBlur', 40, 200, 10, fmtPx, applyInterface, '背景模糊 blur');
+    var ctRow = checkRow(s4, '关闭主窗口后驻留系统托盘', 'closeToTray', applyInterface, '关闭 最小化 托盘 驻留 后台 close tray minimize');
+    ctRow.title = '默认关闭（关窗即退出），保证在线更新顺利安装；开启后关窗仅隐藏到托盘';
 
     // —— V3.5.8：全局快捷键（状态存主进程 store，IPC 开关） ——
     var sHk = section(pgGeneral, '全局快捷键');
@@ -802,6 +805,58 @@
       var fxStat = el('div', 'set-hint', 'VST3 效果器在引擎音频链中处理（均衡器之前），崩溃自动旁通；未播放时参数仅可查看');
       sFx.appendChild(fxStat);
       if (!fx) { fxBox.appendChild(el('div', 'set-hint', '效果器模块未加载')); return; }
+
+      // —— V3.5.9：效果器方案（整套链的保存/切换，如"音箱模式/耳机模式"） ——
+      var prRow = markItem(el('div', 'set-row'), '效果器方案 预设 保存 切换 preset 音箱 耳机');
+      var prLab = el('div'); prLab.appendChild(el('div', '', '效果器方案'));
+      prLab.appendChild(el('div', 'set-hint', '保存当前整条链（插件/顺序/启停/参数），一键切换'));
+      var prWrap = el('div', 'set-ctrl');
+      var prSel = document.createElement('select');
+      var prSaveBtn = el('button', 'btn-ghost', '存为方案…');
+      var prDelBtn = el('button', 'btn-ghost', '删除');
+      function refreshPresets() {
+        var list = fx.presets.list();
+        prSel.innerHTML = '';
+        var d0 = document.createElement('option'); d0.value = ''; d0.textContent = list.length ? '选择方案以应用…' : '（暂无方案）';
+        prSel.appendChild(d0);
+        list.forEach(function (p) {
+          var o = document.createElement('option');
+          o.value = p.id; o.textContent = p.name + '（' + p.slots.length + ' 个插件）';
+          prSel.appendChild(o);
+        });
+        prDelBtn.disabled = !list.length;
+      }
+      prSel.onchange = function () {
+        if (!prSel.value) return;
+        var name = prSel.options[prSel.selectedIndex].textContent;
+        prSel.disabled = true;
+        fx.presets.apply(prSel.value).then(function (r) {
+          fxStat.textContent = '已应用方案：' + name + (r.failed ? '（' + r.failed + ' 个插件缺失已跳过）' : '');
+        }).catch(function (e) { fxStat.textContent = '应用方案失败：' + (e && e.message ? e.message : e); })
+          .then(function () { prSel.disabled = false; prSel.value = ''; });
+      };
+      prSaveBtn.onclick = async function () {
+        if (!fx.cfg.slots.length) { fxStat.textContent = '当前链为空，先添加插件'; return; }
+        var name = prompt('方案名称：', '我的方案 ' + (fx.presets.list().length + 1));
+        if (name == null || !name.trim()) return;
+        prSaveBtn.disabled = true; prSaveBtn.textContent = '保存中…';
+        try {
+          await fx.presets.saveAs(name.trim());
+          refreshPresets();
+          fxStat.textContent = '已保存方案「' + name.trim() + '」';
+        } catch (e) { fxStat.textContent = '保存失败：' + (e && e.message ? e.message : e); }
+        prSaveBtn.disabled = false; prSaveBtn.textContent = '存为方案…';
+      };
+      prDelBtn.onclick = function () {
+        if (!prSel.value) { fxStat.textContent = '先在左侧选择要删除的方案'; return; }
+        if (!confirm('删除该方案？（不会移除当前链）')) return;
+        fx.presets.remove(prSel.value);
+        refreshPresets();
+      };
+      prWrap.appendChild(prSel); prWrap.appendChild(prSaveBtn); prWrap.appendChild(prDelBtn);
+      prRow.appendChild(prLab); prRow.appendChild(prWrap);
+      sFx.insertBefore(prRow, fxStat);
+      refreshPresets();
 
       // —— 参数面板（点「参数」展开） ——
       var paramPanel = el('div', 'fx-params');

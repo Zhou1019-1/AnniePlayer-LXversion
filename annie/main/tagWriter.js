@@ -91,9 +91,16 @@ async function writeTags(opts) {
     track: metaValue(opts.track),
     disc: metaValue(opts.disc),
     date: metaValue(opts.date),
+    genre: metaValue(opts.genre),
+    composer: metaValue(opts.composer),
+    comment: metaValue(opts.comment),
+    publisher: metaValue(opts.publisher),
   };
-  for (const k of ['title', 'artist', 'album', 'album_artist', 'track', 'disc', 'date']) {
-    if (meta[k]) args.push('-metadata', `${k}=${meta[k]}`);
+  // V3.5.9：clearEmpty=true（曲库手动编辑）时空字段也下发 `-metadata key=` 以删除旧标签；
+  // 下载路径默认不传，保持"空值跳过不动原标签"的旧行为
+  const clearEmpty = opts.clearEmpty === true;
+  for (const k of Object.keys(meta)) {
+    if (meta[k] || clearEmpty) args.push('-metadata', `${k}=${meta[k]}`);
   }
   // V1.1.10：嵌入歌词——FLAC 用大写 LYRICS（Vorbis comment），MP3 用小写 lyrics（ID3 USLT）。
   // 实测：flac + LYRICS 有效；mp3 + lyrics 有效（写成 ID3 标签，播放器/ffprobe 可读）。

@@ -11,10 +11,13 @@ const library = require('./library');
 const streaming = require('./streaming');
 const onlineMatch = require('./onlineMatch');
 const analyzer = require('./analyzer');
+const tagWriter = require('./tagWriter'); // V3.5.9：曲库标签编辑（与下载写标签同一实现）
 
 const engine = new EngineClient();
 let mainWindow = null;
 let dlyrWinRef = null; // 桌面歌词窗引用（引擎事件分流用，由 registerIpc 内 dlyrics:toggle 维护）
+let pendingInstall = false;   // V3.5.9：更新已下载待安装（选"稍后"后置位，关窗即触发安装）
+let installQuitting = false;  // V3.5.9：quitAndInstall 强退流程防重入
 
 /* 性能优化：引擎事件按窗口分流。实证 desktop-lyrics.html 只消费 dlyrics:line 中继，
  * 不订阅 engine-event；保留 position/state/ended 白名单兜底（歌词滚动需要），
@@ -258,7 +261,19 @@ function createWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    /* V3.5.9：关窗退出逻辑（修复在线更新"无法关闭/装不上"根因）。
+     * 旧行为：关窗后进程驻留托盘，__svlxQuitting 只有托盘"退出"菜单才置位 →
+     *   ① NSIS 安装器 WM_CLOSE 关窗后进程不死 → "无法关闭"
+     *   ② autoInstallOnAppQuit 等不到退出 → 已下载的更新永远装不上
+     * 新行为：有待装更新（pendingInstall）或未开"驻留托盘"设置 → 关窗即完整退出。 */
+    const closeToTray = loadStore().ui && loadStore().ui.closeToTray === true;
+    if (pendingInstall || !closeToTray) {
+      global.__svlxQuitting = true;
+      try { app.quit(); } catch { }
+    }
+  });
   setupThumbar();        // V3.5.8：任务栏缩略图播放控制
   applyGlobalHotkeys();  // V3.5.8：全局快捷键
 }
@@ -898,6 +913,42 @@ function registerIpc() {
   // V3.3.1：在线歌词/封面匹配（一期·单曲手动匹配）
   ipcMain.handle('match:search', (_e, params) => onlineMatch.searchCandidates(params || {}));
   ipcMain.handle('match:apply', (_e, params) => onlineMatch.applyMatch(params || {}));
+
+  // V3.5.9：曲库标签编辑——选封面图 / 写回标签（ffmpeg 流复制，不重编码）
+  ipcMain.handle('tag:pickCover', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    });
+    return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
+  });
+  ipcMain.handle('tag:edit', async (_e, p) => {
+    const fp = String((p && p.path) || '');
+    if (!fp || fp.includes('#')) return { ok: false, reason: 'CUE/ISO 分轨不支持标签编辑' };
+    let coverBytes = null;
+    if (p.coverFile) { try { coverBytes = fs.readFileSync(p.coverFile); } catch { } }
+    const r = await tagWriter.writeTags({
+      dest: fp,
+      title: p.title, artist: p.artist, album: p.album, albumArtist: p.albumArtist,
+      track: p.track, disc: p.disc, date: p.date,
+      genre: p.genre, composer: p.composer, comment: p.comment, publisher: p.publisher,
+      coverBytes,
+      clearEmpty: true, // 手动编辑语义：清空字段 = 删除该标签
+    }).catch((e) => ({ ok: false, reason: String(e && e.message || e) }));
+    if (r && r.ok) {
+      // 同步 metaCache（UI 立即反映；清掉封面缓存强制下次重新提取）
+      const store = loadStore();
+      const mc = Object.assign({}, store.metaCache[fp]);
+      for (const k of ['title', 'artist', 'album', 'albumArtist', 'track', 'disc', 'date', 'genre', 'composer', 'comment', 'publisher']) {
+        if (p[k] != null && String(p[k]).trim()) mc[k] = String(p[k]).trim();
+        else if (p[k] != null) delete mc[k]; // 清空同步删除缓存
+      }
+      if (coverBytes) delete mc.cover;
+      store.metaCache[fp] = mc;
+      saveStore({ metaCache: store.metaCache });
+    }
+    return r;
+  });
   ipcMain.handle('track:readFile', (_e, p) => {
     // Pro：CUE 虚拟分轨剥离 #cueN 后缀，读真实整轨文件
     const cut = p.includes('#cue') ? p.indexOf('#cue') : (p.includes('#iso') ? p.indexOf('#iso') : -1);
@@ -1013,25 +1064,37 @@ function setupAutoUpdate() {
         type: 'info',
         title: '更新已就绪',
         message: '新版本 V' + (info && info.version) + ' 已下载完成',
-        detail: '现在重启应用完成更新？（选"稍后"则下次启动时自动生效）'
+        detail: '现在重启应用完成更新？（选"稍后"则关闭播放器时自动安装）'
           + (notes ? '\n\n更新内容：\n' + notes.slice(0, 800) : ''),
         buttons: ['立即重启更新', '稍后'],
         defaultId: 0, cancelId: 1,
       });
       if (r.response === 0) {
-        // 修复：托盘模式下进程可能退不干净导致 NSIS 提示"无法关闭"——
-        // 先置退出标记并停引擎，再走 quitAndInstall（V3.5.3）
-        // V3.5.5 双保险：优雅退出若被托盘/Worker 拖住，5s 后 app.exit 强退，
-        // 保证 NSIS「无法关闭」重试一次即过（根因：NSIS 用 WM_CLOSE 关程序，
-        // 而我们窗口关闭后进程留托盘，被判定无法关闭）
-        try { global.__svlxQuitting = true; } catch { }
-        try { engine.stop(); } catch { }
-        autoUpdater.quitAndInstall();
-        setTimeout(() => { try { app.exit(0); } catch { } }, 5000);
+        // V3.5.9：彻底退出链路——等引擎进程真退（释放安装目录文件锁）+ 销毁托盘 + 强退兜底。
+        // 旧版只 engine.stop()（异步 1.5s 慢杀）+ quitAndInstall，AnnieEngine.exe 残留
+        // 导致安装器覆盖失败："Failed to uninstall old application files"。
+        forceQuitForInstall();
+      } else {
+        // 选"稍后"：标记待装，用户关窗时走完整退出触发 autoInstallOnAppQuit
+        pendingInstall = true;
       }
     } catch { }
   });
   autoUpdater.on('error', (e) => { console.warn('[update] 更新检查失败(不打扰用户):', e && e.message); sendUpd('error', String(e && e.message || e)); });
+
+  /* V3.5.9：更新安装前的彻底退出（托盘/引擎/Worker 全清理，进程必死） */
+  async function forceQuitForInstall() {
+    if (installQuitting) return;
+    installQuitting = true;
+    try { global.__svlxQuitting = true; } catch { }
+    try { flushStore(); } catch { }
+    try { await engine.stopAndWait(4000); } catch { }
+    try { if (scanWorker) { scanWorker.terminate(); scanWorker = null; } } catch { }
+    try { global.__svlxTray && global.__svlxTray.destroy(); } catch { }
+    try { autoUpdater.quitAndInstall(); } catch { }
+    // 兜底：任何环节卡住（窗口 close 拦截等）3.5s 后强退，保证安装器能继续
+    setTimeout(() => { try { app.exit(0); } catch { } }, 3500);
+  }
   // 设置中心「检查更新」按钮：手动触发（自动检查仍会周期性静默进行）
   __manualCheckUpdate = async () => {
     try { await autoUpdater.checkForUpdates(); return { ok: true }; }
@@ -1086,9 +1149,15 @@ if (global.__svlxBoot) {
   app.on('window-all-closed', () => {
     if (global.__svlxQuitting) { engine.stop(); app.quit(); }
   });
-  // V3.5.5：任何退出路径（含用户选"稍后"后 autoInstallOnAppQuit 触发的安装）
-  // 都在退出前停引擎，避免 AnnieEngine.exe 残留占用安装目录文件导致覆盖失败
-  app.on('before-quit', () => { try { engine.stop(); } catch { } });
+  /* V3.5.9：退出前等待引擎进程真正退出（释放安装目录文件锁）。
+   * preventDefault 拦截首次 quit → 引擎退出后 app.exit(0)；
+   * forceQuitForInstall 路径已先停引擎（engine.proc 为 null），此处自动放行。 */
+  app.on('before-quit', (e) => {
+    if (engine.proc && !engine._stopIntentional) {
+      e.preventDefault();
+      engine.stopAndWait(4000).finally(() => { try { app.exit(0); } catch { } });
+    }
+  });
 } else {
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -1127,6 +1196,12 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  app.on('before-quit', () => engine.stop());
+  // V3.5.9：退出前等引擎真退（同 SVLX 分支），防安装器覆盖文件失败
+  app.on('before-quit', (e) => {
+    if (engine.proc && !engine._stopIntentional) {
+      e.preventDefault();
+      engine.stopAndWait(4000).finally(() => { try { app.exit(0); } catch { } });
+    }
+  });
 }
 } // end else (non-SVLX mode)

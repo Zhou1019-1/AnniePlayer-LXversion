@@ -50,6 +50,7 @@ function createTray() {
     ];
     tray.setContextMenu(Menu.buildFromTemplate(ctx));
     tray.on('click', () => { if (typeof global.__svlxAnnieOpen === 'function') global.__svlxAnnieOpen(); });
+    global.__svlxTray = tray; // V3.5.9：更新安装强退时供 main.js 销毁托盘
   } catch (e) { console.warn('[svlx] tray:', e.message); }
 }
 

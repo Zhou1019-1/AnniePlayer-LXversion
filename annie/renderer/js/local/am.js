@@ -1151,6 +1151,12 @@
     pop.innerHTML = '';
     pop.appendChild(el('div', 'am-pop-item', '添加到播放列表')).style.fontWeight = '600';
     pop.appendChild(el('div', 'am-pop-sep'));
+    var mte = el('button', 'am-pop-item', '✏️ 编辑标签…');
+    mte.onclick = function () {
+      pop.classList.remove('on');
+      if (window.annieTagEdit) window.annieTagEdit.open({ path: trackPath });
+    };
+    pop.appendChild(mte);
     var mch = el('button', 'am-pop-item', '🔎 在线匹配歌词 / 封面…');
     mch.onclick = function () {
       pop.classList.remove('on');

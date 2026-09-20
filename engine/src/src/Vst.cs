@@ -17,6 +17,7 @@ public sealed class VstFxSlot : IDisposable
     public string Name = "";
     public bool Enabled = true;
     public volatile bool Broken;        // 加载/处理失败 → 自动旁通
+    public volatile bool EditorOpen;    // 原生界面打开期间：临时摘掉活实例，避免同插件活动实例抢占 UI Attach
     public byte[]? SavedState;          // 最近持久化状态（换源/换采样率重建实例时恢复）
 
     private Vst3Module? _module;

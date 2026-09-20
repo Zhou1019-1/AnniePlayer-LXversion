@@ -401,34 +401,56 @@ public sealed class Engine
 
     /* ---------- 插件原生界面（FB2K 式独立悬浮窗） ---------- */
 
-    /// <summary>打开插件原生界面。必须挂在"正在处理音频的活实例"上（分析仪才能看到信号），未播放时拒绝。</summary>
+    /// <summary>打开插件原生界面。IVGI2 这类分离控制器插件要求模块/插件/视图在同一 UI 线程创建，因此编辑器实例在 VST 编辑器线程内生成。</summary>
     private object VstOpenEditor(string id)
     {
-        VstFxSlot? slot; VstFxInstance? live;
+        VstFxSlot? slot; int rate = 48000, channels = 2;
         lock (_gate)
         {
             slot = _vstSlots.FirstOrDefault(s => s.Id == id);
-            live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id);
+            var live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id);
             if (slot is null) return new { ok = false, error = "槽位不存在" };
-            if (live is null) return new { ok = false, error = "请先播放音乐，再打开插件界面（界面挂在正在处理音频的实例上）" };
+            if (live is null) return new { ok = false, error = "请先播放音乐，再打开插件界面" };
             if (_vstEditor is not null)
             {
-                if (_vstEditorInst is not null && _vstEditorInst.Slot.Id == id) return new { ok = true }; // 已开着
+                if (_vstEditor.SlotId == id) return new { ok = true }; // 已开着
                 CloseVstEditorLocked(); // 换另一个插件：先关旧的
             }
-            live.EditorAttached = true;
-            _vstEditorInst = live;
+            rate = _source?.WaveFormat.SampleRate ?? 48000;
+            channels = _source?.WaveFormat.Channels ?? 2;
+            // IVGI2：同插件存在活动实例时，第二个实例 Attach 会卡死；开界面临时把该槽活实例摘出音频链。
+            var src = _source;
+            if (src?.VstFx is { } fx)
+            {
+                var removed = fx.Where(i => i.Slot.Id == id).ToArray();
+                if (removed.Length > 0)
+                {
+                    foreach (var inst in removed) { try { slot.SavedState = inst.Plugin.SaveState(); } catch { } }
+                    slot.EditorOpen = true;
+                    var remain = fx.Where(i => i.Slot.Id != id).ToArray();
+                    src.VstFx = remain.Length > 0 ? remain : null;
+                    foreach (var inst in removed) { try { inst.Dispose(); } catch { } }
+                }
+            }
         }
+        var win = new VstEditorWindow { SlotId = id, OnClosed = VstEditorCleanup };
         try
         {
-            var win = new VstEditorWindow { SlotId = id, OnClosed = VstEditorCleanup };
-            win.Open(live.Plugin, slot.Name + " — 安妮播放器"); // 阻塞到窗口建好或失败（≤15s）
-            lock (_gate) { _vstEditor = win; _editorSlotIdStatic = id; }
+            win.OpenFactory(() =>
+            {
+                var inst = slot.CreateInstanceFor(rate, channels);
+                if (slot.SavedState is not null) { try { inst.Plugin.LoadState(slot.SavedState); } catch { } }
+                inst.Orphaned = true;      // 不进音频链，关闭编辑器后由清理路径释放
+                inst.EditorAttached = true;
+                return inst;
+            }, slot.Name + " — 安妮播放器");
+            lock (_gate) { _vstEditor = win; _editorSlotIdStatic = id; _vstEditorInst = win.Instance; }
             return new { ok = true };
         }
         catch (Exception ex)
         {
-            lock (_gate) { if (_vstEditorInst is not null) _vstEditorInst.EditorAttached = false; _vstEditorInst = null; }
+            if (win.Instance is not null) { win.Instance.EditorAttached = false; try { win.Instance.Plugin.Dispose(); } catch { } }
+            if (slot.EditorOpen) { slot.EditorOpen = false; lock (_gate) { ReattachVstLocked(); } } // 打开失败：恢复音频链
             return new { ok = false, error = ex.Message };
         }
     }
@@ -460,12 +482,21 @@ public sealed class Engine
         lock (_gate)
         {
             if (ReferenceEquals(_vstEditor, win)) { _vstEditor = null; _editorSlotIdStatic = null; }
-            var inst = _vstEditorInst;
+            var inst = win.Instance ?? _vstEditorInst;
             if (inst is null || win.SlotId != inst.Slot.Id) return;
             _vstEditorInst = null;
             inst.EditorAttached = false;
             try { inst.Slot.SavedState = inst.Plugin.SaveState(); } catch { } // 编辑器里调的参数收编回槽位
-            if (inst.Orphaned) { try { inst.Plugin.Dispose(); } catch { } }     // 源已退役：这里兜底释放
+            if (inst.Orphaned) // 独立编辑器实例：把状态同步回正在播放的活实例，再释放编辑器实例
+            {
+                var liveNow = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == inst.Slot.Id);
+                if (liveNow is not null && !ReferenceEquals(liveNow, inst) && inst.Slot.SavedState is not null)
+                {
+                    try { liveNow.Plugin.LoadState(inst.Slot.SavedState); } catch { }
+                }
+                try { inst.Plugin.Dispose(); } catch { }
+            }
+            if (inst.Slot.EditorOpen) { inst.Slot.EditorOpen = false; ReattachVstLocked(); } // 关界面后把该槽接回音频链
         }
     }
 
@@ -479,7 +510,7 @@ public sealed class Engine
         var list = new List<VstFxInstance>();
         foreach (var s in _vstSlots)
         {
-            if (!s.Enabled || s.Broken) continue;
+            if (!s.Enabled || s.Broken || s.EditorOpen) continue;
             try { list.Add(s.CreateInstanceFor(rate, ch)); }
             catch (Exception ex) { s.Broken = true; _rpc.Emit("notify", new { text = $"VST 插件「{s.Name}」加载失败已旁通：{ex.Message}" }); }
         }

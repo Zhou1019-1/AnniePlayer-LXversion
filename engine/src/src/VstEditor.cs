@@ -3,6 +3,12 @@ using NAudio.Vst3;
 
 namespace MineEngine;
 
+/// <summary>CreateView 返回 null：插件当前实例没有给出编辑器视图（可能需回退到独立编辑器实例）。</summary>
+public sealed class VstNoEditorException : Exception
+{
+    public VstNoEditorException() : base("该插件没有原生界面") { }
+}
+
 /// <summary>
 /// VST3 插件原生界面宿主窗口（FB2K 式独立悬浮窗）。
 /// 窗口与 IPlugView 的全部调用都绑在专用 STA 线程（带消息循环）——VST3 规范要求界面
@@ -53,10 +59,13 @@ public sealed class VstEditorWindow
     private IntPtr _hwnd;
     private Vst3PluginView? _view;
     private Vst3Plugin? _plugin;
+    private Func<VstFxInstance>? _factory;   // 在编辑器 UI 线程内创建插件实例（IVGI2 这类插件跨线程 Attach 会卡死）
     private readonly ManualResetEventSlim _ready = new();
     private Exception? _openError;
 
     public string SlotId = "";
+    public VstFxInstance? Instance;          // OpenFactory 模式下由 UI 线程创建，供引擎关闭时收编状态
+    public bool ReadyOk;                     // 早期等待结果（CreateView/建窗是否已完成）
     /// <summary>窗口完全关闭（视图已 Detach/Dispose）后回调。由 UI 线程触发，引擎负责回收插件实例。</summary>
     public Action<VstEditorWindow>? OnClosed;
 
@@ -67,10 +76,25 @@ public sealed class VstEditorWindow
         _thread = new Thread(() => UiThreadMain(title)) { IsBackground = true, Name = "VstEditor" };
         _thread.SetApartmentState(ApartmentState.STA);
         _thread.Start();
-        _ready.Wait(TimeSpan.FromSeconds(15));
+        var readyOk = _ready.Wait(TimeSpan.FromMilliseconds(1000)); // 只等早期错误（CreateView null/建窗失败）；Attach/显示交给 UI 线程继续，避免调用线程阻塞把插件卡住
+        ReadyOk = readyOk;
         if (_openError is not null) throw _openError;
         if (_hwnd == IntPtr.Zero) throw new InvalidOperationException("插件界面创建超时");
-        try { SetForegroundWindow(_hwnd); } catch { }
+        if (readyOk) { try { SetForegroundWindow(_hwnd); } catch { } }
+    }
+
+    /// <summary>在编辑器 UI 线程内通过工厂创建插件实例并打开（解决部分 VST3 跨线程 Attach 卡死）。失败抛错。</summary>
+    public void OpenFactory(Func<VstFxInstance> factory, string title)
+    {
+        _factory = factory;
+        _plugin = null;
+        _thread = new Thread(() => UiThreadMain(title)) { IsBackground = true, Name = "VstEditor" };
+        _thread.SetApartmentState(ApartmentState.STA);
+        _thread.Start();
+        var readyOk = _ready.Wait(TimeSpan.FromMilliseconds(1000));
+        ReadyOk = readyOk;
+        if (_openError is not null) throw _openError;
+        if (_hwnd == IntPtr.Zero) throw new InvalidOperationException("插件界面创建超时");
     }
 
     /// <summary>请求关闭（任意线程；实际清理在 UI 线程消息循环里完成）。</summary>
@@ -101,6 +125,12 @@ public sealed class VstEditorWindow
     {
         try
         {
+            if (_factory is not null)
+            {
+                var inst = _factory();      // 关键：模块/插件/视图都必须在编辑器 UI 线程创建
+                Instance = inst;
+                _plugin = inst.Plugin;
+            }
             EnsureClass();
             uint style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
             _hwnd = CreateWindowExW(0, "AnnieVstEditor", title, style,
@@ -109,7 +139,7 @@ public sealed class VstEditorWindow
                 throw new InvalidOperationException($"创建宿主窗口失败（Win32 错误 {Marshal.GetLastWin32Error()}）");
 
             _view = _plugin!.CreateView();           // 插件不支持编辑器时返回 null 或抛错
-            if (_view is null) throw new InvalidOperationException("该插件没有原生界面");
+            if (_view is null) throw new VstNoEditorException();
             _view.AttachTo(_hwnd, 1.0f);
 
             var size = _view.GetSize();
@@ -128,9 +158,13 @@ public sealed class VstEditorWindow
             };
             _current = this;
             ShowWindow(_hwnd, SW_SHOW);
+            try { SetForegroundWindow(_hwnd); } catch { }
             _ready.Set();
         }
-        catch (Exception ex) { _openError = ex; _ready.Set(); return; }
+        catch (Exception ex)
+        {
+            _openError = ex; _ready.Set(); return;
+        }
 
         // 消息循环：窗口销毁前一直转
         while (GetMessageW(out var msg, IntPtr.Zero, 0, 0))

@@ -45,18 +45,19 @@ html[data-theme="am"] #titlebar { display: none !important; }
   -webkit-font-smoothing: antialiased;
 }
 #am-root.am-light {
-  --am-bg: #f5f5f7;
-  --am-bg-elev: #ffffff;
-  --am-text: #1d1d1f;
-  --am-text-2: rgba(29, 29, 31, .58);
-  --am-text-3: rgba(29, 29, 31, .36);
-  --am-sep: rgba(0, 0, 0, .08);
-  --am-glass: rgba(245, 245, 247, .72);
-  --am-glass-2: rgba(255, 255, 255, .66);
-  --am-hover: rgba(0, 0, 0, .05);
-  --am-active: rgba(0, 0, 0, .08);
-  --am-row-cur: rgba(250, 45, 85, .10);
-  --am-shadow: 0 12px 40px rgba(0, 0, 0, .18);
+  /* 柔和暖白：避免纯白刺眼，同时保证正文/次级文字对比度 */
+  --am-bg: #f6f4ef;
+  --am-bg-elev: #fbfaf7;
+  --am-text: #1c1b18;
+  --am-text-2: rgba(28, 27, 24, .64);
+  --am-text-3: rgba(28, 27, 24, .44);
+  --am-sep: rgba(70, 58, 38, .13);
+  --am-glass: rgba(246, 244, 239, .78);
+  --am-glass-2: rgba(251, 250, 247, .72);
+  --am-hover: rgba(88, 70, 42, .06);
+  --am-active: rgba(88, 70, 42, .10);
+  --am-row-cur: rgba(250, 45, 85, .11);
+  --am-shadow: 0 12px 34px rgba(70, 58, 38, .18);
 }
 
 /* ---------- 封面氛围大模糊背景（图 1 风格） ---------- */
@@ -69,7 +70,7 @@ html[data-theme="am"] #titlebar { display: none !important; }
   transition: opacity .6s ease;
   pointer-events: none;
 }
-#am-root.am-light::before { filter: blur(90px) saturate(1.4) brightness(1.05); opacity: .5; }
+#am-root.am-light::before { filter: blur(90px) saturate(1.35) brightness(1.0); opacity: .42; }
 #am-root.am-nobg::before { opacity: 0; }
 
 /* ---------- 顶部传输栏（磨砂） ---------- */
@@ -436,7 +437,7 @@ html[data-theme="am"] #titlebar { display: none !important; }
 }
 /* 无封面时不显示背景图（否则残留上一首的模糊封面） */
 #am-root.am-nobg .am-imm-bg { opacity: 0; }
-#am-root.am-light .am-imm-bg { filter: blur(70px) saturate(1.4) brightness(.9); }
+#am-root.am-light .am-imm-bg { filter: blur(70px) saturate(1.35) brightness(.68); }
 .am-imm-closebar {
   position: absolute; top: 14px; right: 16px; z-index: 3; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
@@ -466,6 +467,21 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-imm-play { font-size: 32px; }
 .am-imm-vol { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,.8); }
 .am-imm-volin { width: 78px; accent-color: #fff; }
+/* 浅色 + 无封面：沉浸层回落为柔和暖白底，文字切换为深色，避免白字看不清 */
+#am-root.am-light.am-nobg .am-imm-closebar .am-tbtn,
+#am-root.am-light.am-nobg .am-imm-btn,
+#am-root.am-light.am-nobg .am-imm-title { color: var(--am-text); }
+#am-root.am-light.am-nobg .am-imm-closebar .am-tbtn:hover,
+#am-root.am-light.am-nobg .am-imm-btn:hover { background: var(--am-hover); color: var(--am-text); }
+#am-root.am-light.am-nobg .am-imm-sub { color: var(--am-text-2); }
+#am-root.am-light.am-nobg .am-imm-fmt, #am-root.am-light.am-nobg .am-imm-time { color: var(--am-text-3); }
+#am-root.am-light.am-nobg .am-imm-vol { color: var(--am-text-2); }
+#am-root.am-light.am-nobg .am-imm-bar { background: rgba(70,58,38,.18); }
+#am-root.am-light.am-nobg .am-imm-fill { background: var(--am-accent); }
+#am-root.am-light.am-nobg .am-imm-volin { accent-color: var(--am-accent); }
+#am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line { color: var(--am-text-3); }
+#am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.near { color: var(--am-text-2); }
+#am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.cur { color: var(--am-text); }
 /* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词） */
 .am-imm-lyr { display: none; width: 46%; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
@@ -490,7 +506,7 @@ html[data-theme="am"] #titlebar { display: none !important; }
 /* 迷你时隐藏常规 AM 结构 */
 #am-root.am-mini-on .am-topbar, #am-root.am-mini-on .am-body, #am-root.am-mini-on .am-lyrics,
 #am-root.am-mini-on .am-imm, #am-root.am-mini-on::before { display: none; }
-#am-root.am-light .am-mini { background: #f3f3f5; }
+#am-root.am-light .am-mini { background: #f6f4ef; }
 .am-mini-head { display: flex; align-items: center; gap: 10px; padding: 10px 10px 4px; flex: none; -webkit-app-region: drag; }
 .am-mini-head .am-tbtn { -webkit-app-region: no-drag; }
 .am-mini-cover { width: 46px; height: 46px; border-radius: 7px; object-fit: cover; background: rgba(128,128,128,.25); flex: none; }

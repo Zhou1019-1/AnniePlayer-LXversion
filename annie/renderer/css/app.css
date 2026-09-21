@@ -590,11 +590,12 @@ canvas.viz-page.active { display: block; }
   --disabled: #4e615c; --track: #24332f;
 }
 :root[data-palette="day"] {
-  --bg: #f5f6f8; --bg2: #ffffff; --bg3: #e9ecf2;
-  --line: #8a93a8; --line-soft: #c4cbd9; --text: #1a1d26; --dim: #4d5568;
-  --accent: #8f6c00; --glow: #0066cc; --accent-ink: #1a1d26;
-  --panel: rgba(255,255,255,.96); --scrim: rgba(255,255,255,.55);
-  --disabled: #9aa2b5; --track: #c9cfdd;
+  /* 柔和暖白：不用纯白底，正文/次级文字加深一档保证可识别 */
+  --bg: #f6f4ef; --bg2: #fbfaf7; --bg3: #ece7de;
+  --line: #8a93a8; --line-soft: #c9c2b8; --text: #1a1d26; --dim: #454d61;
+  --accent: #7a5b00; --glow: #0057b8; --accent-ink: #fbfaf7;
+  --panel: rgba(251,250,247,.96); --scrim: rgba(246,244,239,.58);
+  --disabled: #8f96a8; --track: #d5cfc4;
 }
 
 /* 硬编码色收编为变量（全配色统一生效） */
@@ -716,7 +717,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .pal-thumb-gold { background: linear-gradient(120deg, #10131c 55%, #ffd23f 55%); }
 .pal-thumb-aurora { background: linear-gradient(120deg, #0e1220 55%, #66b2ff 55%, #c084fc); }
 .pal-thumb-jade { background: linear-gradient(120deg, #0d1413 55%, #34d399 55%); }
-.pal-thumb-day { background: linear-gradient(120deg, #ffffff 55%, #e9c964 55%); }
+.pal-thumb-day { background: linear-gradient(120deg, #fbfaf7 55%, #e9c964 55%); }
 .pal-name { font-size: var(--fs-sm); color: var(--text); }
 .pal-desc { font-size: 11px; color: var(--dim); }
 

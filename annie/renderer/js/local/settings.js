@@ -607,6 +607,32 @@
     preRow.appendChild(preLab); preRow.appendChild(preChkWrap);
     sAq.appendChild(preRow);
 
+    // —— 输出健康（Track A）：设备/格式/重采样/缓冲水位/欠载与限幅计数 ——
+    var sHealth = section(pgAudio, '输出健康');
+    var healthRow = markItem(el('div', 'set-row'), '输出健康 欠载 爆音 重采样 缓冲 设备 格式 underrun health');
+    var healthLab = el('div'); healthLab.appendChild(el('div', '', '输出健康'));
+    healthLab.appendChild(el('div', 'set-hint', '查看当前设备/格式/缓冲/欠载/限幅；爆音自查先看欠载是否增长'));
+    var healthBtn = el('button', 'btn-ghost', '刷新');
+    healthRow.appendChild(healthLab); healthRow.appendChild(healthBtn);
+    sHealth.appendChild(healthRow);
+    var healthText = el('div', 'set-hint', '点击「刷新」读取当前输出状态');
+    sHealth.appendChild(healthText);
+    function renderAudioHealth() {
+      healthBtn.disabled = true;
+      window.mine.engine('stats').then(function (s) {
+        if (!s || s.ok === false) throw new Error((s && s.error) || 'stats 失败');
+        var fmt = s.outputRate ? (s.requestedRate + ' → ' + s.outputRate + 'Hz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' + (s.resampled ? '（重采样）' : '')) : '未播放';
+        healthText.textContent =
+          '设备：' + (s.deviceName || '-') + '（' + (s.backendKind || '-') + (s.exclusive ? ' 独占' : ' 共享') + (s.dopActive ? ' / DoP' : '') + '）\n' +
+          '格式：' + fmt + '\n' +
+          '缓冲：' + (s.bufferedSec || 0) + 's / ' + Math.round((s.bufferedBytes || 0) / 1048576) + 'MB（目标 ' + (s.bufferMs || 0) + 'ms' + (s.preload ? '，整轨预载' : '') + '）\n' +
+          '健康：欠载 ' + (s.underrunCount || 0) + ' 次 / ' + (s.underrunFrames || 0) + ' 帧；限幅 ' + (s.limiterClipBlocks || 0) + ' 块；解码失败 ' + (s.decodeFailed ? '是' : '否');
+      }).catch(function (e) { healthText.textContent = '读取失败：' + (e && e.message ? e.message : e); })
+        .then(function () { healthBtn.disabled = false; });
+    }
+    healthBtn.onclick = renderAudioHealth;
+    onOpenHooks.push(function () { if (currentPage === 'audio') renderAudioHealth(); });
+
     /* ================= 播放 ================= */
     // —— 播放模式（默认；与底栏/AM 顶栏按钮共用 playmode.js） ——
     var sPm = section(pgPlayback, '播放模式');
@@ -802,18 +828,21 @@
       var sFx = section(pgFx, 'VST3 效果器链');
       var fxBox = markItem(el('div', 'set-lib-list'), '效果器 vst vst3 插件 混响 压缩 effect plugin fx');
       sFx.appendChild(fxBox);
-      var fxStat = el('div', 'set-hint', 'VST3 效果器在引擎音频链中处理（均衡器之前），崩溃自动旁通；未播放时参数仅可查看');
+      var fxStat = el('div', 'set-hint', 'VST3 效果器在引擎音频链中处理（均衡器之前）；启停/打开界面做 20ms 平滑过渡，异常或高负载自动旁通；未播放时参数仅可查看');
       sFx.appendChild(fxStat);
       if (!fx) { fxBox.appendChild(el('div', 'set-hint', '效果器模块未加载')); return; }
 
       // —— V3.5.9：效果器方案（整套链的保存/切换，如"音箱模式/耳机模式"） ——
       var prRow = markItem(el('div', 'set-row'), '效果器方案 预设 保存 切换 preset 音箱 耳机');
       var prLab = el('div'); prLab.appendChild(el('div', '', '效果器方案'));
-      prLab.appendChild(el('div', 'set-hint', '保存当前整条链（插件/顺序/启停/参数），一键切换'));
+      prLab.appendChild(el('div', 'set-hint', '保存当前整条链（插件/顺序/启停/参数），一键切换；支持导入/导出与 A/B 对比'));
       var prWrap = el('div', 'set-ctrl');
       var prSel = document.createElement('select');
       var prSaveBtn = el('button', 'btn-ghost', '存为方案…');
       var prDelBtn = el('button', 'btn-ghost', '删除');
+      var prExpBtn = el('button', 'btn-ghost', '导出当前链');
+      var prImpBtn = el('button', 'btn-ghost', '导入');
+      var prAbBtn = el('button', 'btn-ghost', 'A/B');
       function refreshPresets() {
         var list = fx.presets.list();
         prSel.innerHTML = '';
@@ -853,7 +882,32 @@
         fx.presets.remove(prSel.value);
         refreshPresets();
       };
+      prExpBtn.onclick = async function () {
+        prExpBtn.disabled = true; prExpBtn.textContent = '导出中…';
+        try {
+          var p = await fx.presets.exportCurrent();
+          if (p) fxStat.textContent = '已导出：' + p;
+        } catch (e) { fxStat.textContent = '导出失败：' + (e && e.message ? e.message : e); }
+        prExpBtn.disabled = false; prExpBtn.textContent = '导出当前链';
+      };
+      prImpBtn.onclick = async function () {
+        prImpBtn.disabled = true; prImpBtn.textContent = '导入中…';
+        try {
+          var p = await fx.presets.import();
+          if (p) { refreshPresets(); fxStat.textContent = '已导入方案「' + p.name + '」（未自动应用）'; }
+        } catch (e) { fxStat.textContent = '导入失败：' + (e && e.message ? e.message : e); }
+        prImpBtn.disabled = false; prImpBtn.textContent = '导入';
+      };
+      prAbBtn.onclick = async function () {
+        prAbBtn.disabled = true;
+        try {
+          var r = await fx.ab.toggle();
+          fxStat.textContent = r.stored ? '已存 A/B 快照，再点一次切回当前链' : '已切换 A/B（再点切回）';
+        } catch (e) { fxStat.textContent = 'A/B 失败：' + (e && e.message ? e.message : e); }
+        prAbBtn.disabled = false;
+      };
       prWrap.appendChild(prSel); prWrap.appendChild(prSaveBtn); prWrap.appendChild(prDelBtn);
+      prWrap.appendChild(prExpBtn); prWrap.appendChild(prImpBtn); prWrap.appendChild(prAbBtn);
       prRow.appendChild(prLab); prRow.appendChild(prWrap);
       sFx.insertBefore(prRow, fxStat);
       refreshPresets();
@@ -917,8 +971,11 @@
             chk.type = 'checkbox'; chk.checked = !!s.enabled; chk.title = '启用 / 旁通';
             chk.onchange = function () { fx.enable(s.id, s.path, chk.checked).catch(function (e) { chk.checked = !chk.checked; fxStat.textContent = '操作失败：' + e.message; }); };
             row.appendChild(chk);
-            var nm = el('span', 'set-lib-path', (s.broken ? '⚠ ' : '') + (s.name || s.path));
-            nm.title = s.path + (s.broken ? '\n已旁通：插件处理异常，重新启用可复活' : '');
+            var perf = (s.perfMs && s.perfMs > 0) ? (' · ' + s.perfMs + 'ms') : '';
+            var nm = el('span', 'set-lib-path', (s.broken ? (s.auto ? '⚠高负载 ' : '⚠ ') : '') + (s.name || s.path) + perf);
+            nm.title = s.path
+              + (s.broken ? (s.auto ? '\n已自动旁通：处理耗时过高，重新启用可复活' : '\n已旁通：插件处理异常，重新启用可复活') : '')
+              + (s.perfMs ? ('\n处理耗时（EMA）：' + s.perfMs + ' ms/块') : '');
             row.appendChild(nm);
             var ops = el('span', 'fx-ops');
             [['🖥', '打开插件原生界面（需播放中）', function () {

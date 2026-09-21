@@ -218,6 +218,7 @@
         ['退出', '', function () { window.mine.winClose(); }]
       ]],
       ['编辑', [
+        ['批量编辑标签…', '', function () { var paths = []; forEachSel(function (t) { paths.push(t.path); }); if (paths.length && window.annieTagEdit) window.annieTagEdit.open({ paths: paths }); }],
         ['添加到喜爱 / 取消喜爱', '', function () { forEachSel(function (t) { window.mine.toggleFavorite(t.path).then(function (f) { state.favorites = new Set(f); refreshAll(); }); }); }],
         ['从列表中移除（本次会话）', 'Delete', function () { forEachSel(function (t) { S.hiddenPaths.add(t.path); }); S.sel.clear(); rebuildRows(); }],
         ['清空过滤', '', function () { R.filterInput.value = ''; onFilter(''); }]
@@ -922,7 +923,10 @@
       }]);
     });
     items.push(['查看属性', function () { showProps(t); }]);
-    items.push(['编辑标签…', function () { if (window.annieTagEdit) window.annieTagEdit.open({ path: t.path }); }]);
+    items.push(['编辑标签…', function () {
+      var paths = []; forEachSel(function (x) { paths.push(x.path); });
+      if (window.annieTagEdit) window.annieTagEdit.open(paths.length > 1 ? { paths: paths } : { path: t.path });
+    }]);
     items.push(['在线匹配歌词 / 封面…', function () { if (window.annieMatch) window.annieMatch.open({ path: t.path }); }]);
     items.push(['从列表中移除（本次会话）', function () {
       forEachSel(function (x) { S.hiddenPaths.add(x.path); }); S.sel.clear(); rebuildRows();

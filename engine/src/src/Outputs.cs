@@ -71,6 +71,10 @@ public sealed class PcmFloatSource : IWaveProvider
     public WaveFormat WaveFormat { get; }
     public event Action<float, float, float, float>? OnLevel; // rmsL, peakL, rmsR, peakR
     public long FramesRead => System.Threading.Interlocked.Read(ref _framesRead);
+    // 输出健康：短读/欠载与限幅触发计数（音频线程 Interlocked 写，stats RPC 读）
+    public long UnderrunCount;
+    public long UnderrunFrames;
+    public long LimiterClipBlocks;
     public bool SourceEnded => !_active || _pcm.EndOfStream;
 
     private long _levelAccumFrames;
@@ -158,7 +162,15 @@ public sealed class PcmFloatSource : IWaveProvider
         }
 
         // 不足部分填静音
-        if (written < count) Array.Clear(buffer, offset + written, count - written);
+        if (written < count)
+        {
+            Array.Clear(buffer, offset + written, count - written);
+            if (!_pcm.EndOfStream && !_pcm.Failed)
+            {
+                System.Threading.Interlocked.Increment(ref UnderrunCount);
+                System.Threading.Interlocked.Add(ref UnderrunFrames, (count - written) / _frameBytes);
+            }
+        }
 
         // EQ → 增益（音量×响度×前级补偿）→ 软限幅 → 分声道计量（float 域；ch0→L，其余→R）
         // V1.1.5：位置只计实际解码出的数据帧（written），静音填充帧（欠载/seek 预缓冲不足时
@@ -168,6 +180,7 @@ public sealed class PcmFloatSource : IWaveProvider
         var eq = Eq;
         float totalGain = Gain * LoudGain * Preamp;
         bool limiter = Limiter;
+        bool clipBlock = false;
         float sumSqL = 0f, sumSqR = 0f, peakL = 0f, peakR = 0f;
         int phase = _levelPhase;
         // V1.1.7：淡入淡出快照（音频线程与 RPC 线程共享，锁内取快照避免撕裂）
@@ -179,21 +192,60 @@ public sealed class PcmFloatSource : IWaveProvider
             fixed (byte* p = buffer)
             {
                 float* f = (float*)(p + offset);
-                // VST实验区：效果器链在 EQ 之前处理（块级、逐槽独立实例；崩溃自动旁通）
+                // VST实验区：效果器链在 EQ 之前处理（块级、逐槽独立实例；崩溃/高负载自动旁通）
                 var vst = VstFx;
                 if (vst is not null && vst.Length > 0 && frames > 0)
                 {
                     var block = new Span<float>(f, frames * chs);
+                    float rampFrames = Math.Max(1f, WaveFormat.SampleRate * 0.020f); // 20ms 旁通/生效斜坡
+                    long blockUs = Math.Max(1, (long)Math.Round(frames * 1_000_000.0 / WaveFormat.SampleRate));
                     foreach (var inst in vst)
                     {
-                        if (inst.Slot.Broken || !inst.Slot.Enabled) continue;
+                        var slot = inst.Slot;
+                        float target = (slot.Enabled && !slot.Broken && !slot.EditorOpen) ? 1f : 0f;
+                        float wet0 = inst.Wet;
+                        float maxDelta = frames / rampFrames;
+                        float wet1 = wet0 + Math.Clamp(target - wet0, -maxDelta, maxDelta);
+                        if (wet1 <= 0.0005f && target <= 0f) { inst.Wet = 0f; continue; } // 已完全旁通：不处理，省 CPU
                         try
                         {
                             if (inst.Scratch is null || inst.Scratch.Length < block.Length) inst.Scratch = new float[block.Length];
-                            block.CopyTo(inst.Scratch); // 不原地处理：个别插件 in==out 有兼容问题
+                            block.CopyTo(inst.Scratch); // dry（Process 输出仍写回 block）
+                            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                             inst.Plugin.Process(inst.Scratch.AsSpan(0, block.Length), block, frames);
+                            long us = (long)Math.Round((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1_000_000.0 / System.Diagnostics.Stopwatch.Frequency);
+                            System.Threading.Interlocked.Increment(ref slot.PerfCalls);
+                            System.Threading.Interlocked.Exchange(ref slot.PerfLastUs, us);
+                            long ema = System.Threading.Interlocked.Read(ref slot.PerfEmaUs);
+                            System.Threading.Interlocked.Exchange(ref slot.PerfEmaUs, ema <= 0 ? us : (ema * 7 + us) / 8);
+                            long slowUs = Math.Max(3000, (long)Math.Round(blockUs * 0.65));
+                            if (us > slowUs)
+                            {
+                                int streak = System.Threading.Interlocked.Increment(ref slot.PerfSlowStreak);
+                                long nowMs = Environment.TickCount64;
+                                if (streak >= 8 && nowMs >= System.Threading.Interlocked.Read(ref slot.PerfCooldownUntilMs))
+                                {
+                                    slot.AutoBypassed = true; slot.Broken = true; wet1 = 0f;
+                                    System.Threading.Interlocked.Exchange(ref slot.PerfCooldownUntilMs, nowMs + 5000);
+                                }
+                            }
+                            else System.Threading.Interlocked.Exchange(ref slot.PerfSlowStreak, 0);
+                            if (wet0 < 0.999f || wet1 < 0.999f)
+                            {
+                                int n = block.Length;
+                                for (int i = 0; i < n; i++)
+                                {
+                                    float w = wet0 + (wet1 - wet0) * (i / (float)Math.Max(1, n - 1));
+                                    block[i] = inst.Scratch[i] * (1f - w) + block[i] * w;
+                                }
+                            }
+                            inst.Wet = wet1;
                         }
-                        catch { inst.Slot.Broken = true; } // 护栏：异常即旁通，引擎侧稍后发通知
+                        catch
+                        {
+                            try { inst.Scratch?.AsSpan(0, block.Length).CopyTo(block); } catch { } // 异常块回滚成干声，避免半截湿声咔哒
+                            slot.AutoBypassed = false; slot.Broken = true; inst.Wet = 0f; // 护栏：异常即旁通，引擎侧稍后发通知
+                        }
                     }
                 }
                 if (eq is not null)
@@ -209,7 +261,7 @@ public sealed class PcmFloatSource : IWaveProvider
                     }
                     float v = f[i] * g;
                     // Pro：软限幅器（tanh 软膝，|v|≤1 时近似线性，超限平滑压缩到 ±1 内）
-                    if (limiter && (v > 1f || v < -1f)) v = (float)Math.Tanh(v);
+                    if (limiter && (v > 1f || v < -1f)) { clipBlock = true; v = (float)Math.Tanh(v); }
                     f[i] = v;
                     float a = Math.Abs(v);
                     if (phase == 0) { sumSqL += v * v; if (a > peakL) peakL = a; }
@@ -219,6 +271,7 @@ public sealed class PcmFloatSource : IWaveProvider
             }
         }
         _levelPhase = phase;
+        if (clipBlock) System.Threading.Interlocked.Increment(ref LimiterClipBlocks);
         System.Threading.Interlocked.Add(ref _framesRead, frames);
         // V1.1.7：消耗本块的渐变帧数（本块样本数 = count/4）
         if (fading)

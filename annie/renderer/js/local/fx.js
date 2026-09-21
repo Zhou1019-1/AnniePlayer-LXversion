@@ -125,54 +125,95 @@
   var PRESET_KEY = 'annieplayer.vstfx.presets';
   function loadPresets() { try { var a = JSON.parse(localStorage.getItem(PRESET_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
   function savePresets(list) { try { localStorage.setItem(PRESET_KEY, JSON.stringify(list.slice(0, 30))); } catch (e) { } }
+  function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
+  function findPreset(id) { var all = loadPresets(); for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i]; return null; }
+  /* 收编当前链各槽状态并返回方案对象（不写预设列表） */
+  async function captureCurrent(name) {
+    var slots = await fx.list().catch(function () { return []; });
+    for (var i = 0; i < slots.length; i++) {
+      var s = slots[i];
+      if (s.broken) continue;
+      try {
+        var r = await E('state', { id: s.id });
+        var c = cfgByPath(s.path);
+        if (c && r.stateB64) c.stateB64 = r.stateB64;
+      } catch (e) { }
+    }
+    persist();
+    return { id: 'p' + Date.now().toString(36), name: name, slots: deepCopy(cfg.slots), at: Date.now() };
+  }
+  async function applyPresetObject(p) {
+    var cur = await fx.list().catch(function () { return []; });
+    for (var j = 0; j < cur.length; j++) { try { await E('remove', { id: cur[j].id }); } catch (e) { } }
+    cfg.slots = [];
+    var failed = 0;
+    for (var k = 0; k < p.slots.length; k++) {
+      var ps = p.slots[k];
+      try {
+        var r = await E('add', { path: ps.path });
+        if (ps.stateB64) { try { await E('setState', { id: r.slot.id, stateB64: ps.stateB64 }); } catch (e) { } }
+        if (ps.enabled === false) { try { await E('enable', { id: r.slot.id, on: false }); } catch (e) { } }
+        cfg.slots.push({ path: ps.path, name: ps.name, enabled: ps.enabled !== false, stateB64: ps.stateB64 || '' });
+      } catch (e) { failed++; }
+    }
+    runtime.restored = true;
+    persist(); emit();
+    return { total: p.slots.length, failed: failed };
+  }
 
   fx.presets = {
     list: loadPresets,
     /* 保存当前链为方案：先收编各槽最新参数状态（live 实例可能刚调过），再深拷贝快照 */
     saveAs: async function (name) {
-      var slots = await fx.list().catch(function () { return []; });
-      for (var i = 0; i < slots.length; i++) {
-        var s = slots[i];
-        if (s.broken) continue;
-        try {
-          var r = await E('state', { id: s.id });
-          var c = cfgByPath(s.path);
-          if (c && r.stateB64) c.stateB64 = r.stateB64;
-        } catch (e) { }
-      }
-      persist();
+      var preset = await captureCurrent(name);
       var list = loadPresets();
-      var preset = { id: 'p' + Date.now().toString(36), name: name, slots: JSON.parse(JSON.stringify(cfg.slots)), at: Date.now() };
       list.unshift(preset);
       savePresets(list);
       return preset;
     },
     /* 切换方案：清空当前链 → 按方案逐槽重建（含参数状态与启停）；缺失插件跳过不中断 */
     apply: async function (id) {
-      var p = null;
-      var all = loadPresets();
-      for (var i = 0; i < all.length; i++) if (all[i].id === id) p = all[i];
+      var p = findPreset(id);
       if (!p) throw new Error('方案不存在');
-      var cur = await fx.list().catch(function () { return []; });
-      for (var j = 0; j < cur.length; j++) { try { await E('remove', { id: cur[j].id }); } catch (e) { } }
-      cfg.slots = [];
-      var failed = 0;
-      for (var k = 0; k < p.slots.length; k++) {
-        var ps = p.slots[k];
-        try {
-          var r = await E('add', { path: ps.path });
-          if (ps.stateB64) { try { await E('setState', { id: r.slot.id, stateB64: ps.stateB64 }); } catch (e) { } }
-          if (ps.enabled === false) { try { await E('enable', { id: r.slot.id, on: false }); } catch (e) { } }
-          cfg.slots.push({ path: ps.path, name: ps.name, enabled: ps.enabled !== false, stateB64: ps.stateB64 || '' });
-        } catch (e) { failed++; }
-      }
-      runtime.restored = true;
-      persist(); emit();
-      return { total: p.slots.length, failed: failed };
+      return applyPresetObject(p);
     },
     remove: function (id) {
       savePresets(loadPresets().filter(function (x) { return x.id !== id; }));
+    },
+    /* V3.5.11：导出当前链为 .anniefx.json（不写预设列表） */
+    exportCurrent: async function () {
+      if (!cfg.slots.length) throw new Error('当前链为空，先添加插件');
+      var p = await captureCurrent('导出方案 ' + new Date().toLocaleString());
+      var text = JSON.stringify({ app: 'annie-player', kind: 'vstfx-preset', version: 1, preset: p }, null, 2);
+      return await window.mine.vstPresetExport(text); // null = 用户取消
+    },
+    /* V3.5.11：导入 .anniefx.json 到预设列表（返回新方案，不自动应用） */
+    import: async function () {
+      var text = await window.mine.vstPresetImport();
+      if (!text) return null;
+      var obj; try { obj = JSON.parse(text); } catch (e) { throw new Error('文件不是有效 JSON'); }
+      var p = obj && obj.preset ? obj.preset : obj;
+      if (!p || !Array.isArray(p.slots)) throw new Error('文件不是有效的效果器方案');
+      p.id = 'p' + Date.now().toString(36);
+      p.name = String(p.name || '导入方案');
+      var list = loadPresets();
+      list.unshift(p);
+      savePresets(list);
+      return p;
     }
+  };
+
+  /* V3.5.11：A/B 快速对比——第一次点击存当前链快照，之后在当前链与快照间来回切换 */
+  fx.ab = {
+    snap: null,
+    toggle: async function () {
+      if (!fx.ab.snap) { fx.ab.snap = await captureCurrent('A/B 快照'); return { stored: true }; }
+      var cur = await captureCurrent('A/B 当前');
+      await applyPresetObject(fx.ab.snap);
+      fx.ab.snap = cur;
+      return { stored: false };
+    },
+    clear: function () { fx.ab.snap = null; }
   };
 
   window.annieFx = fx;

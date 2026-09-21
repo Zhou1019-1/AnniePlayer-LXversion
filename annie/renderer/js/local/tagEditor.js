@@ -1,14 +1,15 @@
 'use strict';
 /* ============================================================================
- * 曲库标签编辑（V3.5.9）—— 全主题共用覆盖层弹窗
- *   - 编辑 标题/艺人/专辑/专辑艺术家 + 封面（本地选图）
- *   - 写回走主进程 tag:edit（ffmpeg 流复制不重编码；CUE/ISO 分轨不支持）
- *   - 附"在线匹配…"快捷入口（复用 V3.3.1 annieMatch，自动补全歌词/封面）
- *   - 对外：window.annieTagEdit.open({ path })
+ * 曲库标签编辑（V3.5.9 / Track B 批量）—— 全主题共用覆盖层弹窗
+ *   - 单曲：编辑 标题/艺人/专辑/专辑艺术家 + 封面（本地选图）
+ *   - 批量：open({ paths })，字段需勾选后才写入；不同值显示 <多个值>，未勾选保留原标签
+ *   - 写回走主进程 tag:edit / tag:editBatch（ffmpeg 流复制不重编码；CUE/ISO 分轨不支持）
+ *   - 对外：window.annieTagEdit.open({ path }) / open({ paths })
  * ========================================================================== */
 (function () {
   var STYLE_ID = 'tag-editor-style';
-  var win = null, coverFile = null, curPath = null;
+  var win = null, coverFile = null, curPath = null, curPaths = [], batchMode = false;
+  var FIELDS = ['title', 'artist', 'album', 'albumArtist', 'genre', 'date', 'track', 'disc', 'composer', 'publisher', 'comment'];
 
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -17,7 +18,7 @@
     s.textContent = [
       '.tged-mask{position:fixed;inset:0;z-index:9900;background:rgba(4,6,10,.55);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;animation:tgedIn .18s ease}',
       '@keyframes tgedIn{from{opacity:0}to{opacity:1}}',
-      '.tged-win{width:560px;max-width:94vw;border-radius:18px;padding:22px 24px;background:rgba(22,24,32,.92);border:1px solid rgba(255,255,255,.1);box-shadow:0 24px 60px rgba(0,0,0,.5);color:#e8eaf0;font-size:13px}',
+      '.tged-win{width:560px;max-width:94vw;max-height:88vh;overflow:auto;border-radius:18px;padding:22px 24px;background:rgba(22,24,32,.92);border:1px solid rgba(255,255,255,.1);box-shadow:0 24px 60px rgba(0,0,0,.5);color:#e8eaf0;font-size:13px}',
       '.tged-title{font-size:15px;font-weight:700;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}',
       '.tged-close{background:none;border:none;color:rgba(255,255,255,.5);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:6px}',
       '.tged-close:hover{color:#fff;background:rgba(255,255,255,.1)}',
@@ -26,8 +27,10 @@
       '.tged-grid .tged-row{min-width:0}',
       '.tged-comment{margin-top:2px}',
       '.tged-row label{width:70px;flex:none;color:rgba(255,255,255,.55);font-size:12px;text-align:right}',
+      '.tged-en{flex:none;width:14px;height:14px;accent-color:#d4a24a;cursor:pointer}',
       '.tged-row input[type=text]{flex:1;min-width:0;box-sizing:border-box;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#e8eaf0;padding:7px 10px;font-size:13px;outline:none}',
       '.tged-row input[type=text]:focus{border-color:rgba(212,162,74,.6)}',
+      '.tged-row input[type=text]:disabled{opacity:.45}',
       '.tged-cover{display:flex;gap:14px;align-items:center;margin:6px 0 14px}',
       '.tged-cover img{width:88px;height:88px;border-radius:10px;object-fit:cover;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}',
       '.tged-cover-btns{display:flex;flex-direction:column;gap:8px}',
@@ -36,8 +39,8 @@
       '.tged-btn:disabled{opacity:.5;cursor:default}',
       '.tged-btn-accent{background:linear-gradient(135deg,#d4a24a,#b4812e);border-color:transparent;color:#1a1206;font-weight:600}',
       '.tged-btn-accent:hover{filter:brightness(1.08)}',
-      '.tged-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px}',
-      '.tged-status{font-size:11.5px;color:rgba(255,255,255,.5);min-height:14px}',
+      '.tged-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:12px}',
+      '.tged-status{font-size:11.5px;color:rgba(255,255,255,.5);min-height:14px;white-space:pre-wrap}',
       '.tged-status.err{color:#ff8080}',
     ].join('\n');
     document.head.appendChild(s);
@@ -52,15 +55,19 @@
   function open(opts) {
     ensureStyle();
     close();
-    curPath = opts.path;
+    opts = opts || {};
+    curPaths = Array.isArray(opts.paths) ? opts.paths.filter(Boolean) : (opts.path ? [opts.path] : []);
+    batchMode = curPaths.length > 1;
+    curPath = curPaths[0] || null;
     coverFile = null;
+    if (!curPaths.length) return;
 
     var mask = document.createElement('div');
     mask.className = 'tged-mask';
     win = document.createElement('div');
     win.className = 'tged-win';
     win.innerHTML =
-      '<div class="tged-title"><span>编辑标签</span><button class="tged-close">✕</button></div>' +
+      '<div class="tged-title"><span>' + (batchMode ? ('批量编辑标签（' + curPaths.length + ' 首）') : '编辑标签') + '</span><button class="tged-close">✕</button></div>' +
       '<div class="tged-grid">' +
       '<div class="tged-row"><label>标题</label><input type="text" data-k="title"></div>' +
       '<div class="tged-row"><label>艺人</label><input type="text" data-k="artist"></div>' +
@@ -76,9 +83,9 @@
       '<div class="tged-row tged-comment"><label>注释</label><input type="text" data-k="comment"></div>' +
       '<div class="tged-cover"><img alt=""><div class="tged-cover-btns">' +
       '<button class="tged-btn" data-act="pick">选择封面图…</button>' +
-      (window.annieMatch ? '<button class="tged-btn" data-act="match">在线匹配歌词 / 封面…</button>' : '') +
+      (!batchMode && window.annieMatch ? '<button class="tged-btn" data-act="match">在线匹配歌词 / 封面…</button>' : '') +
       '</div></div>' +
-      '<div class="tged-foot"><span class="tged-status">留空的字段将从文件中删除该标签</span>' +
+      '<div class="tged-foot"><span class="tged-status">' + (batchMode ? '勾选字段才会写入；未勾选/留空保留原标签（曲目号/碟号默认不批量）' : '留空的字段将从文件中删除该标签') + '</span>' +
       '<span style="display:flex;gap:10px"><button class="tged-btn" data-act="cancel">取消</button>' +
       '<button class="tged-btn tged-btn-accent" data-act="save">保存</button></span></div>';
     mask.appendChild(win);
@@ -91,24 +98,95 @@
       var f = await window.mine.tagPickCover().catch(function () { return null; });
       if (!f) return;
       coverFile = f;
-      // 本地预览（CSP 允许 data: 与本机 file 经 img 不行——读成 dataURL 太浪费，直接 file:// 预览）
       win.querySelector('.tged-cover img').src = 'file:///' + f.replace(/\\/g, '/');
+      if (batchMode) { var cEn = win.querySelector('[data-en=cover]'); if (cEn) cEn.checked = true; }
       toast('已选择封面，保存后写入文件标签');
     };
     var matchBtn = win.querySelector('[data-act=match]');
     if (matchBtn) matchBtn.onclick = function () { close(); window.annieMatch.open({ path: curPath }); };
-    win.querySelector('[data-act=save]').onclick = save;
+    win.querySelector('[data-act=save]').onclick = batchMode ? saveBatch : save;
 
-    // 载入现有标签
-    window.mine.meta(curPath).then(function (m) {
-      if (!win || !m) return;
-      ['title', 'artist', 'album', 'albumArtist', 'genre', 'track', 'disc', 'composer', 'publisher', 'comment'].forEach(function (k) {
+    if (batchMode) setupBatchRows();
+    loadExisting();
+  }
+
+  /* 批量模式：每字段前加勾选框，默认不勾选不写入；track/disc 默认禁用（逐曲字段） */
+  function setupBatchRows() {
+    FIELDS.forEach(function (k) {
+      var inp = win.querySelector('[data-k=' + k + ']');
+      if (!inp) return;
+      var en = document.createElement('input');
+      en.type = 'checkbox'; en.className = 'tged-en'; en.dataset.en = k;
+      en.checked = false;
+      inp.disabled = true;
+      if (k === 'track' || k === 'disc') en.title = '逐曲字段，默认不批量写入';
+      inp.parentNode.insertBefore(en, inp);
+      en.onchange = function () { inp.disabled = !en.checked; if (en.checked) inp.focus(); };
+    });
+    var coverBtns = win.querySelector('.tged-cover-btns');
+    var cEn = document.createElement('input');
+    cEn.type = 'checkbox'; cEn.className = 'tged-en'; cEn.dataset.en = 'cover'; cEn.title = '勾选后批量写入封面';
+    coverBtns.parentNode.insertBefore(cEn, coverBtns);
+  }
+
+  function metaVal(m, k) {
+    if (!m) return '';
+    if (k === 'date') return String(m.year || '');
+    return String(m[k] || '');
+  }
+
+  async function loadExisting() {
+    if (!batchMode) {
+      window.mine.meta(curPath).then(function (m) {
+        if (!win || !m) return;
+        FIELDS.forEach(function (k) {
+          var inp = win.querySelector('[data-k=' + k + ']');
+          var v = metaVal(m, k);
+          if (inp && v) inp.value = v;
+        });
+        if (m.cover) win.querySelector('.tged-cover img').src = m.cover;
+      }).catch(function () { });
+      return;
+    }
+    try {
+      var all = await window.mine.metaFullBatch(curPaths);
+      FIELDS.forEach(function (k) {
         var inp = win.querySelector('[data-k=' + k + ']');
-        if (inp && m[k]) inp.value = m[k];
+        if (!inp) return;
+        var seen = new Set(), vals = [];
+        curPaths.forEach(function (p) {
+          var m = all && all[p];
+          var v = m && m.ok ? metaVal(m, k) : '';
+          if (v) { seen.add(v); vals.push(v); }
+        });
+        if (seen.size === 1) inp.value = vals[0];
+        else if (seen.size > 1) inp.placeholder = '<多个值>';
       });
-      if (m.year) win.querySelector('[data-k=date]').value = m.year;
-      if (m.cover) win.querySelector('.tged-cover img').src = m.cover;
-    }).catch(function () { });
+      var first = null;
+      for (var i = 0; i < curPaths.length; i++) { var mm = all && all[curPaths[i]]; if (mm && mm.ok && mm.cover) { first = mm.cover; break; } }
+      if (first) win.querySelector('.tged-cover img').src = first;
+    } catch (e) { }
+  }
+
+  function collectEnabledFields() {
+    var fields = {};
+    FIELDS.forEach(function (k) {
+      var en = win.querySelector('[data-en=' + k + ']');
+      var inp = win.querySelector('[data-k=' + k + ']');
+      if (!en || !en.checked || !inp) return;
+      var v = inp.value.trim();
+      if (v) fields[k] = v;
+    });
+    return fields;
+  }
+
+  function afterWrite(paths) {
+    try {
+      if (typeof state !== 'undefined' && state.metaCache) paths.forEach(function (p) { state.metaCache.delete(p); });
+      if (typeof renderCurrentView === 'function') renderCurrentView();
+      if (typeof renderFolderTree === 'function') renderFolderTree();
+      paths.forEach(function (p) { document.dispatchEvent(new CustomEvent('annie-tag-edited', { detail: { path: p } })); });
+    } catch (e) { }
   }
 
   async function save() {
@@ -116,29 +194,11 @@
     var btn = win.querySelector('[data-act=save]');
     btn.disabled = true; btn.textContent = '保存中…';
     try {
-      var r = await window.mine.tagEdit({
-        path: curPath,
-        title: win.querySelector('[data-k=title]').value,
-        artist: win.querySelector('[data-k=artist]').value,
-        album: win.querySelector('[data-k=album]').value,
-        albumArtist: win.querySelector('[data-k=albumArtist]').value,
-        genre: win.querySelector('[data-k=genre]').value,
-        date: win.querySelector('[data-k=date]').value,
-        track: win.querySelector('[data-k=track]').value,
-        disc: win.querySelector('[data-k=disc]').value,
-        composer: win.querySelector('[data-k=composer]').value,
-        publisher: win.querySelector('[data-k=publisher]').value,
-        comment: win.querySelector('[data-k=comment]').value,
-        coverFile: coverFile,
-      });
+      var payload = { path: curPath, coverFile: coverFile };
+      FIELDS.forEach(function (k) { payload[k] = win.querySelector('[data-k=' + k + ']').value; });
+      var r = await window.mine.tagEdit(payload);
       if (r && r.ok) {
-        // 刷新渲染侧缓存与列表
-        try {
-          if (typeof state !== 'undefined' && state.metaCache) state.metaCache.delete(curPath);
-          if (typeof renderCurrentView === 'function') renderCurrentView();
-          if (typeof renderFolderTree === 'function') renderFolderTree();
-          document.dispatchEvent(new CustomEvent('annie-tag-edited', { detail: { path: curPath } }));
-        } catch (e) { }
+        afterWrite([curPath]);
         close();
         toast('标签已保存');
       } else {
@@ -151,9 +211,39 @@
     }
   }
 
+  async function saveBatch() {
+    if (!win) return;
+    var fields = collectEnabledFields();
+    var coverEn = win.querySelector('[data-en=cover]');
+    var useCover = !!(coverEn && coverEn.checked && coverFile);
+    if (!Object.keys(fields).length && !useCover) { toast('先勾选要批量写入的字段或封面', 3500); return; }
+    var btn = win.querySelector('[data-act=save]');
+    btn.disabled = true; btn.textContent = '写入中…';
+    try {
+      var r = await window.mine.tagEditBatch({ paths: curPaths, fields: fields, coverFile: useCover ? coverFile : null });
+      var results = (r && r.results) || [];
+      var okPaths = results.filter(function (x) { return x.ok; }).map(function (x) { return x.path; });
+      var failed = results.filter(function (x) { return !x.ok; });
+      if (okPaths.length) afterWrite(okPaths);
+      if (!failed.length) {
+        close();
+        toast('已批量写入 ' + okPaths.length + ' 首');
+      } else {
+        var msg = '完成 ' + okPaths.length + '/' + results.length + '，失败 ' + failed.length + '：' + (failed[0].reason || '未知错误');
+        toast(msg, 6000);
+        var st = win && win.querySelector('.tged-status');
+        if (st) { st.textContent = msg; st.classList.add('err'); }
+        btn.disabled = false; btn.textContent = '保存';
+      }
+    } catch (e) {
+      toast('批量保存失败：' + (e && e.message ? e.message : e), 5000);
+      btn.disabled = false; btn.textContent = '保存';
+    }
+  }
+
   function close() {
     if (win && win.parentNode) win.parentNode.remove();
-    win = null; coverFile = null; curPath = null;
+    win = null; coverFile = null; curPath = null; curPaths = []; batchMode = false;
   }
 
   window.annieTagEdit = { open: open, close: close };

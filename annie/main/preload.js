@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('mine', {
   matchApply: (params) => ipcRenderer.invoke('match:apply', params),
   tagPickCover: () => ipcRenderer.invoke('tag:pickCover'),            // V3.5.9：标签编辑选封面
   tagEdit: (params) => ipcRenderer.invoke('tag:edit', params),        // V3.5.9：写回标签
+  tagEditBatch: (params) => ipcRenderer.invoke('tag:editBatch', params), // Track B：批量写回标签
 
   // SVLX 1.3.0：自建播放列表（AM 主题）
   playlists: () => ipcRenderer.invoke('lib:playlists'),
@@ -66,6 +67,8 @@ contextBridge.exposeInMainWorld('mine', {
 
   // VST实验区：VST3 效果器（选择 .vst3 文件）
   vstPickPlugin: () => ipcRenderer.invoke('vst:pickPlugin'),
+  vstPresetExport: (json) => ipcRenderer.invoke('vst:presetExport', json), // V3.5.11：导出效果器方案
+  vstPresetImport: () => ipcRenderer.invoke('vst:presetImport'),           // V3.5.11：导入效果器方案
 
   // 流媒体平台（洛雪 musicSdk：酷狗 / 酷我 / 咪咕 / QQ / 网易）
   streamSearch: (params) => ipcRenderer.invoke('stream:search', params),

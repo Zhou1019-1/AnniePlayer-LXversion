@@ -80,7 +80,7 @@ public sealed class Engine
         _positionTimer = new Timer(_ => TickPosition(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    private Task<object?> HandleAsync(string method, JsonObject p)
+    private async Task<object?> HandleAsync(string method, JsonObject p)
     {
         object? result = method switch
         {
@@ -141,7 +141,7 @@ public sealed class Engine
             "vst.setParam" => VstSetParam(Req(p, "id"), p["paramId"]?.GetValue<uint>() ?? 0, p["value"]?.GetValue<double>() ?? 0),
             "vst.state" => VstGetState(Req(p, "id")),
             "vst.setState" => VstSetState(Req(p, "id"), p["stateB64"]?.GetValue<string>() ?? ""),
-            "vst.openEditor" => VstOpenEditor(Req(p, "id")),
+            "vst.openEditor" => await VstOpenEditor(Req(p, "id")),
             "vst.closeEditor" => VstCloseEditor(Req(p, "id")),
 
             /* ---------------- Pro beat0.0.1 ---------------- */
@@ -153,21 +153,53 @@ public sealed class Engine
 
             "asio.panel" => ShowAsioPanel(),
 
-            // Pro beat0.0.1：调试面板——解码缓冲水位 / 引擎运行时长 / 播放代际
-            "stats" => (object)new
-            {
-                ok = true,
-                bufferedBytes = _pcm?.QueuedBytes ?? 0,
-                uptimeSec = (DateTime.UtcNow - StartedAt).TotalSeconds,
-                playGeneration = _playGeneration,
-                crossfadeSec = _crossfadeSec,
-                dsdMode = _dsdMode
-            },
+            // Pro beat0.0.1：调试/输出健康——解码缓冲水位 / 设备格式 / 重采样 / 欠载与限幅计数
+            "stats" => Stats(),
 
             "shutdown" => Shutdown(),
             _ => throw new InvalidOperationException("未知方法: " + method),
         };
         return Task.FromResult(result);
+    }
+
+    /// <summary>输出健康/调试统计：设备格式、重采样、缓冲水位、欠载与限幅计数（未播放时健康计数为 0）。</summary>
+    private object Stats()
+    {
+        var src = _source;
+        var pcm = _pcm;
+        var backend = _backend;
+        var fmt = backend?.ActiveFormat;
+        double bufferedSec = src is null || pcm is null ? 0 : Math.Round(pcm.QueuedBytes / (double)Math.Max(1, src.WaveFormat.SampleRate * src.WaveFormat.Channels * 4), 2);
+        return new
+        {
+            ok = true,
+            bufferedBytes = pcm?.QueuedBytes ?? 0,
+            bufferedSec,
+            uptimeSec = (DateTime.UtcNow - StartedAt).TotalSeconds,
+            playGeneration = _playGeneration,
+            crossfadeSec = _crossfadeSec,
+            dsdMode = _dsdMode,
+            backendKind = _backendKind,
+            deviceId = _backendDeviceId,
+            deviceName = backend?.DeviceName ?? "",
+            exclusive = backend is WasapiExclusiveBackend wb ? wb.IsExclusive : _exclusive,
+            requestedRate = backend?.RequestedRate ?? _decodeRate,
+            outputRate = fmt?.SampleRate ?? 0,
+            bitsPerSample = fmt?.BitsPerSample ?? 0,
+            channels = fmt?.Channels ?? 0,
+            resampled = backend?.Resampled ?? _resampled,
+            bufferMs = _bufferMs,
+            preload = _preload,
+            playing = _playing,
+            streamPaused = _streamPaused,
+            crossfading = _mixer?.Crossfading ?? false,
+            dopActive = _dopActive,
+            underrunCount = src is null ? 0 : System.Threading.Interlocked.Read(ref src.UnderrunCount),
+            underrunFrames = src is null ? 0 : System.Threading.Interlocked.Read(ref src.UnderrunFrames),
+            limiterClipBlocks = src is null ? 0 : System.Threading.Interlocked.Read(ref src.LimiterClipBlocks),
+            decodeFailed = pcm?.Failed ?? false,
+            sourceEnded = src?.SourceEnded ?? false
+        };
     }
 
     private static string Req(JsonObject p, string key)
@@ -263,7 +295,18 @@ public sealed class Engine
 
     /* ==================== VST实验区：VST3 效果器链 ==================== */
 
-    private static object VstSlotInfo(VstFxSlot s) => new { id = s.Id, path = s.Path, name = s.Name, enabled = s.Enabled, broken = s.Broken, editorOpen = _editorSlotIdStatic == s.Id };
+    private static object VstSlotInfo(VstFxSlot s) => new
+    {
+        id = s.Id,
+        path = s.Path,
+        name = s.Name,
+        enabled = s.Enabled,
+        broken = s.Broken,
+        auto = s.AutoBypassed,
+        editorOpen = _editorSlotIdStatic == s.Id,
+        perfMs = Math.Round(System.Threading.Interlocked.Read(ref s.PerfEmaUs) / 1000.0, 2),
+        perfCalls = System.Threading.Interlocked.Read(ref s.PerfCalls)
+    };
     // VstSlotInfo 是静态方法，编辑器状态经此静态字段透传（Engine 单例）
     private static string? _editorSlotIdStatic;
 
@@ -309,8 +352,16 @@ public sealed class Engine
             var slot = _vstSlots.FirstOrDefault(s => s.Id == id);
             if (slot is null) return new { ok = false, error = "槽位不存在" };
             slot.Enabled = on;
-            if (on) { slot.Broken = false; _vstCrashNotified.Remove(id); } // 重新启用 = 给它一次复活机会
-            ReattachVstLocked();
+            if (on)
+            {
+                slot.Broken = false; slot.AutoBypassed = false; _vstCrashNotified.Remove(id); // 重新启用 = 给它一次复活机会
+                System.Threading.Interlocked.Exchange(ref slot.PerfCalls, 0);
+                System.Threading.Interlocked.Exchange(ref slot.PerfEmaUs, 0);
+                System.Threading.Interlocked.Exchange(ref slot.PerfSlowStreak, 0);
+                // 关闭时我们保留实例做湿声淡出；若当前源里还没有该槽实例（例如播放前就禁用），再挂链让它从 Wet=0 淡入。
+                if (_source?.VstFx?.Any(i => i.Slot.Id == id) != true) ReattachVstLocked();
+            }
+            // 关闭：不拆链，PcmFloatSource 按 target=0 做 20ms 湿声淡出后跳过处理，避免咔哒。
         }
         return new { ok = true };
     }
@@ -324,7 +375,7 @@ public sealed class Engine
             if (i < 0) return new { ok = false, error = "槽位不存在" };
             if (j < 0 || j >= _vstSlots.Count) return new { ok = true }; // 到顶/到底不动
             (_vstSlots[i], _vstSlots[j]) = (_vstSlots[j], _vstSlots[i]);
-            ReattachVstLocked();
+            SyncVstOrderLocked(); // 仅重排已存在实例，不重建插件，避免顺序调整产生爆音
         }
         return new { ok = true };
     }
@@ -402,7 +453,7 @@ public sealed class Engine
     /* ---------- 插件原生界面（FB2K 式独立悬浮窗） ---------- */
 
     /// <summary>打开插件原生界面。IVGI2 这类分离控制器插件要求模块/插件/视图在同一 UI 线程创建，因此编辑器实例在 VST 编辑器线程内生成。</summary>
-    private object VstOpenEditor(string id)
+    private async Task<object> VstOpenEditor(string id)
     {
         VstFxSlot? slot; int rate = 48000, channels = 2;
         lock (_gate)
@@ -418,7 +469,12 @@ public sealed class Engine
             }
             rate = _source?.WaveFormat.SampleRate ?? 48000;
             channels = _source?.WaveFormat.Channels ?? 2;
-            // IVGI2：同插件存在活动实例时，第二个实例 Attach 会卡死；开界面临时把该槽活实例摘出音频链。
+            // 先标记 EditorOpen：音频线程把该槽湿声 20ms 淡出，再摘活实例（IVGI2 活动实例会抢占第二个实例的 UI Attach）。
+            if (_source?.VstFx?.Any(i => i.Slot.Id == id) == true) slot.EditorOpen = true;
+        }
+        if (slot.EditorOpen) await Task.Delay(35); // 等淡出完成，避免开原生界面瞬间咔哒
+        lock (_gate)
+        {
             var src = _source;
             if (src?.VstFx is { } fx)
             {
@@ -518,6 +574,17 @@ public sealed class Engine
     }
 
     private void ReattachVstLocked() { if (_source is not null) AttachVst(_source); }
+
+    /// <summary>只按槽位顺序重排当前源里的实例；缺实例/多实例时才回退重建。须持 _gate。</summary>
+    private void SyncVstOrderLocked()
+    {
+        var src = _source; var fx = src?.VstFx;
+        if (src is null || fx is null) return;
+        var order = new Dictionary<string, int>();
+        for (int i = 0; i < _vstSlots.Count; i++) order[_vstSlots[i].Id] = i;
+        if (fx.Any(i => !order.ContainsKey(i.Slot.Id))) { ReattachVstLocked(); return; }
+        src.VstFx = fx.OrderBy(i => order[i.Slot.Id]).ToArray();
+    }
 
     /// <summary>Pro：把防削波链路（自动前级 + 限幅器）应用到活动源（须持有 _gate）。</summary>
     private void ApplyDspLocked()
@@ -1163,7 +1230,9 @@ public sealed class Engine
             // VST实验区：音频线程置的 Broken 在此（10Hz 定时器线程）转成用户通知，去重
             foreach (var s in _vstSlots)
                 if (s.Broken && _vstCrashNotified.Add(s.Id))
-                    _rpc.Emit("notify", new { text = $"VST 插件「{s.Name}」处理异常，已自动旁通（重新启用可复活）" });
+                    _rpc.Emit("notify", new { text = s.AutoBypassed
+                        ? $"VST 插件「{s.Name}」处理耗时过高，已自动旁通（重新启用可复活）"
+                        : $"VST 插件「{s.Name}」处理异常，已自动旁通（重新启用可复活）" });
             if (_track is null) return;
             if (_dopActive && _dopSource is not null)
             {
@@ -1183,8 +1252,6 @@ public sealed class Engine
                 {
                     _ended = true;
                     shouldEnd = true;
-                    // [dbg] 临时调试：ended 触发状态
-                    _rpc.Emit("notify", new { text = $"[dbg ended] pos={pos:0.0}/{dur:0.0} eof={_pcm.EndOfStream} failed={_pcm.Failed} fr={_source.FramesRead} rate={_decodeRate} off={_offsetSec} active={_source.SourceEnded}" });
                 }
             }
         }

@@ -17,8 +17,15 @@ public sealed class VstFxSlot : IDisposable
     public string Name = "";
     public bool Enabled = true;
     public volatile bool Broken;        // 加载/处理失败 → 自动旁通
+    public volatile bool AutoBypassed;  // 高负载自动旁通（区别于异常旁通，UI 展示用）
     public volatile bool EditorOpen;    // 原生界面打开期间：临时摘掉活实例，避免同插件活动实例抢占 UI Attach
     public byte[]? SavedState;          // 最近持久化状态（换源/换采样率重建实例时恢复）
+    // 性能统计（音频线程写，RPC/定时器读；用 Interlocked 读写 long）
+    public long PerfCalls;
+    public long PerfLastUs;
+    public long PerfEmaUs;
+    public int PerfSlowStreak;
+    public long PerfCooldownUntilMs;
 
     private Vst3Module? _module;
     private Vst3ClassInfo? _classInfo;
@@ -48,7 +55,7 @@ public sealed class VstFxSlot : IDisposable
             throw new InvalidOperationException($"插件声道（{inCh}→{outCh}）与当前 {channels} 声道不匹配");
         }
         if (SavedState is not null) { try { plugin.LoadState(SavedState); } catch { } }
-        return new VstFxInstance { Slot = this, Plugin = plugin };
+        return new VstFxInstance { Slot = this, Plugin = plugin, Wet = 0f }; // Wet 从 0 淡入，避免挂链瞬间咔哒
     }
 
     /// <summary>模块未加载也能给出展示名（列表用）。</summary>
@@ -65,6 +72,8 @@ public sealed class VstFxInstance
     public VstFxSlot Slot = null!;
     public Vst3Plugin Plugin = null!;
     public float[]? Scratch;
+    /// <summary>该实例在链中的湿声占比（0=旁通，1=生效），音频线程按目标值做短斜坡，避免启停/挂接咔哒。</summary>
+    public float Wet;
     /// <summary>插件原生界面挂在活实例上（分析仪才能看到信号）；挂接期间源退役不释放插件对象。</summary>
     public volatile bool EditorAttached;
     /// <summary>源已退役但编辑器仍开着：插件对象转交编辑器关闭路径回收（见 Engine.VstEditorCleanup）。</summary>

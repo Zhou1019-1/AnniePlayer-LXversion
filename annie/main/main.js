@@ -432,6 +432,26 @@ function registerIpc() {
     return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
   });
 
+  // V3.5.11：效果器方案导入/导出（.anniefx.json）
+  ipcMain.handle('vst:presetExport', async (_e, json) => {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: 'annie-fx-preset.anniefx.json',
+      filters: [{ name: '安妮效果器方案', extensions: ['anniefx.json', 'json'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    try { fs.writeFileSync(r.filePath, String(json || ''), 'utf8'); return r.filePath; }
+    catch (ex) { throw new Error('写入失败：' + ex.message); }
+  });
+  ipcMain.handle('vst:presetImport', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [{ name: '安妮效果器方案', extensions: ['anniefx.json', 'json'] }]
+    });
+    if (r.canceled || !r.filePaths.length) return null;
+    try { return fs.readFileSync(r.filePaths[0], 'utf8'); }
+    catch (ex) { throw new Error('读取失败：' + ex.message); }
+  });
+
   // EXP 7.28：移除文件夹即时生效（内存过滤，无需重扫磁盘）
   ipcMain.handle('lib:removeFolder', async (_e, folder) => {
     const store = loadStore();
@@ -922,32 +942,46 @@ function registerIpc() {
     });
     return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
   });
-  ipcMain.handle('tag:edit', async (_e, p) => {
-    const fp = String((p && p.path) || '');
+  async function applyTagEdit(fp, fields, coverFile, clearEmpty) {
+    fp = String(fp || '');
     if (!fp || fp.includes('#')) return { ok: false, reason: 'CUE/ISO 分轨不支持标签编辑' };
     let coverBytes = null;
-    if (p.coverFile) { try { coverBytes = fs.readFileSync(p.coverFile); } catch { } }
+    if (coverFile) { try { coverBytes = fs.readFileSync(coverFile); } catch { } }
+    const f = fields || {};
     const r = await tagWriter.writeTags({
       dest: fp,
-      title: p.title, artist: p.artist, album: p.album, albumArtist: p.albumArtist,
-      track: p.track, disc: p.disc, date: p.date,
-      genre: p.genre, composer: p.composer, comment: p.comment, publisher: p.publisher,
+      title: f.title, artist: f.artist, album: f.album, albumArtist: f.albumArtist,
+      track: f.track, disc: f.disc, date: f.date,
+      genre: f.genre, composer: f.composer, comment: f.comment, publisher: f.publisher,
       coverBytes,
-      clearEmpty: true, // 手动编辑语义：清空字段 = 删除该标签
+      clearEmpty: !!clearEmpty,
     }).catch((e) => ({ ok: false, reason: String(e && e.message || e) }));
     if (r && r.ok) {
       // 同步 metaCache（UI 立即反映；清掉封面缓存强制下次重新提取）
       const store = loadStore();
       const mc = Object.assign({}, store.metaCache[fp]);
       for (const k of ['title', 'artist', 'album', 'albumArtist', 'track', 'disc', 'date', 'genre', 'composer', 'comment', 'publisher']) {
-        if (p[k] != null && String(p[k]).trim()) mc[k] = String(p[k]).trim();
-        else if (p[k] != null) delete mc[k]; // 清空同步删除缓存
+        if (f[k] == null) continue;
+        if (String(f[k]).trim()) mc[k] = String(f[k]).trim();
+        else if (clearEmpty) delete mc[k];
       }
       if (coverBytes) delete mc.cover;
       store.metaCache[fp] = mc;
       saveStore({ metaCache: store.metaCache });
     }
     return r;
+  }
+  ipcMain.handle('tag:edit', (_e, p) => applyTagEdit(p && p.path, p || {}, p && p.coverFile, true)); // 手动编辑语义：清空字段 = 删除该标签
+  // Track B：批量标签编辑——只写用户显式勾选的字段；空值/未勾选字段保留原标签
+  ipcMain.handle('tag:editBatch', async (_e, p) => {
+    const paths = Array.isArray(p && p.paths) ? p.paths : [];
+    const fields = (p && p.fields) || {};
+    const results = [];
+    for (const fp of paths) {
+      const r = await applyTagEdit(fp, fields, p && p.coverFile, false);
+      results.push({ path: String(fp || ''), ok: !!(r && r.ok), reason: r && r.reason });
+    }
+    return { results };
   });
   ipcMain.handle('track:readFile', (_e, p) => {
     // Pro：CUE 虚拟分轨剥离 #cueN 后缀，读真实整轨文件

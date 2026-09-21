@@ -37,6 +37,12 @@ const EXE_CN = `V${VER}-setup.exe`;
 function log(s) { console.log('[release] ' + s); }
 function die(s) { console.error('[release] 失败: ' + s); process.exit(1); }
 
+// ---------- 0. 前置检查：ffmpeg 是解码/写标签硬依赖，缺了会让安装包"能开不能播" ----------
+for (const t of ['ffmpeg.exe', 'ffprobe.exe']) {
+  if (!fs.existsSync(path.join(ROOT, 'engine', 'tools', t)))
+    die(`engine/tools/${t} 不存在，播放会全部失败。请先补齐再发版。`);
+}
+
 // ---------- 1. 打包 ----------
 if (!opt.skipBuild) {
   log('打包中（electron-builder NSIS x64）...');

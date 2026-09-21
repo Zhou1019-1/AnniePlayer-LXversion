@@ -1337,7 +1337,7 @@
     // 当前版本
     var verRow = markItem(el('div', 'set-row'), '当前版本 版本号 version');
     var verLab = el('div'); verLab.appendChild(el('div', '', '当前版本'));
-    verLab.appendChild(el('div', 'set-hint', '安妮播放器融合版（安妮出品）'));
+    verLab.appendChild(el('div', 'set-hint', '安妮播放器融合版（无敌章鱼哥制作出品，交流Q群1023637098）'));
     var verVal = el('span', 'set-val', '读取中…');
     if (window.mine && window.mine.appVersion) {
       window.mine.appVersion().then(function (v) { verVal.textContent = 'V' + v; }).catch(function () { verVal.textContent = '未知'; });

@@ -1479,6 +1479,7 @@
       if (e.code === 'Space') { e.preventDefault(); transportPlayPause(); }
       else if (e.ctrlKey && e.code === 'ArrowRight') { e.preventDefault(); transportNext(); }
       else if (e.ctrlKey && e.code === 'ArrowLeft') { e.preventDefault(); transportPrev(); }
+      else if (e.ctrlKey && e.code === 'KeyS') { e.preventDefault(); window.mine.engine('stop').catch(function () { }); }
       else if (e.ctrlKey && e.code === 'ArrowUp') { e.preventDefault(); setVolumeUI(Math.min(1, volGain() + 0.05)); }
       else if (e.ctrlKey && e.code === 'ArrowDown') { e.preventDefault(); setVolumeUI(Math.max(0, volGain() - 0.05)); }
       else if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') { e.preventDefault(); setDarkMode(!S.dark); } // V1.1.2 暗色切换

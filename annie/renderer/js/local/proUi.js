@@ -356,7 +356,7 @@
     add('打开 EQ 面板', '音效', () => $('#btn-eq').click());
     add('EQ 开关', '音效', () => window.annieEQ && annieEQ.setEnabled(!annieEQ.state.enabled));
     ['flat', 'pop', 'rock', 'jazz', 'classical', 'bass', 'vocal'].forEach(p =>
-      add('EQ 预设：' + p, '音效', () => window.annieEQ && annieEQ.setPreset(p)));
+      add('EQ 预设：' + p, '音效', () => window.annieEQ && annieEQ.applyPreset(p)));
     add('切换主题（粒子舞台 → FB2K → Apple Music）', '界面', () => {
       const order = ['legacy', 'fb2k', 'am'];
       annieTheme.switch(order[(order.indexOf(annieTheme.current) + 1) % order.length]);
@@ -429,6 +429,7 @@
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
     if (e.code === 'KeyN' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); toggleNpf(); }
     else if (e.code === 'KeyM' && e.ctrlKey) { e.preventDefault(); toggleMini(); }
+    else if (e.code === 'KeyL' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); toggleDlyrics(); }
   });
 
   // V3.5.8：托盘 / 全局快捷键 / 任务栏缩略图共用此通道；

@@ -43,8 +43,17 @@ function createTray() {
     const icon = nativeImage.createFromPath(iconPath);
     tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
     tray.setToolTip('AnniePlayer SVLX');
+    // 播控动作经 annie 主进程的 __svlxPlayerAction 转发给渲染层（与全局快捷键/任务栏按钮同通道）
+    const act = (a) => () => { if (typeof global.__svlxPlayerAction === 'function') global.__svlxPlayerAction(a); };
     const ctx = [
       { label: '显示主窗口', click: () => { if (typeof global.__svlxAnnieOpen === 'function') global.__svlxAnnieOpen(); } },
+      { type: 'separator' },
+      { label: '播放 / 暂停', click: act('toggle') },
+      { label: '上一首', click: act('prev') },
+      { label: '下一首', click: act('next') },
+      { type: 'separator' },
+      { label: '迷你模式', click: act('mini') },
+      { label: '桌面歌词', click: act('dlyrics') },
       { type: 'separator' },
       { label: '退出', click: () => { global.__svlxQuitting = true; app.quit(); } },
     ];

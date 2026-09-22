@@ -153,4 +153,21 @@
   function fireModeChanged() {
     try { document.dispatchEvent(new CustomEvent('annie-playmode-changed')); } catch (e) { }
   }
+
+  /* ---------------- 粒子舞台底栏播放模式按钮（V3.5.14） ---------------- */
+  (function bindModeButton() {
+    var btn = document.getElementById('btn-mode');
+    if (!btn) return;
+    function refresh() {
+      var i = info();
+      btn.textContent = i.icon;
+      btn.title = '播放模式：' + i.label + (i.hint ? '\n' + i.hint : '') + '\n（仅本地播放生效，点击切换）';
+    }
+    btn.addEventListener('click', function () {
+      var i = window.anniePlayMode.cycle();
+      toast('播放模式：' + i.label);
+    });
+    document.addEventListener('annie-playmode-changed', refresh);
+    refresh();
+  })();
 })();

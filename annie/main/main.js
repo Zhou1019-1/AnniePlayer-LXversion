@@ -290,6 +290,8 @@ function thumbIcons() {
   return _thumbIcons;
 }
 function sendPlayerAction(action) { try { mainWindow?.webContents.send('tray:action', action); } catch { } }
+// SVLX 托盘（src/main.js）复用此通道发播控动作
+global.__svlxPlayerAction = sendPlayerAction;
 function setupThumbar() {
   if (!mainWindow || process.platform !== 'win32') return;
   const ic = thumbIcons();

@@ -1,10 +1,16 @@
 # 安妮播放器融合版（AnniePlayer SVLX）
 
-> 无敌章鱼哥出品 · HiFi 桌面播放器：自研 .NET 独占音频引擎 + 洛雪音乐源深度融合 + 三套界面主题
-> 交流 Q 群：**1023637098**（更多 HiFi 资源群公告获取）
+> Windows HiFi 桌面音乐播放器
+> 自研 AnnieEngine 音频引擎 × WASAPI / ASIO × VST3 × 本地无损曲库 × 洛雪音乐生态 × 三套界面主题
+>
+> 无敌章鱼哥出品 · 交流 Q 群：**1023637098**（更多 HiFi 资源群公告获取）
 
 [![release](https://img.shields.io/github/v/release/Zhou1019-1/AnniePlayer-LXversion?display_name=tag&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
+AnniePlayer 将 Electron UI、独立 .NET 9 音频引擎、FFmpeg 解码与 VST3 DSP 链组合成完整的桌面音频系统：UI 负责人机交互，音频实时处理全部交给独立引擎进程，两端经 JSON-RPC（stdio）通信。
+
+**[下载安装](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest) · [更新日志](更新日志.md) · [全功能说明书](#全功能说明书)**
 
 ## 下载安装
 
@@ -15,24 +21,107 @@
 - **在线更新**：V3.3.1 之后的版本支持差量自动更新，打开软件即静默下载、下次启动生效（每次只需下载几 MB）
 - 覆盖安装 / 升级不会丢失曲库、歌单与设置（数据在 `%APPDATA%\annie-player-svlx`）
 
+## AnnieEngine：独立音频引擎
+
+AnniePlayer 的核心音频后端是独立进程 **AnnieEngine**（.NET 9）。Electron 不直接参与音频输出，只通过 JSON-RPC 下发控制指令、接收状态事件。
+
+```text
+                AnniePlayer SVLX
+                      │
+       ┌──────────────┴──────────────┐
+       │                             │
+  Electron UI                  LX Music SDK
+  （三套主题/曲库/交互）         （五平台在线音源）
+       └──────────────┬──────────────┘
+                      │ JSON-RPC (stdio)
+                      ▼
+              ┌───────────────┐
+              │  AnnieEngine  │  独立进程 · .NET 9
+              │  播放状态机    │
+              └──────┬────────┘
+                     │
+   ┌─────────┬───────┼────────┬──────────┐
+   ▼         ▼       ▼        ▼          ▼
+ 解码       DSP     插件    混音        输出
+ FFmpeg   Float32  VST3   Gapless    WASAPI
+ 全格式   PCM 管线         Crossfade  独占/共享
+                     │                ASIO
+                     ▼                 │
+        EQ/PEQ/声道矩阵/响度/限幅       ▼
+                     │                DAC
+                     ▼
+              重采样（swresample/soxr）
+```
+
+**引擎特性**
+
+- 独立进程架构：渲染层崩溃不影响播放链路；引擎异常退出可独立重启恢复
+- FFmpeg 解码（本地文件 / HTTP 流 / CUE / SACD ISO），float32 PCM 域处理
+- WASAPI 独占 / 共享、ASIO 输出；DSD 转 PCM / DoP 直通
+- DSP 链：15 段图示 EQ + 12 段参量 EQ + 声道矩阵 + 响度增益 + 自动前级 + 软限幅，全部热更新不破音
+- Gapless 无缝播放与交叉淡入（引擎内混音器，切歌不重建输出流）
+- 输出健康监控：缓冲水位 / 欠载计数 / 限幅触发实时上报
+- 内置 `test.decode` 自测接口：不开输出设备拉取整条 DSP 链返回计量指标，供 CI 断言
+
+**为什么用独立引擎？** 音频实时处理对时延与稳定性敏感：独立进程让 UI 线程完全离开音频回调路径，解码 / DSP / 输出与界面解耦，WASAPI / ASIO / VST3 有独立运行环境，引擎也可脱离 UI 单独做自动化正确性测试。
+
 ## 三套界面主题（设置中心 → 常规，随时切换）
 
 | 主题 | 风格 | 适合 |
 | --- | --- | --- |
 | **Apple Music** | 磨砂玻璃 + 封面氛围背景 + 大字逐行歌词，亮/暗双主题 | 默认主题，颜值党 |
-| **FB2K** | 仿 foobar2000 经典布局，信息密度高，虚拟滚动 10 万首不卡 | 效率党 |
+| **FB2K** | 仿 foobar2000 经典布局，信息密度高，虚拟滚动面向大规模曲库优化 | 效率党 |
 | **粒子舞台** | Three.js 3D 粒子可视化舞台，13 个视觉预设，节拍驱动相机 | 视觉党、投屏氛围 |
+
+## 技术栈
+
+| 层 | 技术 |
+| --- | --- |
+| UI | Electron / JavaScript |
+| 音频引擎 | C# / .NET 9（独立进程，JSON-RPC stdio） |
+| 解码 | FFmpeg |
+| 音频输出 | WASAPI（独占/共享）/ ASIO |
+| DSP | 自研 float32 PCM 管线（EQ/PEQ/声道矩阵/响度/限幅） |
+| 插件 | VST3 |
+| 可视化 | Three.js |
+| 在线音源 | 洛雪 musicSdk（酷狗/酷我/咪咕/QQ/网易） |
+| 构建 / CI | npm / electron-builder / GitHub Actions |
+| 测试 | lavfi 合成音源 + 引擎自测接口 27 项断言 / 冒烟测试 |
+
+## 项目状态
+
+当前版本：**V4.0.1**（V4 · Audio Core & Reliability：功能冻结，专注音频内核可靠性与架构）
+
+**已完成**
+
+- [x] 本地曲库（全格式 / CUE / SACD ISO / 假无损检测 / 标签批量编辑）
+- [x] WASAPI 独占 / 共享、ASIO、DSD（转 PCM / DoP）
+- [x] DSP 链：15 段 EQ / 参量 EQ / 声道工具箱 / 响度均衡（EBU R128 + ReplayGain 直读）
+- [x] VST3 效果器链（原生编辑器 / 性能监控 / 崩溃自动旁通）
+- [x] Gapless 无缝播放 / 交叉淡入
+- [x] 洛雪五平台在线音源（搜索/播放/下载/歌单导入）
+- [x] 三套界面主题 / 桌面歌词 / SMTC 系统媒体控制
+- [x] 差量自动更新 / 引擎崩溃熔断与恢复 / 诊断包导出
+- [x] CI：JS 语法 + 引擎编译 + 冒烟测试 + **音频正确性测试集（27 项断言）** 双闸门
+- [x] 引擎核心模块化拆分（RPC 分发 / DSP / VST / 播放控制 四 partial class）
+
+**进行中（V4 路线）**
+
+- [ ] 长稳测试脚本（循环播放 + 内存/句柄/欠载监控报告）
+- [ ] 大规模曲库性能 Benchmark（10 万 / 20 万级）
+- [ ] am.js UI 层拆分
 
 ## 核心能力
 
 **音质链路**
-- WASAPI 独占（bit-perfect 直通）/ 共享、ASIO 直通（面板/采样率/缓冲控制）、DSD 转 PCM / DoP
-- 自研 AnnieEngine 解码引擎（.NET 9 sidecar + ffmpeg）：32bit float PCM 域处理
-- 15 段参数 EQ（引擎热更新不破音）、削波防护（自动前级 + tanh 软限幅）
+- WASAPI 独占 / 共享、ASIO 直通（面板/采样率/缓冲控制）、DSD 转 PCM / DoP
+- 输出格式匹配且未启用重采样时可达 bit-perfect 直通（状态点绿/黄实时指示，悬停看原因）
+- 15 段图示 EQ + 12 段参量 EQ（引擎热更新不破音）、声道工具箱（平衡/互换/单声道/反相）
 - 响度均衡 EBU R128（目标 -16 LUFS，**ReplayGain 标签直读免分析**）
-- **无缝播放 Gapless**（切歌保持输出流，间隙毫秒级）、交叉淡入 0–10s
-- 重采样质量档位（标准 / 高质量 64 阶滤波）
-- 输出设备打开失败自动回退 WASAPI 共享并提示，永不"点播放没反应"
+- 削波防护（自动前级 + tanh 软限幅）、重采样质量档位（标准 / 高质量 64 阶滤波）
+- 无缝播放 Gapless（切歌保持输出流，间隙毫秒级）、交叉淡入 0–10s
+- 输出设备打开失败时自动回退 WASAPI 共享输出并弹提示
+- 音质链路图：源 → DSP 各段 → 输出可视化，点击展开全参数对照（Bit-perfect 结论 + 原因）
 
 **曲库管理**
 - 全格式：FLAC / APE / WAV / DSF / DFF / TTA / M4A / MP3 / OGG / OPUS / WMA…
@@ -56,6 +145,12 @@
 - 全局快捷键（媒体键 + Ctrl+Alt 组合）、播放模式五种、播放定时三种
 - VST3 效果器链（原生编辑器界面 / 湿声平滑过渡 / 每插件耗时 / 方案导入导出 / A-B 对比）
 - 设置中心内置「**使用说明**」（说明书应用内版，全功能可搜索）
+
+## 为什么做这个项目
+
+AnniePlayer 最初只是一个本地音乐播放器。随着需求增加，UI、曲库、网络音源与音频输出之间的耦合越来越复杂，项目逐渐演变成**由独立音频引擎驱动的 Windows HiFi 播放平台**。
+
+V4 起项目重点从「实现更多功能」转向：音频链路正确性（可断言的自动化测试）、实时处理稳定性（长稳监控）、引擎与 UI 解耦（模块化拆分）、大规模曲库性能、故障诊断与恢复。
 
 <!-- HELP:BEGIN -->
 <!-- 本章节由 scripts/gen-readme-help.js 自动生成（源：annie/renderer/js/local/helpContent.js），请勿手改 -->

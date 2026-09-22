@@ -1,4 +1,4 @@
-# 安妮播放器融合版 V3（AnniePlayer SVLX）
+# 安妮播放器融合版（AnniePlayer SVLX）
 
 > 无敌章鱼哥出品 · HiFi 桌面播放器：自研 .NET 独占音频引擎 + 洛雪音乐源深度融合 + 三套界面主题
 > 交流 Q 群：**1023637098**（更多 HiFi 资源群公告获取）
@@ -8,7 +8,7 @@
 
 ## 下载安装
 
-**[→ 前往 Releases 下载最新安装包](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)**（`V3.x.x-setup.exe`，约 160MB）
+**[→ 前往 Releases 下载最新安装包](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)**（`annie-player-svlx-setup-x.y.z.exe`，约 160MB）
 
 - 系统要求：**Windows 10 / 11 64 位**（内置全部运行库，无需装 .NET / VLC / 任何依赖）
 - 安装包未购买代码签名，SmartScreen 提示时点 **「更多信息 → 仍要运行」** 即可

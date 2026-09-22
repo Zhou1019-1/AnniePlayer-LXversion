@@ -30,6 +30,11 @@ build-out.txt
 better-sqlite3.tar.gz
 *.log
 
+# ---- 测试报告（本地产出，不入库）----
+长稳测试报告*.md
+曲库Benchmark报告*.md
+soak-*.md
+
 # ---- 便携模式数据 ----
 portable/
 

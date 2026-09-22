@@ -104,11 +104,12 @@ AnniePlayer 的核心音频后端是独立进程 **AnnieEngine**（.NET 9）。E
 - [x] 差量自动更新 / 引擎崩溃熔断与恢复 / 诊断包导出
 - [x] CI：JS 语法 + 引擎编译 + 冒烟测试 + **音频正确性测试集（27 项断言）** 双闸门
 - [x] 引擎核心模块化拆分（RPC 分发 / DSP / VST / 播放控制 四 partial class）
+- [x] 长稳测试脚本（`npm run test:soak`：循环播放 + 内存/句柄/欠载采样，Markdown 报告）
+- [x] 曲库性能 Benchmark 工具（`npm run bench:library`：1k~20 万级，排序直测生产 listWorker 代码）
 
 **进行中（V4 路线）**
 
-- [ ] 长稳测试脚本（循环播放 + 内存/句柄/欠载监控报告）
-- [ ] 大规模曲库性能 Benchmark（10 万 / 20 万级）
+- [ ] 长稳与曲库实测数据积累（8h/24h 连续播放、20 万级曲库报告）
 - [ ] am.js UI 层拆分
 
 ## 核心能力
@@ -300,6 +301,8 @@ npm start             # 开发模式运行
 npm run dist:setup    # 本机打包 NSIS 安装包（含 ffmpeg 前置检查）
 npm run smoke         # 冒烟测试：引擎 RPC + ffmpeg + 解码探测
 npm run test:audio    # 音频正确性测试集：帧数/RMS/声道矩阵/EQ/限幅 27 项断言
+npm run test:soak     # 长稳测试：循环播放 + 内存/句柄/欠载采样，出 Markdown 报告（默认 30 分钟）
+npm run bench:library # 曲库性能 Benchmark：1k~20 万级 扫描/加载/排序/搜索/内存
 npm run gen:help      # 从 helpContent.js 重新生成本 README 的「全功能说明书」章节
 ```
 

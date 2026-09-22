@@ -14,7 +14,10 @@ _lx-build/
 
 # ---- AnnieEngine 二进制（由 AnnieEngine 引擎项目构建产出，构建前放入 engine/）----
 engine/publish/
-engine/tools/
+# engine/tools 不入库（ffmpeg 体积大，由 npm run setup:tools 下载），但 sacd_extract 小工具入库保证 CI/新机器可用
+engine/tools/*
+!engine/tools/sacd_extract.exe
+!engine/tools/sacd_extract.cfg
 
 # ---- AnnieEngine 源码构建产物（源码本身入库，见 engine/src/）----
 engine/src/bin/

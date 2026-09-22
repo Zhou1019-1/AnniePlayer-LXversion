@@ -1,7 +1,7 @@
 {
   "name": "annie-player-svlx",
   "productName": "安妮播放器融合版V3",
-  "version": "3.5.13",
+  "version": "3.5.14",
   "description": "AnniePlayer SVLX - Annie Player integrated with lx-music-desktop (Apache-2.0). See THIRDPARTY/lx-music-desktop/NOTICE.LICENSE.",
   "main": "src/main.js",
   "author": "Annie Player Project",
@@ -12,6 +12,7 @@
     "pack:dir": "electron-builder --dir --win",
     "dist": "electron-builder --win nsis --publish never",
     "dist:setup": "electron-builder --win nsis --x64 --publish never",
+    "setup:tools": "node scripts/setup-tools.js",
     "release": "node scripts/release.js"
   },
   "dependencies": {

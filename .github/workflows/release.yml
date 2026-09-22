@@ -1,0 +1,72 @@
+# ============================================================================
+# 安妮播放器融合版V3 · 云端构建发布（V3.5.14）
+# 触发：push 一个 v* 标签（如 git tag v3.5.14 && git push origin v3.5.14）
+#       或在 GitHub Actions 页面手动 Run workflow
+# 流程：编译引擎(.NET) → setup:tools 下载 ffmpeg → electron-builder 打包 → 上传 release
+# 说明：本地的 scripts/release.js 仍可用于本机发版；两者产物一致，别对同一个 tag 重复发
+# ============================================================================
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: 编译 AnnieEngine（.NET 9）
+        run: dotnet publish engine/src -c Release -o engine/publish --nologo
+
+      - name: 准备 ffmpeg / 校验工具链
+        run: node scripts/setup-tools.js
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 打包 NSIS（x64）
+        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_LINK: ''   # 无代码签名证书，跳过签名（安装包本就不签名）
+
+      - name: 从更新日志提取本版 release notes
+        shell: pwsh
+        run: |
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "RELVER=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $md = Get-Content 更新日志.md -Raw -Encoding utf8
+          $m = [regex]::Match($md, "(?s)## V$ver（[^）]*）\s*(.+?)(?=\r?\n## V|\z)")
+          $body = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "安妮播放器融合版 V$ver" }
+          $body | Out-File -FilePath release-notes.md -Encoding utf8
+          Write-Output "notes for $ver extracted"
+
+      - name: 复制中文名副本
+        shell: pwsh
+        run: |
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Copy-Item "setupEXE/annie-player-svlx-setup-$ver.exe" "setupEXE/V$ver-setup.exe"
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 安妮播放器融合版 V${{ env.RELVER }}
+          body_path: release-notes.md
+          files: |
+            setupEXE/latest.yml
+            setupEXE/annie-player-svlx-setup-*.exe
+            setupEXE/annie-player-svlx-setup-*.exe.blockmap
+            setupEXE/V*-setup.exe

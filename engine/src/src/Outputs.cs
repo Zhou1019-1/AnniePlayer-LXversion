@@ -71,6 +71,9 @@ public sealed class PcmFloatSource : IWaveProvider
     public WaveFormat WaveFormat { get; }
     public event Action<float, float, float, float>? OnLevel; // rmsL, peakL, rmsR, peakR
     public long FramesRead => System.Threading.Interlocked.Read(ref _framesRead);
+    // V3.5.17：实时频谱环形缓冲（AM 可视化条；音频线程单写者，定时器线程读，允许撕裂）
+    public readonly float[] VizRing = new float[2048];
+    public int VizWritePos;
     // 输出健康：短读/欠载与限幅触发计数（音频线程 Interlocked 写，stats RPC 读）
     public long UnderrunCount;
     public long UnderrunFrames;
@@ -263,6 +266,7 @@ public sealed class PcmFloatSource : IWaveProvider
                     // Pro：软限幅器（tanh 软膝，|v|≤1 时近似线性，超限平滑压缩到 ±1 内）
                     if (limiter && (v > 1f || v < -1f)) { clipBlock = true; v = (float)Math.Tanh(v); }
                     f[i] = v;
+                    if (phase == 0) { VizRing[VizWritePos & 2047] = v; VizWritePos++; } // V3.5.17：频谱采样（L/单声道）
                     float a = Math.Abs(v);
                     if (phase == 0) { sumSqL += v * v; if (a > peakL) peakL = a; }
                     else { sumSqR += v * v; if (a > peakR) peakR = a; }

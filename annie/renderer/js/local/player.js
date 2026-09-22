@@ -1083,6 +1083,7 @@ window.annieStreamPlay = async function (track) {
   }
   // 悬浮信息层
   $('#thumb-title').textContent = track.title || '未知曲目';
+  if (window.annieListenStats) annieListenStats.recordPlay(track.url, track); // V3.5.17：听歌统计（流媒体）
   $('#thumb-artist').textContent = [track.artist, track.album].filter(Boolean).join(' · ');
   reportPlayerState(); // V3.5.8
   // V1.1.8：http 封面（kwcdn.kuwo.cn 等）经代理转 dataURL 再显示——
@@ -1105,6 +1106,7 @@ async function showMeta(p) {
   if (!state.metaCache.has(p)) state.metaCache.set(p, await window.mine.meta(p));
   const m = state.metaCache.get(p);
   if (state.currentPath !== p) return;
+  if (window.annieListenStats) annieListenStats.recordPlay(p, m); // V3.5.17：听歌统计
   $('#thumb-title').textContent = m.title || '未知曲目';
   reportPlayerState(); // V3.5.8
   $('#thumb-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
@@ -1159,6 +1161,8 @@ window.mine.onEngineEvent((event, d) => {
         if (window.annieViz) window.annieViz.setProgress(state.position, state.duration);
         startProgressInterp();
       }
+      // V3.5.17：听歌统计——按 position 事件累计收听时长（暂停无事件自然停表）
+      if (state.playing && window.annieListenStats) annieListenStats.tick(state.position);
       break;
     case 'state':
       state.playing = d.state === 'playing';

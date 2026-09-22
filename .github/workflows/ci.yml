@@ -1,0 +1,31 @@
+# ============================================================================
+# 安妮播放器融合版V3 · 日常提交快速检查（V3.5.17）
+# 触发：push 到 main / PR。1 分钟内完成，防坏语法/坏编译进主干。
+# 发版打包走 release.yml（tag v* 触发），本工作流不出包。
+# ============================================================================
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: JS 语法检查（node --check 全量）
+        run: node scripts/check-syntax.js
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: 引擎编译检查（dotnet build，不打包）
+        run: dotnet build engine/src -c Release --nologo

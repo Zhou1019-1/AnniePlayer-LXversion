@@ -542,6 +542,9 @@
     R.timerPop = el('div', 'am-pop am-timer-pop');
 
     root.appendChild(top); root.appendChild(body); root.appendChild(R.pop); root.appendChild(R.timerPop);
+    // V3.5.17：实时频谱可视化条（引擎 32 频段 10Hz 推送，贴底细条，迷你/沉浸下隐藏）
+    R.vizBar = document.createElement('canvas'); R.vizBar.className = 'am-vizbar';
+    root.appendChild(R.vizBar);
     buildMini(root);
     document.addEventListener('click', function (e) {
       if (R.pop.classList.contains('on') && !R.pop.contains(e.target)) R.pop.classList.remove('on');
@@ -2289,6 +2292,49 @@
   }
 
   /* ---------------- 挂载 / 对外 ---------------- */
+  /* V3.5.17：实时频谱可视化条——引擎 10Hz 推 32 频段，rAF 插值平滑绘制 */
+  var vizBands = new Float32Array(32);
+  var vizSmooth = new Float32Array(32);
+  var vizAccA = '', vizAccB = '', vizColorAt = 0;
+  if (window.mine && window.mine.onEngineEvent) {
+    window.mine.onEngineEvent(function (ev, d) {
+      if (ev === 'spectrum' && d && d.bands) { for (var i = 0; i < 32; i++) vizBands[i] = d.bands[i] || 0; }
+    });
+  }
+  function vizLoop() {
+    requestAnimationFrame(vizLoop);
+    var cv = R.vizBar;
+    if (!cv || !S.mounted || document.hidden) return;
+    if (window.annieTheme && annieTheme.current !== 'am') return;
+    if (window.annieSettings && annieSettings.ui.amViz === false) { if (cv.style.display !== 'none') cv.style.display = 'none'; return; }
+    if (cv.style.display === 'none') cv.style.display = '';
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    if (cv.width !== w * 2) { cv.width = w * 2; cv.height = h * 2; } // 2x 高清
+    var now = Date.now();
+    if (now - vizColorAt > 1000) { // 强调色 1s 缓存（支持自定义强调色实时切换）
+      vizColorAt = now;
+      var cs = getComputedStyle(document.getElementById('am-root'));
+      vizAccA = cs.getPropertyValue('--am-accent').trim() || '#fa2d55';
+      vizAccB = cs.getPropertyValue('--am-accent-2').trim() || '#ff5c7a';
+    }
+    var ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    var grad = ctx.createLinearGradient(0, 0, cv.width, 0);
+    grad.addColorStop(0, vizAccA); grad.addColorStop(1, vizAccB);
+    ctx.fillStyle = grad;
+    var n = 32, bw = cv.width / n;
+    for (var i = 0; i < n; i++) {
+      var target = vizBands[i];
+      vizSmooth[i] += (target - vizSmooth[i]) * 0.35; // 帧间插值
+      var bh = Math.max(2, vizSmooth[i] * (cv.height - 4));
+      ctx.globalAlpha = 0.35 + vizSmooth[i] * 0.6;
+      ctx.fillRect(i * bw + 1, cv.height - bh, bw - 2, bh);
+    }
+    ctx.globalAlpha = 1;
+  }
+  requestAnimationFrame(vizLoop);
+
   function mount() {
     if (!S.mounted) {
       build();

@@ -20,6 +20,11 @@ html[data-theme="am"] #level-dock,
 html[data-theme="am"] #tool-banner { display: none !important; }
 html[data-theme="am"] #titlebar { display: none !important; }
 
+/* V3.5.17：实时频谱可视化条（贴底细条，引擎 32 频段驱动） */
+.am-vizbar { flex: none; height: 22px; width: 100%; position: relative; z-index: 3;
+  pointer-events: none; opacity: .95; }
+#am-root.am-mini-on .am-vizbar, #am-root.am-imm-on .am-vizbar { display: none; }
+
 /* ---------- 设计变量（默认暗色；.am-light 覆盖为亮色） ---------- */
 #am-root {
   --am-accent: #fa2d55;

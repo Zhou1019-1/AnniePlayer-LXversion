@@ -1308,6 +1308,14 @@ public sealed class Engine
                 new { rms = Math.Max(rmsL, rmsR), peak = Math.Max(peakL, peakR), rmsL, peakL, rmsR, peakR });
         }
 
+        // V3.5.17：实时频谱（32 频段，随 position 10Hz 发射）——AM 可视化条用
+        if (_playing && _source is not null)
+        {
+            var bands = new float[VizFft.Bands];
+            VizFft.Compute(_source.VizRing, _source.VizWritePos, _decodeRate > 0 ? _decodeRate : 44100, bands);
+            _rpc.Emit("spectrum", new { bands });
+        }
+
         if (shouldEnd)
         {
             // 只停止输出设备与定时器，不销毁 pcm/source（留给下一次 Play 的 StopAll 处理）
@@ -1320,7 +1328,8 @@ public sealed class Engine
                 // 旧实现歌曲结束就 _backend.Stop()，下一曲 PlayCrossfade 因 !_playing 回退普通 Play，
                 // 触发 StopAll → WASAPI 设备停+开。高频连点+自然结束交替时反复开关设备 = audiodg 假死根因。
                 // 现在：设备保持，下一曲 play.crossfade 直接 FadeTo 无缝衔接。
-                if (_crossfadeSec <= 0 || _mixer is null || _dopActive)
+                // V3.5.16：gapless 开启时同样保持设备流（crossfade=0 走 FadeTo(0) 硬切）
+                if ((_crossfadeSec <= 0 && !_gapless) || _mixer is null || _dopActive)
                     try { _backend?.Stop(); } catch { }
             }
             _rpc.Emit("state", new { state = "ended" });

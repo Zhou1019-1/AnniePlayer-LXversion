@@ -108,4 +108,51 @@
       show(lib);
     }).catch(function () { });
   }, 1500);
+
+  /* ================= V3.5.17：更新播报（版本变化后首次启动弹"本次更新内容"） =================
+   * 数据源：GitHub raw 更新日志.md（提取当前版本段落）；离线/拉取失败静默跳过。
+   * 与首次引导互斥：新用户先看引导，不弹播报。 */
+  setTimeout(function () {
+    if (!window.mine.appVersion) return;
+    window.mine.appVersion().then(function (ver) {
+      var SEEN_KEY = 'annieplayer.seenVersion';
+      var seen = '';
+      try { seen = localStorage.getItem(SEEN_KEY) || ''; } catch (e) { }
+      if (seen === ver) return;
+      try { localStorage.setItem(SEEN_KEY, ver); } catch (e) { }
+      // 首次使用（引导未标记）不弹播报，避免与引导页叠加
+      try { if (localStorage.getItem(LS_KEY) !== '1') return; } catch (e) { return; }
+      fetch('https://raw.githubusercontent.com/Zhou1019-1/AnniePlayer-LXversion/main/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97.md', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : ''; })
+        .then(function (md) {
+          if (!md) return; // 离线静默
+          var m = md.match(new RegExp('## V' + ver.replace(/\./g, '\\.') + '[（(][^）)]*[）)]\\s*([\\s\\S]+?)(?=\\r?\\n## V|$)'));
+          var body = m ? m[1].trim() : '';
+          if (!body) return;
+          showWhatsNew(ver, body);
+        })
+        .catch(function () { });
+    }).catch(function () { });
+  }, 2600);
+
+  function showWhatsNew(ver, bodyMd) {
+    if (document.getElementById('ob-overlay')) return; // 引导页在就不打扰
+    var ov = el('div'); ov.id = 'ob-overlay';
+    var card = el('div', 'ob-card');
+    card.appendChild(el('div', 'ob-title', '已更新到 V' + ver));
+    var body = el('div', 'ob-sub');
+    body.style.whiteSpace = 'pre-line';
+    body.style.maxHeight = '46vh';
+    body.style.overflowY = 'auto';
+    // 轻量 markdown：去粗体标记，**xx** → xx（保持纯文本可读即可）
+    body.textContent = bodyMd.replace(/\*\*/g, '').replace(/^#+\s*/gm, '');
+    card.appendChild(body);
+    var btns = el('div', 'ob-btns');
+    var go = el('button', 'ob-btn pri', '知道了');
+    go.onclick = function () { ov.remove(); };
+    btns.appendChild(go);
+    card.appendChild(btns);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+  }
 })();

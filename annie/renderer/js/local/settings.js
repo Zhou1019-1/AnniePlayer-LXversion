@@ -36,8 +36,36 @@
     downloadDir: '',
     saveLrc: true,         // 下载时在目录生成旁挂 .lrc 歌词文件（嵌入标签始终做）
     saveCover: true,        // 下载时在目录生成封面图片文件（嵌入标签始终做）
-    closeToTray: false      // V3.5.9：关闭主窗口后驻留系统托盘（默认关=关窗即退出，保证更新顺利安装）
+    closeToTray: false,      // V3.5.9：关闭主窗口后驻留系统托盘（默认关=关窗即退出，保证更新顺利安装）
+    accent: 'default',       // V3.5.17：强调色（default=主题原色；AM/粒子舞台生效）
+    amViz: true              // V3.5.17：AM 主题底部实时频谱条
   };
+
+  /* V3.5.17：强调色预设——内联 style 写到 <html>，优先级高于所有 CSS 变量定义（含 data-palette 方案） */
+  var ACCENTS = {
+    default: { name: '主题默认', a: '', b: '' },
+    coral:   { name: '珊瑚红', a: '#fa2d55', b: '#ff5c7a' },
+    sunset:  { name: '落日橙', a: '#ff7a45', b: '#ffa94d' },
+    gold:    { name: '香槟金', a: '#d4a017', b: '#e6c255' },
+    jade:    { name: '翡翠绿', a: '#10b981', b: '#34d399' },
+    azure:   { name: '天际蓝', a: '#3b82f6', b: '#60a5fa' },
+    violet:  { name: '罗兰紫', a: '#8b5cf6', b: '#a78bfa' }
+  };
+  function applyAccent() {
+    var de = document.documentElement;
+    var amRoot = document.getElementById('am-root'); // --am-accent 定义在 #am-root 上，元素级定义优先于继承，须直设
+    var key = ui.accent || 'default';
+    var preset = ACCENTS[key] || ACCENTS.default;
+    if (!preset.a) { // 默认：清除覆盖，回主题原色
+      ['--am-accent', '--am-accent-2', '--accent', '--glow'].forEach(function (v) { de.style.removeProperty(v); if (amRoot) amRoot.style.removeProperty(v); });
+      return;
+    }
+    de.style.setProperty('--am-accent', preset.a);
+    de.style.setProperty('--am-accent-2', preset.b);
+    de.style.setProperty('--accent', preset.a);
+    de.style.setProperty('--glow', preset.b);
+    if (amRoot) { amRoot.style.setProperty('--am-accent', preset.a); amRoot.style.setProperty('--am-accent-2', preset.b); }
+  }
   var ui = Object.assign({}, DEFAULTS);
   var saveTimer = null;
 
@@ -104,7 +132,7 @@
     try { document.dispatchEvent(new CustomEvent('annie-settings-changed')); } catch (e) { }
   }
 
-  function applyAll() { applyVisual(); applyLyrics(); applyInterface(); }
+  function applyAll() { applyVisual(); applyLyrics(); applyInterface(); applyAccent(); }
 
   function save() {
     if (saveTimer) clearTimeout(saveTimer);
@@ -420,6 +448,44 @@
     }
     refreshThemeCards();
     document.addEventListener('annie-theme-changed', refreshThemeCards);
+
+    // —— 强调色自定义（V3.5.17：AM/粒子舞台变量驱动主题生效，FB2K 保持经典配色） ——
+    var accRow = markItem(el('div', 'set-row'), '强调色 主题色 accent 颜色自定义');
+    var accLab = el('div'); accLab.appendChild(el('div', '', '强调色'));
+    accLab.appendChild(el('div', 'set-hint', '按钮/进度条/选中高亮的颜色；作用于 AM 与粒子舞台主题（FB2K 保持经典）'));
+    var accWrap = el('div', 'set-ctrl'); accWrap.style.gap = '8px'; accWrap.style.flexWrap = 'wrap';
+    var accSwatches = [];
+    Object.keys(ACCENTS).forEach(function (k) {
+      var sw = el('button', 'acc-sw');
+      sw.title = ACCENTS[k].name;
+      if (k === 'default') {
+        sw.textContent = '默认';
+        sw.style.fontSize = '11px'; sw.style.width = '44px';
+      } else {
+        sw.style.background = 'linear-gradient(135deg,' + ACCENTS[k].a + ',' + ACCENTS[k].b + ')';
+      }
+      sw.dataset.acc = k;
+      sw.onclick = function () {
+        ui.accent = k; save();
+        applyAccent();
+        accSwatches.forEach(function (x) { x.classList.toggle('on', x.dataset.acc === k); });
+      };
+      accSwatches.push(sw); accWrap.appendChild(sw);
+    });
+    accSwatches.forEach(function (x) { x.classList.toggle('on', x.dataset.acc === (ui.accent || 'default')); });
+    accRow.appendChild(accLab); accRow.appendChild(accWrap);
+    s5.appendChild(accRow);
+
+    // —— AM 频谱可视化条开关（V3.5.17） ——
+    var vizRow = markItem(el('div', 'set-row'), 'am 频谱 可视化 频谱条 spectrum 底部动画');
+    var vizLab = el('div'); vizLab.appendChild(el('div', '', 'AM 界面底部频谱条'));
+    vizLab.appendChild(el('div', 'set-hint', 'Apple Music 主题窗口底部的实时频谱动画（引擎 32 频段驱动，几乎不耗资源）'));
+    var vizWrap = el('label', 'switch');
+    var vizChk = document.createElement('input'); vizChk.type = 'checkbox'; vizChk.checked = ui.amViz !== false;
+    vizChk.onchange = function () { ui.amViz = vizChk.checked; save(); };
+    vizWrap.appendChild(vizChk); vizWrap.appendChild(el('span', 'knob'));
+    vizRow.appendChild(vizLab); vizRow.appendChild(vizWrap);
+    s5.appendChild(vizRow);
 
     // —— V1.1.2：FB2K 外观（亮色/暗色，与工具栏按钮、Ctrl+Shift+D 三处同步） ——
     var sF2 = section(pgGeneral, 'FB2K 界面 · 外观');
@@ -1286,6 +1352,113 @@
     function currentThemeSafe() { try { return window.annieTheme ? annieTheme.current : null; } catch (e) { return null; } }
     diagRow.appendChild(diagLab); diagRow.appendChild(diagBtn);
     sFk.appendChild(diagRow);
+
+    // —— 复制诊断摘要（V3.5.17：轻量报障——不用导 zip，群里直接粘贴） ——
+    var sumRow = markItem(el('div', 'set-row'), '复制诊断摘要 系统信息 一键复制 报障');
+    var sumLab = el('div'); sumLab.appendChild(el('div', '', '复制诊断摘要'));
+    sumLab.appendChild(el('div', 'set-hint', '版本/系统/引擎/输出设备/曲库规模一键复制到剪贴板，群里报障直接粘贴'));
+    var sumBtn = el('button', 'btn-ghost', '复制摘要');
+    sumBtn.onclick = function () {
+      sumBtn.disabled = true;
+      var lines = [];
+      Promise.all([
+        window.mine.appVersion ? window.mine.appVersion().catch(function () { return '?'; }) : Promise.resolve('?'),
+        window.mine.engine('engine.info').catch(function () { return null; }),
+        window.mine.engine('stats').catch(function () { return null; })
+      ]).then(function (rs) {
+        var v = rs[0], info = rs[1], st = rs[2];
+        lines.push('安妮播放器融合版 V' + v);
+        lines.push('系统: ' + navigator.platform + ' / Electron UA: ' + (navigator.userAgent.match(/Electron\/[\d.]+/) || ['?'])[0]);
+        lines.push('引擎: ' + (info ? '运行中（ffmpeg ' + (info.ffmpegFound ? '✓' : '✗') + '）' : '未响应'));
+        if (st) {
+          lines.push('输出: ' + (st.backendKind || '?') + (st.exclusive ? ' 独占' : ' 共享') + ' → ' + (st.deviceName || st.deviceId || '?'));
+          lines.push('格式: ' + (st.outputRate || '?') + 'Hz/' + (st.bitsPerSample || '?') + 'bit' + (st.resampled ? '（重采样）' : ''));
+        }
+        lines.push('输出选择: ' + (ui.backend || 'wasapi') + ' / ' + (ui.deviceId || '默认设备') + (ui.exclusive !== false ? ' / 独占' : ' / 共享'));
+        try { lines.push('曲库: ' + ((window.state && state.library && state.library.tracks.length) || 0) + ' 首'); } catch (e) { }
+        lines.push('时间: ' + new Date().toLocaleString());
+        return navigator.clipboard.writeText(lines.join('\n'));
+      }).then(function () { sumBtn.textContent = '已复制 ✓'; })
+        .catch(function () { sumBtn.textContent = '复制失败'; })
+        .finally(function () { sumBtn.disabled = false; setTimeout(function () { sumBtn.textContent = '复制摘要'; }, 3000); });
+    };
+    sumRow.appendChild(sumLab); sumRow.appendChild(sumBtn);
+    sFk.appendChild(sumRow);
+
+    // —— 听歌报告（V3.5.17：本地统计 Top 歌曲/艺术家/专辑、总时长、最爱时段，可一键复制分享） ——
+    function lsrFmtDur(sec) {
+      sec = Math.round(sec || 0);
+      var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+      return h > 0 ? h + ' 小时 ' + m + ' 分钟' : m + ' 分钟';
+    }
+    function lsrList(title, arr, fmt) {
+      var box = el('div', 'lsr-col');
+      box.appendChild(el('div', 'lsr-col-title', title));
+      if (!arr.length) { box.appendChild(el('div', 'lsr-empty', '暂无数据')); return box; }
+      arr.forEach(function (s, i) {
+        var row = el('div', 'lsr-item');
+        row.appendChild(el('span', 'lsr-rank', String(i + 1)));
+        row.appendChild(el('span', 'lsr-name', fmt(s)));
+        row.appendChild(el('span', 'lsr-val', s.plays + ' 次 · ' + lsrFmtDur(s.sec)));
+        box.appendChild(row);
+      });
+      return box;
+    }
+    function lsrText(r) {
+      var L = ['🎵 我的安妮播放器听歌报告', '累计收听 ' + lsrFmtDur(r.totalSec) + ' · 播放 ' + r.totalPlays + ' 次'];
+      if (r.favHour >= 0) L.push('最爱时段：' + r.favHour + ' 点');
+      if (r.topSongs.length) {
+        L.push('', '【Top 歌曲】');
+        r.topSongs.slice(0, 5).forEach(function (s, i) { L.push((i + 1) + '. ' + s.title + (s.artist ? ' — ' + s.artist : '') + '（' + s.plays + ' 次）'); });
+      }
+      if (r.topArtists.length) {
+        L.push('', '【Top 艺术家】');
+        r.topArtists.slice(0, 3).forEach(function (s, i) { L.push((i + 1) + '. ' + s.name); });
+      }
+      L.push('', '—— 安妮播放器融合版');
+      return L.join('\n');
+    }
+    function openListenReport() {
+      var st = window.annieListenStats; if (!st) return;
+      var r = st.report();
+      var mask = el('div', 'lsr-mask');
+      var panel = el('div', 'lsr-panel');
+      panel.appendChild(el('div', 'lsr-title', '我的听歌报告'));
+      panel.appendChild(el('div', 'lsr-summary', r.totalPlays > 0
+        ? '累计收听 ' + lsrFmtDur(r.totalSec) + ' · 共播放 ' + r.totalPlays + ' 次' + (r.favHour >= 0 ? ' · 最爱在 ' + r.favHour + ' 点听歌' : '')
+        : '还没有统计数据——去播放几首歌吧！'));
+      var cols = el('div', 'lsr-cols');
+      cols.appendChild(lsrList('Top 歌曲', r.topSongs, function (s) { return s.title + (s.artist ? ' — ' + s.artist : ''); }));
+      cols.appendChild(lsrList('Top 艺术家', r.topArtists, function (s) { return s.name; }));
+      cols.appendChild(lsrList('Top 专辑', r.topAlbums, function (s) { return s.name; }));
+      panel.appendChild(cols);
+      var btns = el('div', 'lsr-btns');
+      var btnCopy = el('button', 'btn-ghost', '复制报告');
+      btnCopy.onclick = function () {
+        navigator.clipboard.writeText(lsrText(r)).then(function () { btnCopy.textContent = '已复制 ✓'; })
+          .catch(function () { btnCopy.textContent = '复制失败'; })
+          .finally(function () { setTimeout(function () { btnCopy.textContent = '复制报告'; }, 3000); });
+      };
+      var btnClear = el('button', 'btn-ghost', '清空统计');
+      btnClear.onclick = function () {
+        if (!confirm('确定清空全部听歌统计？此操作不可恢复。')) return;
+        st.clear(); mask.remove();
+      };
+      var btnClose = el('button', 'btn-ghost', '关闭');
+      btnClose.onclick = function () { mask.remove(); };
+      btns.appendChild(btnCopy); btns.appendChild(btnClear); btns.appendChild(btnClose);
+      panel.appendChild(btns);
+      mask.onclick = function (e) { if (e.target === mask) mask.remove(); };
+      mask.appendChild(panel);
+      document.body.appendChild(mask);
+    }
+    var lsrRow = markItem(el('div', 'set-row'), '听歌报告 统计 Top 歌曲 艺术家 专辑 时长');
+    var lsrLab = el('div'); lsrLab.appendChild(el('div', '', '听歌报告'));
+    lsrLab.appendChild(el('div', 'set-hint', '本地统计你的播放记录：Top 歌曲/艺术家/专辑、累计时长、最爱时段，可一键复制分享'));
+    var lsrBtn = el('button', 'btn-ghost', '查看报告');
+    lsrBtn.onclick = openListenReport;
+    lsrRow.appendChild(lsrLab); lsrRow.appendChild(lsrBtn);
+    sFk.appendChild(lsrRow);
 
     /* ================= 下载 ================= */
     // 与流媒体面板下载目录同一份配置（主进程 stream-settings.json）；

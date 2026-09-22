@@ -163,6 +163,8 @@ public sealed class Engine
             // V3.5.19：参量 EQ / 声道工具
             "peq.set" => SetPeq(p),
             "channel.set" => SetChannel(p),
+            // V4：音频正确性测试（CI 专用，无输出设备拉取整条解码+DSP 链）
+            "test.decode" => TestDecode(p),
 
             "asio.panel" => ShowAsioPanel(),
 
@@ -379,6 +381,101 @@ public sealed class Engine
 
     /// <summary>把声道矩阵挂载到活动源（须持有 _gate）。</summary>
     private void ApplyChannelLocked() { if (_source is not null) _source.ChMatrix = BuildChMatrix(); }
+
+    /// <summary>
+    /// V4 音频正确性测试（CI）：解码文件经过与播放完全相同的 PcmFloatSource DSP 链
+    /// （EQ/PEQ/声道矩阵/响度/限幅），不开输出设备直接拉完全部帧，返回可断言指标。
+    /// 注意：会临时覆写 _chMode/_chBalance——测试脚本是独立引擎进程，无副作用。
+    /// params: { path, rate?（目标采样率，0=源码率）, eq?: double[15], peq?: [{f,g,q}],
+    ///           channelMode?, channelBalance?, loudGain?, limiter? }
+    /// </summary>
+    private object TestDecode(JsonObject p)
+    {
+        var path = Req(p, "path");
+        var info = FfmpegPcmStream.Probe(path);
+        int srcRate = info.SampleRate;
+        int channels = Math.Max(1, Math.Min(2, info.Channels));
+        int targetRate = p["rate"]?.GetValue<int>() ?? 0;
+        int outRate = targetRate > 0 ? targetRate : srcRate;
+        bool resample = targetRate > 0 && targetRate != srcRate;
+        using var pcm = FfmpegPcmStream.Start(path, 0, resample ? outRate : 0, outRate, channels, null, 0, _resampleHq);
+        var src = new PcmFloatSource(pcm, outRate, channels)
+        {
+            Gain = 1.0f,
+            LoudGain = (float)Math.Clamp(p["loudGain"]?.GetValue<double>() ?? 1.0, 0.05, 4.0),
+            Limiter = p["limiter"]?.GetValue<bool>() ?? true,
+        };
+        if (p["eq"] is JsonArray eqArr)
+        {
+            var gains = new double[EqChain.BandCount];
+            for (int i = 0; i < EqChain.BandCount && i < eqArr.Count; i++) gains[i] = eqArr[i]?.GetValue<double>() ?? 0;
+            src.Eq = new EqChain(outRate, channels);
+            src.Eq.Update(gains);
+        }
+        if (p["peq"] is JsonArray peqArr)
+        {
+            var bands = new List<PeqChain.Band>();
+            foreach (var it in peqArr)
+                if (it is JsonObject o)
+                    bands.Add(new PeqChain.Band(
+                        o["f"]?.GetValue<double>() ?? 1000,
+                        o["g"]?.GetValue<double>() ?? 0,
+                        o["q"]?.GetValue<double>() ?? 1.0));
+            src.Peq = new PeqChain(outRate, channels);
+            src.Peq.Update(bands);
+        }
+        if (p["channelMode"] is JsonNode cm)
+        {
+            _chMode = cm.GetValue<string>();
+            _chBalance = Math.Clamp(p["channelBalance"]?.GetValue<double>() ?? 0, -1.0, 1.0);
+            src.ChMatrix = BuildChMatrix();
+        }
+        // 拉取全部帧并计量。FramesRead 只计真实解码帧（静音填充不计），据此剔除尾部静音。
+        var buf = new byte[1 << 16];
+        long frames = 0, overCount = 0;
+        double sumL = 0, sumR = 0, meanL = 0, meanR = 0, sumMid = 0;
+        float peakL = 0, peakR = 0;
+        for (int iter = 0; iter < 100000; iter++)
+        {
+            long before = src.FramesRead;
+            src.Read(buf, 0, buf.Length);
+            long real = src.FramesRead - before;
+            for (long fr = 0; fr < real; fr++)
+            {
+                float l = BitConverter.ToSingle(buf, (int)(fr * channels * 4));
+                float r = channels > 1 ? BitConverter.ToSingle(buf, (int)(fr * channels * 4 + 4)) : l;
+                float mid = (l + r) * 0.5f;
+                sumL += (double)l * l; sumR += (double)r * r; sumMid += (double)mid * mid;
+                meanL += l; meanR += r;
+                float al = Math.Abs(l), ar = Math.Abs(r);
+                if (al > peakL) peakL = al;
+                if (ar > peakR) peakR = ar;
+                if (al > 1.0001f || ar > 1.0001f) overCount++;
+            }
+            frames += real;
+            if (src.SourceEnded && real == 0) break;
+        }
+        src.Deactivate();
+        if (pcm.Failed) throw new InvalidOperationException("解码失败: " + path);
+        return new
+        {
+            ok = true,
+            frames,
+            sampleRate = outRate,
+            sourceRate = srcRate,
+            channels,
+            resampled = resample,
+            rmsL = frames > 0 ? Math.Sqrt(sumL / frames) : 0,
+            rmsR = frames > 0 ? Math.Sqrt(sumR / frames) : 0,
+            rmsMid = frames > 0 ? Math.Sqrt(sumMid / frames) : 0, // 中置能量：相位抵消测试用
+            peakL,
+            peakR,
+            dcL = frames > 0 ? meanL / frames : 0,
+            dcR = frames > 0 ? meanR / frames : 0,
+            overCount,
+            durationSec = Math.Round(frames / (double)outRate, 3),
+        };
+    }
 
     /* ==================== VST实验区：VST3 效果器链 ==================== */
 

@@ -32,3 +32,10 @@ jobs:
 
       - name: 引擎编译检查（dotnet build，不打包）
         run: dotnet build engine/src -c Release --nologo
+
+      # V4：音频正确性测试集（lavfi 生成测试音 → test.decode 拉取 DSP 链断言）
+      - name: 准备 ffmpeg
+        run: node scripts/setup-tools.js
+
+      - name: 音频正确性测试（DSP 链断言）
+        run: npm run test:audio

@@ -48,6 +48,10 @@ jobs:
       - name: 冒烟测试（引擎/ffmpeg/解码）
         run: node scripts/smoke-test.js setupEXE/win-unpacked/resources/engine
 
+      # V4：音频正确性测试集——帧数/RMS/声道矩阵/EQ/限幅全过才允许发版（拦截"编译过但听感坏"回归）
+      - name: 音频正确性测试（DSP 链断言）
+        run: npm run test:audio
+
       - name: 从更新日志提取本版 release notes
         shell: pwsh
         run: |

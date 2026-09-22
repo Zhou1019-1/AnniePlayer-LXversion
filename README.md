@@ -204,10 +204,11 @@ npm run setup:tools   # 下载 ffmpeg + 校验引擎/sacd_extract（首次克隆
 npm start             # 开发模式运行
 npm run dist:setup    # 本机打包 NSIS 安装包（含 ffmpeg 前置检查）
 npm run smoke         # 冒烟测试：引擎 RPC + ffmpeg + 解码探测
+npm run test:audio    # 音频正确性测试集：帧数/RMS/声道矩阵/EQ/限幅 27 项断言
 npm run gen:help      # 从 helpContent.js 重新生成本 README 的「全功能说明书」章节
 ```
 
-**发布流程（CI）**：更新 `package.json` 版本号与 `更新日志.md` → push → `git tag vX.Y.Z && git push origin vX.Y.Z` → GitHub Actions 自动编译引擎、打包、冒烟测试、发布 release（约 5 分钟）。main 分支每次推送/PR 还会跑日常检查（JS 语法 + 引擎编译 + README 说明书同步校验）。
+**发布流程（CI）**：更新 `package.json` 版本号与 `更新日志.md` → push → `git tag vX.Y.Z && git push origin vX.Y.Z` → GitHub Actions 自动编译引擎、打包、冒烟测试、**音频正确性测试**、发布 release（约 5 分钟）。main 分支每次推送/PR 还会跑日常检查（JS 语法 + 引擎编译 + 音频正确性测试 + README 说明书同步校验）。
 
 **功能文档约定**：新功能的使用说明只改 `annie/renderer/js/local/helpContent.js`，然后跑 `npm run gen:help` 同步本 README（CI 会检查同步状态，忘了会红）。
 

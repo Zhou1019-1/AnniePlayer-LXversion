@@ -928,6 +928,30 @@ body.mini > *:not(#mini-bar) { display: none !important; }
 .chain-st.on { color: var(--accent); border-color: var(--accent); background: rgba(250,201,0,.08); }
 .chain-arrow { color: var(--dim); font-size: 11px; }
 
+/* ---- V4.0.1：链路图展开版（全参数对照浮层） ---- */
+.chain-wrap { cursor: pointer; }
+.chain-wrap:hover .chain-st { border-color: var(--dim); }
+.chain-detail-box { width: 560px; max-width: 92vw; max-height: 82vh; display: flex; flex-direction: column; }
+.chain-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.chain-detail-head .modal-title { margin-bottom: 0; }
+.chain-detail-body { overflow-y: auto; padding-right: 4px; }
+.chain-d-stage { padding: 8px 0 4px; }
+.chain-d-stage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.chain-d-idx { width: 18px; height: 18px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--line);
+  color: var(--dim); font-size: 11px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.chain-d-name { font-size: 13px; font-weight: 600; }
+.chain-d-pill { margin-left: auto; font-size: 10px; padding: 2px 8px; border-radius: 8px;
+  border: 1px solid var(--line); color: var(--dim); flex: none; }
+.chain-d-pill.on { color: var(--accent); border-color: var(--accent); }
+.chain-d-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0 2px 26px; font-size: 12px; }
+.chain-d-k { color: var(--dim); flex: none; }
+.chain-d-v { text-align: right; word-break: break-all; }
+.chain-d-arrow { text-align: center; color: var(--dim); font-size: 11px; line-height: 1; padding: 2px 0; }
+.chain-d-verdict { margin-top: 10px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+  border: 1px solid var(--line); color: var(--dim); background: var(--bg3); }
+.chain-d-verdict.ok { color: var(--accent); border-color: var(--accent); background: rgba(250,201,0,.08); }
+.chain-d-verdict.warn { color: #e0a040; border-color: #e0a040; background: rgba(224,160,64,.08); }
+
 /* ---- V3.5.15：首次启动引导（三主题通用，样式自带不依赖主题变量） ---- */
 #ob-overlay { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center;
   background: rgba(6,8,12,.72); backdrop-filter: blur(10px); -webkit-app-region: no-drag; }

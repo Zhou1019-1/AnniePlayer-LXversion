@@ -698,8 +698,10 @@
     sHealth.appendChild(healthRow);
     var healthText = el('div', 'set-hint', '点击「刷新」读取当前输出状态');
     // V3.5.19：音质链路图——源 → DSP 各段 → 输出，激活段点亮、直通段灰显
+    // V4.0.1：链路图可点击，弹出全参数对照浮层
     var healthChain = el('div', 'chain-wrap');
     healthChain.style.display = 'none';
+    healthChain.title = '点击查看链路全参数对照';
     sHealth.appendChild(healthChain);
     sHealth.appendChild(healthText);
     function chainStage(label, active, detail) {
@@ -726,6 +728,176 @@
       });
       healthChain.style.display = '';
     }
+    /* ---- V4.0.1：链路图展开版——点链路图弹全参数对照（源 → 解码 → DSP → 输出） ---- */
+    function openChainDetail() {
+      var f = window.__lastFormat || {};
+      var eqState = window.annieEQ ? window.annieEQ.state : null;
+      var eqLabels = (window.annieEQ && window.annieEQ.FREQ_LABELS) || [];
+      Promise.all([
+        window.mine.engine('stats'),
+        window.mine.engine('vst.list').catch(function () { return null; })
+      ]).then(function (rs) {
+        var s = rs[0] || {};
+        if (s.ok === false) throw new Error(s.error || 'stats 失败');
+        var vstSlots = (rs[1] && rs[1].slots) || [];
+        var dbOf = function (lin) { return (20 * Math.log10(Math.max(1e-6, lin))).toFixed(1) + ' dB'; };
+        var pct = function (v) { return Math.round(v * 100) + '%'; };
+        var chNames = { stereo: '立体声', swap: '左右互换', mono: '单声道合并', invertL: '左声道反相', invertR: '右声道反相' };
+        var loudNames = { off: '关闭', track: '音轨模式', album: '专辑模式' };
+        var isDsd = (f.codec || '').toLowerCase().indexOf('dsd') >= 0 || f.bitDepth === 1 || s.dopActive;
+        var stages = [];
+
+        // ① 源
+        stages.push({
+          name: '源', on: !!f.codec, rows: f.codec ? [
+            ['编码 / 位深', isDsd ? 'DSD ' + (f.requestedRate / 2822400).toFixed(0) + 'x（1bit）' : (f.codec || '?') + ' / ' + (f.bitDepth || '?') + 'bit'],
+            ['采样率 / 声道', (f.requestedRate / 1000) + ' kHz / ' + (f.channels || '?') + ' ch']
+          ] : [['状态', '未播放']]
+        });
+        // ② 解码
+        stages.push({
+          name: '解码', on: !!f.codec, rows: [
+            ['解码器', 'FFmpeg → float32 PCM'],
+            ['整轨预载', s.preload ? '开（预载到内存）' : '关（流式 ≈4s 队列）']
+          ]
+        });
+        // ③ VST
+        var vstOn = vstSlots.filter(function (v) { return v.enabled && !v.broken; });
+        stages.push({
+          name: 'VST 效果器', on: vstOn.length > 0,
+          rows: vstOn.length > 0
+            ? vstOn.map(function (v) { return [v.name || v.path, (v.perfMs || 0) + ' ms/块']; })
+            : [['状态', '未挂接（直通）']]
+        });
+        // ④ EQ
+        var eqGains = eqState ? eqState.gains : [];
+        var eqAct = !!(eqState && eqState.enabled) && eqGains.some(function (g) { return Math.abs(g) > 0.01; });
+        stages.push({
+          name: '图示 EQ（15 段）', on: eqAct,
+          rows: eqAct
+            ? eqGains.map(function (g, i) { return Math.abs(g) > 0.01 ? [(eqLabels[i] || '') + ' Hz', (g > 0 ? '+' : '') + g.toFixed(1) + ' dB'] : null; }).filter(Boolean)
+            : [['状态', eqState && eqState.enabled ? '全 0dB（无染色）' : '已关闭（直通）']]
+        });
+        // ⑤ PEQ
+        var peqAct = !!ui.peqOn && (ui.peqBands || []).length > 0;
+        stages.push({
+          name: '参量 EQ', on: peqAct,
+          rows: peqAct
+            ? ui.peqBands.map(function (b) { return [b.f + ' Hz', (b.g > 0 ? '+' : '') + b.g + ' dB · Q' + b.q]; })
+            : [['状态', '未启用（直通）']]
+        });
+        // ⑥ 声道
+        var chAct = (ui.chMode && ui.chMode !== 'stereo') || Math.abs(ui.chBalance || 0) > 0.001;
+        stages.push({
+          name: '声道矩阵', on: chAct,
+          rows: chAct ? [
+            ['模式', chNames[ui.chMode] || '立体声'],
+            ['平衡', Math.abs(ui.chBalance || 0) < 0.001 ? '居中' : (ui.chBalance < 0 ? '偏左 ' + pct(-ui.chBalance) : '偏右 ' + pct(ui.chBalance))]
+          ] : [['状态', '直通（无矩阵运算）']]
+        });
+        // ⑦ 响度
+        var lg = s.loudGain || 1;
+        stages.push({
+          name: '响度增益', on: Math.abs(lg - 1) > 0.005,
+          rows: [
+            ['当前增益', Math.abs(lg - 1) > 0.005 ? dbOf(lg) : '0 dB（不处理）'],
+            ['响度均衡模式', loudNames[ui.loudMode] || '关闭']
+          ]
+        });
+        // ⑧ 前级限幅
+        var pa = s.preamp || 1;
+        stages.push({
+          name: '前级 / 限幅', on: pa < 0.999,
+          rows: [
+            ['自动前级补偿', (eqState && eqState.autoPreamp === false) ? '已关闭' : (pa < 0.999 ? dbOf(pa) + '（按 EQ/PEQ 最大正增益）' : '0 dB（无正增益无需补偿）')],
+            ['软限幅器', (eqState && eqState.limiter === false) ? '已关闭' : '开启（峰值封顶 0dBFS）']
+          ]
+        });
+        // ⑨ 重采样
+        var isShared = !s.exclusive;
+        stages.push({
+          name: '重采样', on: !!s.resampled,
+          rows: s.resampled ? [
+            ['采样率', (s.requestedRate / 1000) + ' kHz → ' + (s.outputRate / 1000) + ' kHz'],
+            ['质量档位', ui.resampleHq ? '高质量（soxr 64 阶）' : '标准（swresample）']
+          ] : [['状态', isShared ? '共享模式：系统混音器重采样（引擎侧直通）' : '源码率直通']]
+        });
+        // ⑩ 输出
+        stages.push({
+          name: '输出', on: true, rows: [
+            ['设备', (s.deviceName || '-') + '（' + (s.backendKind === 'asio' ? 'ASIO' : 'WASAPI') + (s.exclusive ? ' 独占' : ' 共享') + (s.dopActive ? ' / DoP' : '') + '）'],
+            ['输出格式', s.outputRate ? (s.outputRate / 1000) + ' kHz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' : '未打开'],
+            ['缓冲', (s.bufferMs || 0) + ' ms' + (s.preload ? ' + 整轨预载' : '')],
+            ['切歌', (s.crossfadeSec > 0 ? '交叉淡入 ' + s.crossfadeSec + 's' : (ui.gapless ? '无缝（硬切不重建流）' : '普通（重建设备流）'))]
+          ]
+        });
+        // ⑪ 健康计数
+        stages.push({
+          name: '运行健康', on: true, rows: [
+            ['欠载', (s.underrunCount || 0) + ' 次 / ' + (s.underrunFrames || 0) + ' 帧（增长=爆音风险）'],
+            ['限幅触发', (s.limiterClipBlocks || 0) + ' 块'],
+            ['解码失败', s.decodeFailed ? '是' : '否']
+          ]
+        });
+
+        // 结论：与顶栏 bp-chip 同口径——bit-perfect = 独占 + 引擎未重采样 + 非 DSD 转 PCM
+        var dspNames = [];
+        stages.forEach(function (st, i) { if (st.on && i >= 2 && i <= 7) dspNames.push(st.name); });
+        var bp = !isShared && !!f.bitPerfect && !s.dopActive;
+        var verdict, verdictCls;
+        if (s.dopActive) { verdict = '✓ DoP 原生直通：DSD 位流封装直达设备，全链零处理'; verdictCls = 'ok'; }
+        else if (!f.codec) { verdict = '当前未播放，以上为链路配置预览'; verdictCls = ''; }
+        else if (bp) {
+          verdict = '✓ Bit-perfect：采样率/位深源码直通输出设备，无重采样';
+          if (dspNames.length) verdict += '；数字域处理中：' + dspNames.join('、') + '（不改变采样率/位深）';
+          verdictCls = 'ok';
+        } else {
+          var why = [];
+          if (isShared) why.push('WASAPI 共享模式（系统混音器重采样）');
+          if (s.resampled) why.push('引擎重采样至 ' + (s.outputRate / 1000) + ' kHz');
+          if (isDsd) why.push('DSD 转 PCM');
+          verdict = '✗ 非 Bit-perfect：' + (why.join('；') || f.reason || '未知原因'); verdictCls = 'warn';
+        }
+
+        // —— 构建浮层 DOM ——
+        var ov = el('div', 'modal');
+        var box = el('div', 'modal-box chain-detail-box');
+        var head = el('div', 'chain-detail-head');
+        head.appendChild(el('div', 'modal-title', '音质链路全参数对照'));
+        var closeBtn = el('button', 'btn-ghost', '关闭');
+        head.appendChild(closeBtn);
+        box.appendChild(head);
+        var body = el('div', 'chain-detail-body');
+        stages.forEach(function (st, i) {
+          var stEl = el('div', 'chain-d-stage');
+          var stHead = el('div', 'chain-d-stage-head');
+          stHead.appendChild(el('span', 'chain-d-idx', (i + 1) + ''));
+          stHead.appendChild(el('span', 'chain-d-name', st.name));
+          stHead.appendChild(el('span', 'chain-d-pill' + (st.on ? ' on' : ''), st.on ? '生效' : '直通'));
+          stEl.appendChild(stHead);
+          st.rows.forEach(function (r) {
+            var row = el('div', 'chain-d-row');
+            row.appendChild(el('span', 'chain-d-k', r[0]));
+            row.appendChild(el('span', 'chain-d-v', r[1]));
+            stEl.appendChild(row);
+          });
+          body.appendChild(stEl);
+          if (i < stages.length - 1) body.appendChild(el('div', 'chain-d-arrow', '↓'));
+        });
+        var vd = el('div', 'chain-d-verdict' + (verdictCls ? ' ' + verdictCls : ''), verdict);
+        body.appendChild(vd);
+        box.appendChild(body);
+        ov.appendChild(box);
+        var close = function () { try { ov.remove(); } catch (e) { } };
+        closeBtn.onclick = close;
+        ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
+        document.body.appendChild(ov);
+      }).catch(function (e) {
+        healthText.textContent = '读取失败：' + (e && e.message ? e.message : e);
+      });
+    }
+    healthChain.onclick = openChainDetail;
+
     function renderAudioHealth() {
       healthBtn.disabled = true;
       window.mine.engine('stats').then(function (s) {

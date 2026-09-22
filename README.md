@@ -1,90 +1,98 @@
-# AnniePlayer SVLX — 安妮播放器 × 洛雪音乐 深度融合版（发行名：安妮播放器融合版V3）
+# 安妮播放器融合版 V3（AnniePlayer SVLX）
 
-将 [洛雪音乐(lx-music-desktop)](https://github.com/lyswhut/lx-music-desktop) 的**核心功能模块代码级集成**进安妮播放器：同一 Electron 进程、统一 UI、连贯操作流，而非双应用启动器。
+> 无敌章鱼哥出品 · HiFi 桌面播放器：自研 .NET 独占音频引擎 + 洛雪音乐源深度融合 + 三套界面主题
+> 交流 Q 群：**1023637098**（更多 HiFi 资源群公告获取）
 
-> 下载安装包请见 [Releases](../../releases)（`安妮播放器融合版V3-vX.Y.Z-setup.exe`，未签名，SmartScreen 提示时点「更多信息 → 仍要运行」）。
-> 本应用由无敌章鱼哥开发；更多 HiFi 资源，加入 Q 群 1023637098 获取。
+[![release](https://img.shields.io/github/v/release/Zhou1019-1/AnniePlayer-LXversion?display_name=tag&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)
+[![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-## 功能
+## 下载安装
 
-### 三套并列主题（设置 → 外观，或命令面板 Ctrl+K 切换）
+**[→ 前往 Releases 下载最新安装包](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)**（`V3.x.x-setup.exe`，约 160MB）
 
-- **粒子舞台**：Three.js 3D 可视化舞台（Mineradio 视觉栈 + sonic-topography 声波地形），13 个预设含「音域回响」（Wallpaper Engine 桥接）与月蚀圣环/雨幕霓虹/折光蝶群/深海绽放四个新着色器预设，节拍驱动相机
-- **FB2K**：仿 foobar2000 效率界面，暗色模式、虚拟滚动（5000+ 首 60fps）
-- **Apple Music（v1.2.0 新增）**：磨砂玻璃 + 封面氛围大模糊背景 + AM 风格大字号逐行歌词（点击行跳转），亮/暗双主题；AM Windows 式顶栏（传输控制/迷你封面/进度+当前与剩余时间/音质徽标）；侧栏资料库（歌曲/专辑/文件夹/喜爱）+ 内嵌洛雪在线搜索（五平台、音质选择、单击即播、自动续播）
+- 系统要求：**Windows 10 / 11 64 位**（内置全部运行库，无需装 .NET / VLC / 任何依赖）
+- 安装包未购买代码签名，SmartScreen 提示时点 **「更多信息 → 仍要运行」** 即可
+- **在线更新**：V3.3.1 之后的版本支持差量自动更新，打开软件即静默下载、下次启动生效（每次只需下载几 MB）
+- 覆盖安装 / 升级不会丢失曲库、歌单与设置（数据在 `%APPDATA%\annie-player-svlx`）
 
-### 本地曲库
+## 三套界面主题（设置中心 → 常规，随时切换）
 
-- 扫描 Worker（崩溃自动降级）、CUE 分轨、**SACD ISO 分轨（v1.2.0 新增，sacd_extract 探测）**
-- **自建播放列表（v1.2.0 新增）**：新建/重命名/删除/加歌/移除，library.json 持久化，三主题共享
-- 响度归一（EBU R128）、假无损批量检测（Goertzel）、AnnieEngine 独占解码输出、15 段 EQ（RBJ biquad 热更新）、桌面歌词、迷你模式
+| 主题 | 风格 | 适合 |
+| --- | --- | --- |
+| **Apple Music** | 磨砂玻璃 + 封面氛围背景 + 大字逐行歌词，亮/暗双主题 | 默认主题，颜值党 |
+| **FB2K** | 仿 foobar2000 经典布局，信息密度高，虚拟滚动 10 万首不卡 | 效率党 |
+| **粒子舞台** | Three.js 3D 粒子可视化舞台，13 个视觉预设，节拍驱动相机 | 视觉党、投屏氛围 |
 
-### 流媒体（洛雪深度融合）
+## 核心能力
 
-- 洛雪 musicSdk 原版移植，五大平台（酷狗 / 酷我 / 咪咕 / QQ / 网易）+ 分页加载
-- **自定义音源**：洛雪 2.x 同款模式——导入 `.js` 音源脚本（vm 沙箱隔离执行），启停/删除/多音源回退
-- **音质分级**：Hi-Res 24bit / 无损 FLAC / 极高 320K / 标准 128K，播放与下载共用；URL 实际格式校验，音源乱标音质会被识别并自动降级 + 明确提示
-- **流媒体下载**：自定义下载目录，实时进度，按音质落盘
-- **歌词链路**：洛雪原版解密——酷狗 KRC（XOR+zlib）、酷我 lrcx（yeelion+gb18030）、QQ QRC（qrc_decode 原生模块）、咪咕 mrc
+**音质链路**
+- WASAPI 独占（bit-perfect 直通）/ 共享、ASIO 直通（面板/采样率/缓冲控制）、DSD 转 PCM / DoP
+- 自研 AnnieEngine 解码引擎（.NET 9 sidecar + ffmpeg）：32bit float PCM 域处理
+- 15 段参数 EQ（引擎热更新不破音）、削波防护（自动前级 + tanh 软限幅）
+- 响度均衡 EBU R128（目标 -16 LUFS，**ReplayGain 标签直读免分析**）
+- **无缝播放 Gapless**（切歌保持输出流，间隙毫秒级）、交叉淡入 0–10s
+- 重采样质量档位（标准 / 高质量 64 阶滤波）
+- 输出设备打开失败自动回退 WASAPI 共享并提示，永不"点播放没反应"
 
-### 性能工程（v1.2.0）
+**曲库管理**
+- 全格式：FLAC / APE / WAV / DSF / DFF / TTA / M4A / MP3 / OGG / OPUS / WMA…
+- CUE 整轨分轨、**SACD ISO 分轨**（sacd_extract）
+- 标签编辑器（单曲 + **批量**，勾选式写回）、在线匹配歌词/封面（五平台）
+- 假无损批量检测（Goertzel 频谱分析）、重复歌曲检测、播放统计
+- 自建播放列表（三主题共享）、喜爱列表、收藏不依赖云端
 
-- **专辑级封面共享**：每张专辑只解析一次封面，专辑内所有行复用（配合并发限流），大曲库表格滚动不卡
-- **舞台休眠**：切到 AM/FB2K 主题后 3D 舞台渲染完全停止（GPU 零占用），主循环降为 4fps 心跳；可视化分析（ffmpeg 全曲解码）同步门控，切歌零后台负载
-- metaCache 持久化：全库标签解析只有一次成本；搜索时后台分块深加载
+**在线音乐（洛雪深度融合）**
+- 五大平台搜索/播放/下载：酷狗 / 酷我 / 咪咕 / QQ / 网易
+- 音质分级 Hi-Res 24bit / 无损 / 320K / 128K（URL 实际格式校验，虚标自动降级）
+- 榜单 / 歌单广场、**歌单链接一键导入**（五平台链接或纯 ID）
+- **批量下载已加载结果**、搜索历史、自定义音源脚本导入（vm 沙箱）
 
-## 技术架构
+**其他**
+- 桌面歌词（独立透明窗，逐字卡拉OK）、三主题逐字歌词、**歌词偏移微调（±0.5s 按曲记忆）**
+- 迷你模式（**一键置顶 📌**）、AM 沉浸播放页（**待播清单可拖拽排序/移除**）
+- 全局快捷键（媒体键 + Ctrl+Alt 组合）、播放模式五种、播放定时三种
+- VST3 效果器链（原生编辑器界面 / 湿声平滑过渡 / 每插件耗时 / 方案导入导出 / A-B 对比）
 
-```
-AnniePlayerSVLX.exe (Electron 42, 单进程)
-├── src/main.js              入口: 单例锁 / 便携模式 / 系统托盘
-├── annie/main/              安妮主进程: 引擎 RPC / 曲库扫描 / CUE / SACD ISO / 响度 / 播放列表
-│   └── streaming/           ★ 洛雪深度融合层
-│       ├── lx-sdk/          洛雪 musicSdk 原版代码(零修改, ESM loader 别名解析)
-│       ├── sources.js       音源沙箱: lx.on/lx.request/lx.utils.crypto 全兼容
-│       ├── lxsdk.js         桥接: 搜索/播放URL/歌词/音质回退 + 格式校验
-│       └── index.js         IPC 路由 + 流式下载
-├── annie/renderer/          安妮 UI：粒子舞台(modules/00~11) / FB2K / Apple Music 三主题并列
-└── engine/                  AnnieEngine 解码引擎 sidecar + ffmpeg/sacd_extract(不入库,见下)
-```
+## 常见问题（FAQ）
 
-洛雪代码来源与声明见 [THIRDPARTY/lx-music-desktop/](THIRDPARTY/lx-music-desktop/NOTICE.LICENSE)（Apache-2.0）。
+**Q：安装/更新时提示"无法关闭"或"Failed to uninstall old application files"？**
+A：旧版本（≤3.5.8）的已知问题。任务管理器结束 `AnniePlayerSVLX.exe` 与 `AnnieEngine.exe` 后重试；或直接用最新 setup.exe 覆盖安装（数据不丢）。
 
-## 更新历程
+**Q：点播放没声音/没反应？**
+A：V3.5.15 起输出设备异常会自动回退 WASAPI 共享并弹提示。仍有问题请到 设置中心 → 音频输出 检查设备选择；用 USB DAC（ASIO）时确认设备已连接。
 
-- **V3.5（命名失误，忘记3.4了直接用了3.5HAHAHA）**（1.3.5）：**三主题逐字歌词（卡拉OK逐词扫过，PR #2 by 电狗）**——AM/FB2K 逐词 span 渲染、粒子舞台原生逐字接管；长歌词行**折行显示不再缩字**，支持「每行词数」限制；歌词外观自定义（字号 70–160% / 行距 / 每行词数，持久化）；沉浸/迷你歌词滚动条仅滚动时出现；lxlyric 行格式（`[起始ms,时长ms]`）支持；内嵌歌词读取修复
-- **V3.3.1**（1.3.4）：**在线歌词/封面匹配（一期）**——单曲右键五平台并行搜索、匹配度打分、歌词落盘 .lrc / 封面落盘 cover.jpg（专辑共享）、可选嵌入文件标签；**electron-updater 差量自动更新**（此后更新只需下载几 MB）
-- **V3.3**（1.3.3）：**AM 沉浸式播放界面**（封面氛围模糊底/大字歌词/待播清单·历史记录）与**AM 迷你模式**（360px 小窗、可展开歌词与队列）；**播放模式**五种循环（全文件顺序/列表顺序/全库随机/列表随机/单曲循环，仅本地）；**播放定时**三种（播完列表/定时 N 分钟/单曲循环 N 遍，仅本地）；FB2K 右栏详情收起
-- **V3.2**（1.3.2）：**性能优化专项**——引擎音频线程零分配/零 I/O（电平事件 10Hz 合并）、曲库写入防抖原子化、标签/封面/歌词三级缓存、AM 大列表窗口化渲染、FB2K 滚动合帧与频谱门控、隐藏主题后台降频；独占开关锁定当前设备修复
-- **V3.1**（1.3.0）：AM 流媒体歌词修复、三主题独占开关互通（Bit-Perfect 透传）、AM/FB2K 定位当前播放文件
-- **V3 修复版**（1.2.0 hotfix）：合并**电狗 PR #1**——自定义音源沙箱 Worker 化（卡死不再冻结主进程）、下载写标签（含内嵌歌词/封面）、WASAPI 独占/共享切换、QQ 免签搜索与纯 JS QRC 解密
-- **V3**（1.2.0）：洛雪深度融合定版——三套并列主题（粒子舞台/FB2K/**Apple Music**）、SACD ISO 分轨、自建播放列表、在线搜索单击即播、专辑级封面共享、舞台休眠与可视化分析门控
+**Q：在线更新下载卡住？**
+A：下载走的是 GitHub，建议挂代理或使用「安妮管家PRO」类工具的 hosts 加速；卡住可暂停后去 Releases 页手动下载覆盖安装。
 
-## 构建
+**Q：杀毒软件报毒？**
+A：安装包未签名 + 内含 ffmpeg 子进程调用，属误报，添加信任即可。所有代码（含引擎）均在本仓库开源。
+
+**Q：Apple Music 浅色模式背景刺眼？**
+A：V3.5.12 起已改为柔和暖白，文字对比度同步加深。右上角 ☀ 可切回深色。
+
+## 开发与构建
 
 ```powershell
+git clone https://github.com/Zhou1019-1/AnniePlayer-LXversion.git
+cd AnniePlayer-LXversion
 npm install
-
-# 构建前需放入 AnnieEngine 二进制(由 AnnieEngine 引擎项目构建产出):
-#   engine/publish/  → AnnieEngine.exe 及 .NET 运行时
-#   engine/tools/    → ffmpeg.exe / ffprobe.exe / sacd_extract.exe
-
-npm run dist:setup   # 产出 setupEXE/安妮播放器融合版V3-vX.Y.Z-setup.exe (NSIS x64)
+npm run setup:tools   # 下载 ffmpeg + 校验引擎/sacd_extract（首次克隆必跑）
+npm start             # 开发模式运行
+npm run dist:setup    # 本机打包 NSIS 安装包（含 ffmpeg 前置检查）
+npm run smoke         # 冒烟测试：引擎 RPC + ffmpeg + 解码探测
 ```
 
-打包直接复用 `node_modules/electron/dist`（`electronDist` 配置），无需联网下载 Electron。
-开发运行：`npm start`（同样需要 engine/ 二进制）。
+**发布流程（CI）**：更新 `package.json` 版本号与 `更新日志.md` → push → `git tag vX.Y.Z && git push origin vX.Y.Z` → GitHub Actions 自动编译引擎、打包、冒烟测试、发布 release（约 3 分钟）。
+
+引擎源码：`engine/src/`（.NET 9，`dotnet publish engine/src -c Release -o engine/publish`）。
 
 ## 致谢
 
-- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：
-  - **PR #2（V3.5）**：三主题逐字歌词——粒子舞台/FB2K/AM（含沉浸与迷你）卡拉OK逐词扫过，兼容增强 LRC 与 lxlyric 两种词标签格式
-  - **PR #1（V3 修复版）**：音源沙箱 Worker 化（脚本卡死不再冻结主进程）、下载元数据/内嵌歌词写入（tagWriter）、WASAPI 独占/共享开关、QQ 免签搜索与纯 JS QRC 歌词解密、国内镜像打包配置、AnnieEngine 引擎源码入库，以及「安妮独家音源」公益 API 的收集整理
+- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：三主题逐字歌词（PR #2）；音源沙箱 Worker 化、下载写标签、WASAPI 独占/共享、QQ 免签搜索与纯 JS QRC 解密、AnnieEngine 引擎源码入库（PR #1）
 - [洛雪音乐 lx-music-desktop](https://github.com/lyswhut/lx-music-desktop)（Apache-2.0）：流媒体 SDK 与歌词解密方案
 - [Mineradio](https://github.com/XxHuberrr/Mineradio) / [sonic-topography](https://github.com/yin-yizhen/sonic-topography)：粒子舞台视觉栈与声波地形算法
 
 ## 许可证与免责
 
-- 本项目整体：**GPL-3.0-only**（随安妮播放器）
-- 洛雪组件：**Apache-2.0**，已保留原始许可声明
+- 本项目整体：**GPL-3.0-only**；洛雪组件：**Apache-2.0**（声明见 [THIRDPARTY/](THIRDPARTY/)）
 - 音源解析能力仅供学习交流，请遵守各音乐平台服务条款；第三方音源脚本由其作者负责，与本项目无关

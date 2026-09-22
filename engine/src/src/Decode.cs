@@ -46,7 +46,7 @@ public sealed class FfmpegPcmStream : IDisposable
     }
 
     /// <summary>启动解码。offsetSec &gt; 0 时使用输入端 -ss 快seek；resampleRate &gt; 0 时让 ffmpeg 重采样。headers 为可选 HTTP 头（如 Referer），仅对 URL 生效。capacityBytes &gt; 0 时覆盖默认队列容量（Pro：整轨预载）。</summary>
-    public static FfmpegPcmStream Start(string path, double offsetSec, int resampleRate, int sampleRate, int channels, string? headers = null, int capacityBytes = 0)
+    public static FfmpegPcmStream Start(string path, double offsetSec, int resampleRate, int sampleRate, int channels, string? headers = null, int capacityBytes = 0, bool hqResample = false)
     {
         int capBytes = capacityBytes > 0 ? capacityBytes : Math.Max(ChunkBytes * 4, sampleRate * channels * 4 * 4); // 默认 ≈4 秒
         var args = new List<string> { "-hide_banner", "-v", "error", "-nostdin" };
@@ -61,7 +61,12 @@ public sealed class FfmpegPcmStream : IDisposable
         }
         if (offsetSec > 0.001) { args.Add("-ss"); args.Add(offsetSec.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)); }
         args.Add("-i"); args.Add(path);
-        if (resampleRate > 0) { args.Add("-ar"); args.Add(resampleRate.ToString()); }
+        // V3.5.15：重采样质量——hq 走 swr 高画质参数（64 阶滤波/高截止；本构建未链接 libsoxr，soxr 不可用）
+        if (resampleRate > 0)
+        {
+            if (hqResample) { args.Add("-af"); args.Add($"aresample={resampleRate}:filter_size=64:phase_shift=10:linear_interp=1:cutoff=0.985"); }
+            else { args.Add("-ar"); args.Add(resampleRate.ToString()); }
+        }
         args.Add("-ac"); args.Add(channels.ToString()); // 通道数对齐（单声道可上混立体声）
         args.Add("-f"); args.Add("f32le");
         args.Add("-acodec"); args.Add("pcm_f32le");

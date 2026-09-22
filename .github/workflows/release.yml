@@ -29,8 +29,9 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      # 必须与本地打包参数一致：win-x64 自包含单文件（用户机无 .NET 运行时也能跑）
       - name: 编译 AnnieEngine（.NET 9）
-        run: dotnet publish engine/src -c Release -o engine/publish --nologo
+        run: dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo
 
       - name: 准备 ffmpeg / 校验工具链
         run: node scripts/setup-tools.js
@@ -42,6 +43,10 @@ jobs:
         run: npx electron-builder --win nsis --x64 --publish never
         env:
           CSC_LINK: ''   # 无代码签名证书，跳过签名（安装包本就不签名）
+
+      # V3.5.15：冒烟测试——引擎 RPC + ffmpeg + 解码探测全过才允许发版（拦截"能装不能播"事故）
+      - name: 冒烟测试（引擎/ffmpeg/解码）
+        run: node scripts/smoke-test.js setupEXE/win-unpacked/resources/engine
 
       - name: 从更新日志提取本版 release notes
         shell: pwsh

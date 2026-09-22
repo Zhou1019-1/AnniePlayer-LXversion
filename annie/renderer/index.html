@@ -13,6 +13,28 @@ catch (e) { document.documentElement.dataset.theme = 'am'; }
 try { document.documentElement.dataset.palette = localStorage.getItem('annieplayer.palette') || 'gold'; }
 catch (e) { document.documentElement.dataset.palette = 'gold'; }
 </script>
+<script>
+// 渲染层 JS 错误监控：上报主进程环形缓冲，随诊断包导出（V3.5.15）
+// 注意：script-src 已含 'unsafe-inline'；同消息 3s 内去重，避免错误风暴刷屏
+(function () {
+  var lastMsg = '', lastAt = 0;
+  function report(kind, msg, src, line, col) {
+    try {
+      var now = Date.now();
+      if (msg === lastMsg && now - lastAt < 3000) return;
+      lastMsg = msg; lastAt = now;
+      if (window.mine && window.mine.reportError) window.mine.reportError({ kind: kind, msg: msg, src: src, line: line, col: col });
+    } catch (e) { }
+  }
+  window.addEventListener('error', function (ev) {
+    report('error', String(ev.message || 'unknown'), String(ev.filename || ''), ev.lineno | 0, ev.colno | 0);
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev.reason;
+    report('rejection', String((r && (r.stack || r.message)) || r || 'unhandled rejection'), '', 0, 0);
+  });
+})();
+</script>
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/fb2k.css">
 <link rel="stylesheet" href="css/am.css">
@@ -200,8 +222,6 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
       <button id="btn-mode" class="ctl" title="播放模式（仅本地播放生效，点击切换）">→</button>
       <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）">◎</button>
       <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板">📊</button>
-      <!-- beta0.0.3 移植：一键定位当前播放文件（滚动到列表位置并高亮） -->
-      <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）">◎</button>
       <!-- EQ 按钮由 eq.js 注入本组 -->
     </div>
     <div class="ctl-group sys">
@@ -249,11 +269,13 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
   <script src="js/local/exclusive.js"></script>
   <script src="js/local/player.js"></script>
 <script src="js/local/playmode.js"></script>
+<script src="js/local/lyrOffset.js"></script>
 <script src="js/local/onlineMatch.js"></script>
 <script src="js/local/pro.js"></script>
 <script src="js/local/proUi.js"></script>
 <script src="js/local/theme.js"></script>
 <script src="js/local/fb2k.js"></script>
 <script src="js/local/am.js"></script>
+<script src="js/local/onboard.js"></script>
 </body>
 </html>

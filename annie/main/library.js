@@ -159,6 +159,26 @@ async function readMeta(filePath) {
     }
     let fileSize = 0, mtimeMs = 0;
     try { const st = fs.statSync(filePath); fileSize = st.size; mtimeMs = st.mtimeMs; } catch { }
+    // V3.5.15：ReplayGain 标签直读（响度归一化优先用标签，免 ebur128 分析）
+    const rgDb = (v) => {
+      if (v == null) return null;
+      if (typeof v === 'number') return v;
+      if (typeof v.dB === 'number') return v.dB;
+      const m = String(v).match(/-?[\d.]+/);
+      return m ? parseFloat(m[0]) : null;
+    };
+    const rgPeak = (v) => {
+      if (v == null) return null;
+      if (typeof v === 'number') return v;
+      if (typeof v.peak === 'number') return v.peak;
+      const m = String(v).match(/[\d.]+/);
+      return m ? parseFloat(m[0]) : null;
+    };
+    const rgTrack = rgDb(c.replaygain_track_gain), rgAlbum = rgDb(c.replaygain_album_gain);
+    const rg = (rgTrack != null || rgAlbum != null) ? {
+      track: rgTrack, album: rgAlbum,
+      peak: rgPeak(c.replaygain_track_gain && c.replaygain_track_gain.peak != null ? c.replaygain_track_gain : c.replaygain_track_peak)
+    } : null;
     return {
       ok: true,
       title: c.title || path.basename(filePath, path.extname(filePath)),
@@ -180,6 +200,7 @@ async function readMeta(filePath) {
       bitrate: meta.format?.bitrate || 0,
       channels: meta.format?.numberOfChannels || 0,
       fileSize, mtimeMs,
+      rg,
       cover
     };
   } catch (e) {

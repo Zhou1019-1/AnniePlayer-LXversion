@@ -419,6 +419,12 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-q-title { font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .am-q-sub { font-size: 11px; color: rgba(255,255,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .am-q-dur { font-size: 11px; color: rgba(255,255,255,.55); flex: none; }
+.am-q-row.drag-over { outline: 1.5px dashed rgba(250,45,85,.75); outline-offset: -1.5px; }
+.am-q-row[draggable="true"] { cursor: grab; }
+.am-q-del { flex: none; width: 22px; height: 22px; border: none; border-radius: 6px; background: transparent; color: rgba(255,255,255,.45); font-size: 12px; line-height: 1; cursor: pointer; }
+.am-q-del:hover { background: rgba(250,45,85,.30); color: #fff; }
+#am-root.am-light .am-q-del { color: var(--am-text-3); }
+#am-root.am-light .am-q-del:hover { color: var(--am-text); background: rgba(250,45,85,.18); }
 .am-q-empty { color: rgba(255,255,255,.5); font-size: 12px; text-align: center; margin-top: 40px; }
 
 /* ================= V3.2：沉浸式播放界面 ================= */

@@ -9,8 +9,22 @@
 
   /* ================== 迷你模式（主窗口形态切换，位置记忆） ================== */
   const MINI_LS = 'annieplayer.pro.mini.bounds';
+  const MINI_PIN_LS = 'annieplayer.mini.pin'; // V3.5.15：迷你置顶偏好（三主题迷你共用）
   let miniOn = false;
   let miniBar = null;
+
+  // V3.5.15：迷你模式一键置顶（默认开；📌 切换；退出迷你时主进程强制恢复非置顶）
+  window.annieMiniPin = {
+    get() { try { return localStorage.getItem(MINI_PIN_LS) !== '0'; } catch { return true; } },
+    set(on) {
+      on = !!on;
+      try { localStorage.setItem(MINI_PIN_LS, on ? '1' : '0'); } catch { }
+      if (window.mine.miniPin) window.mine.miniPin(on).catch(() => { });
+      document.querySelectorAll('.mini-pin-btn').forEach(b => b.classList.toggle('on', on));
+    },
+    /** 进入迷你后按偏好套用（miniEnter 默认置顶，偏好关时撤销） */
+    apply() { if (window.mine.miniPin) window.mine.miniPin(window.annieMiniPin.get()).catch(() => { }); }
+  };
 
   function buildMiniBar() {
     if (miniBar) return;
@@ -28,6 +42,7 @@
       '  <button id="mini-prev" title="上一首">⏮</button>' +
       '  <button id="mini-play" title="播放/暂停">▶</button>' +
       '  <button id="mini-next" title="下一首">⏭</button>' +
+      '  <button id="mini-pin" class="mini-pin-btn" title="窗口置顶（置于所有窗口之上）">📌</button>' +
       '  <button id="mini-exit" title="退出迷你模式">✕</button>' +
       '</div>';
     document.body.appendChild(miniBar);
@@ -35,6 +50,9 @@
     $('#mini-next').onclick = () => playAt(state.index + 1);
     $('#mini-prev').onclick = () => { if (state.position > 3) playAt(state.index); else playAt(Math.max(0, state.index - 1)); };
     $('#mini-exit').onclick = () => toggleMini(false);
+    const pinBtn = $('#mini-pin');
+    pinBtn.classList.toggle('on', window.annieMiniPin.get());
+    pinBtn.onclick = () => window.annieMiniPin.set(!window.annieMiniPin.get());
     setInterval(miniTick, 400);
   }
 
@@ -69,6 +87,7 @@
       const r = await window.mine.miniEnter(saved).catch(() => null);
       if (!r || !r.ok) return;
       miniOn = true;
+      window.annieMiniPin.apply(); // V3.5.15：按偏好套用置顶
       miniBar.style.display = 'flex'; // 修复：进入时显示
       document.body.classList.add('mini');
     } else {
@@ -138,8 +157,10 @@
   }
   function getLyric() {
     if (!lyrLines.length) return { cur: '', next: '' };
+    // V3.5.15：歌词偏移（按曲记忆，与 AM/FB2K 同一 Store）
+    const pos = window.annieLyrOff ? window.annieLyrOff.pos(state.currentPath, lyrAbs) : lyrAbs;
     let i = -1;
-    for (let k = 0; k < lyrLines.length; k++) { if (lyrLines[k].t <= lyrAbs + 0.15) i = k; else break; }
+    for (let k = 0; k < lyrLines.length; k++) { if (lyrLines[k].t <= pos + 0.15) i = k; else break; }
     if (i < 0) return { cur: '', next: lyrLines[0].text };
     const L = lyrLines[i];
     return {
@@ -162,7 +183,8 @@
     // V3.5.5：附逐字时间轴与当前位置——桌面歌词窗渲染 karaoke 填充
     window.mine.dlyricsLine({
       cur: l.cur, next: l.next, title: t ? t.name.replace(/\.[^.]+$/, '') : '',
-      words: l.words, lineT: l.lineT, nextT: l.nextT, pos: lyrAbs,
+      words: l.words, lineT: l.lineT, nextT: l.nextT,
+      pos: window.annieLyrOff ? window.annieLyrOff.pos(state.currentPath, lyrAbs) : lyrAbs, // V3.5.15：歌词偏移
     });
   }, 350);
 

@@ -1185,10 +1185,12 @@
   function tickLyrics() {
     if (!S.lyrLines || !R.lyrLines) return;
     var cur = -1;
-    for (var i = 0; i < S.lyrLines.length; i++) if (S.lyrLines[i].t <= S.pos + 0.15) cur = i; else break;
+    // V3.5.15：歌词偏移（按曲记忆，与 AM/桌面歌词同一 Store）
+    var epos = window.annieLyrOff ? window.annieLyrOff.pos(S.lyrPath || state.currentPath, S.pos) : S.pos;
+    for (var i = 0; i < S.lyrLines.length; i++) if (S.lyrLines[i].t <= epos + 0.15) cur = i; else break;
     // 逐词扫过：当前行每 tick 更新各词裁切宽度（不吃下方 line-change 早退）
     var q = R.lyrLines.querySelectorAll('.f2-lyr');
-    if (cur >= 0 && q[cur] && q[cur]._karaWords) karaPaintLine(q[cur], S.pos);
+    if (cur >= 0 && q[cur] && q[cur]._karaWords) karaPaintLine(q[cur], epos);
     if (cur === S.lyrCur) return;
     // 行切换：重置上一行逐词宽度，避免残留
     if (S.lyrCur >= 0 && q[S.lyrCur] && q[S.lyrCur]._karaWords) karaResetLine(q[S.lyrCur]);

@@ -864,10 +864,22 @@ document.addEventListener('annie-settings-changed', () => {
 });
 
 /* ---------------- Pro beat0.0.1：响度归一化（EBU R128，目标 -16 LUFS） ---------------- */
+// V3.5.15：无缝播放开关（默认开；与交叉淡入独立——crossfade>0 时优先淡入淡出）
+function gaplessOn() { return !!(window.annieSettings && annieSettings.ui.gapless !== false); }
 const LOUD_TARGET = -16;
 function loudGainFor(p) {
   if (!window.annieSettings || (annieSettings.ui.loudMode || 'off') === 'off') return 1;
   const mc = state.library.metaCache && state.library.metaCache[p];
+  // V3.5.15：ReplayGain 标签直读优先（RG 基准 -18 LUFS，本机目标 -16 LUFS → +2dB 平移；免 ebur128 分析）
+  if (mc && mc.rg) {
+    const db = (annieSettings.ui.loudMode === 'album' && mc.rg.album != null) ? mc.rg.album : mc.rg.track;
+    if (db != null) {
+      let gain = Math.pow(10, (db + 2) / 20);
+      // 真峰 headroom：归一化后峰值不超过 -1dBFS（RG peak 为线性峰值）
+      if (typeof mc.rg.peak === 'number' && mc.rg.peak > 0) gain = Math.min(gain, 0.891 / mc.rg.peak);
+      return Math.max(0.05, Math.min(4, gain));
+    }
+  }
   const L = mc && mc.loudness;
   if (!L) { queueLoudness(p); return 1; }
   let i = L.i;
@@ -1006,7 +1018,7 @@ async function playAt(i, offsetSec = 0) {
     playPath = r.path; playOffset = 0;
     if (t.iso.dur && !state.duration) { state.duration = t.iso.dur; $('#t-total').textContent = fmtTime(t.iso.dur); }
   }
-  const method = cf > 0 && playOffset === 0 ? 'play.crossfade' : 'play';
+  const method = (cf > 0 || gaplessOn()) && playOffset === 0 ? 'play.crossfade' : 'play';
   try {
     await enginePlayRecover(method, { path: playPath, offsetSec: playOffset, loudGain });
   } catch (e) {
@@ -1063,7 +1075,7 @@ window.annieStreamPlay = async function (track) {
   try {
     // V1.1.4：流媒体切歌同样走 crossfade（设备保持）——与本地 playAt 一致，避免高频设备开关
     const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
-    const method = cf > 0 ? 'play.crossfade' : 'play';
+    const method = (cf > 0 || gaplessOn()) ? 'play.crossfade' : 'play';
     await enginePlayRecover(method, { path: track.url, offsetSec: 0, headers: track.headers });
   } catch (e) {
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);
@@ -1468,4 +1480,7 @@ async function applyAudioSettings() {
   try { await window.mine.engine('dsd.setMode', { mode: u.dsdMode || 'pcm' }); } catch { }
   try { await window.mine.engine('buffer.set', { ms: u.bufferMs || 50, preload: !!u.preload }); } catch { }
   try { await window.mine.engine('crossfade.set', { seconds: u.crossfadeSec || 0 }); } catch { }
+  // V3.5.15：无缝播放 + 重采样质量 启动同步
+  try { await window.mine.engine('gapless.set', { on: u.gapless !== false }); } catch { }
+  try { await window.mine.engine('resample.set', { hq: !!u.resampleHq }); } catch { }
 }

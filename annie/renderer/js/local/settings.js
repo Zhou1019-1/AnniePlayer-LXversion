@@ -28,10 +28,10 @@
     bufferMs: 150,        // 独占缓冲 50–500ms（默认 150ms：50ms 过小，快速操作时易欠载爆音）
     preload: false,        // 整轨预载到内存
     crossfadeSec: 0.5,       // 交叉淡入 0–10s（0=关闭）
+    gapless: true,           // V3.5.15：无缝播放（切歌保持输出流，硬切不重建）
+    resampleHq: false,       // V3.5.15：重采样质量（false=swresample 标准 / true=soxr 高质量）
     loudMode: 'off',        // 响度均衡：off | track | album
-    eqOn: false,           // 15 段均衡器开关（引擎 PCM 域 biquad 链，独占/ASIO 共享）
-    eqPreset: 'flat',      // 预设：flat | pop | rock | classical | vocal | bass | treble | custom
-    eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    eqOn: false,           // （已废弃）15 段 EQ 状态现由 eq.js annieEQ Store 统一管理
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
     downloadDir: '',
     saveLrc: true,         // 下载时在目录生成旁挂 .lrc 歌词文件（嵌入标签始终做）
@@ -674,6 +674,36 @@
     cfRow.appendChild(cfLab); cfRow.appendChild(cfWrap);
     sPlay.appendChild(cfRow);
 
+    // —— 无缝播放（V3.5.15） ——
+    var glRow = markItem(el('div', 'set-row'), '无缝播放 gapless 切歌间隙 连续播放');
+    var glLab = el('div'); glLab.appendChild(el('div', '', '无缝播放（Gapless）'));
+    glLab.appendChild(el('div', 'set-hint', '切歌保持输出流不重建，间隙缩至毫秒级（现场专辑/古典连篇必备）；交叉淡入>0 时优先生效'));
+    var glWrap = el('label', 'switch');
+    var glChk = document.createElement('input'); glChk.type = 'checkbox'; glChk.checked = ui.gapless !== false;
+    glChk.onchange = function () {
+      ui.gapless = glChk.checked; save();
+      window.mine.engine('gapless.set', { on: ui.gapless }).catch(function () { });
+    };
+    glWrap.appendChild(glChk); glWrap.appendChild(el('span', 'knob'));
+    glRow.appendChild(glLab); glRow.appendChild(glWrap);
+    sPlay.appendChild(glRow);
+
+    // —— 重采样质量（V3.5.15） ——
+    var rsRow = markItem(el('div', 'set-row'), '重采样质量 resample soxr 采样率转换 src');
+    var rsLab = el('div'); rsLab.appendChild(el('div', '', '重采样质量'));
+    rsLab.appendChild(el('div', 'set-hint', '仅引擎重采样时生效（设备不支持源采样率的回退场景）；高质量更通透、CPU 略高；下一曲生效'));
+    var rsSel = document.createElement('select');
+    [['fast', '标准（默认）'], ['hq', '高质量（64 阶滤波）']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; rsSel.appendChild(op);
+    });
+    rsSel.value = ui.resampleHq ? 'hq' : 'fast';
+    rsSel.onchange = function () {
+      ui.resampleHq = rsSel.value === 'hq'; save();
+      window.mine.engine('resample.set', { hq: ui.resampleHq }).catch(function () { });
+    };
+    rsRow.appendChild(rsLab); rsRow.appendChild(rsSel);
+    sPlay.appendChild(rsRow);
+
     // —— 响度均衡 ——
     var loudRow = markItem(el('div', 'set-row'), '响度均衡 ebu r128 lufs 音量均衡 loudness');
     var loudLab = el('div'); loudLab.appendChild(el('div', '', '响度均衡（EBU R128）'));
@@ -688,71 +718,57 @@
     sPlay.appendChild(loudRow);
 
     // —— 15 段均衡器（引擎 PCM 域，热更新不破音） ——
-    var EQ_FREQS = ['32', '50', '80', '125', '200', '315', '500', '800', '1.2k', '2k', '3.1k', '5k', '8k', '12.5k', '16k'];
-    var EQ_PRESETS = {
-      flat:      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      pop:       [-1, 0, 1, 2, 3, 2, 1, 0, -1, -1, 0, 1, 2, 3, 3],
-      rock:      [3, 2, 1, 0, -1, -2, -1, 0, 1, 2, 3, 3, 3, 2, 2],
-      classical: [2, 1, 0, 0, 0, 0, -1, -1, -1, 0, 1, 2, 2, 3, 3],
-      vocal:     [-2, -3, -3, -2, -1, 0, 1, 2, 3, 3, 2, 1, 0, -1, -2],
-      bass:      [6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      treble:    [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 6]
-    };
-    var eqSendTimer = null;
-    function eqPush() { // 热更新到引擎（独占/ASIO 共享，实时不破音）；拖动时 60ms 节流
-      if (eqSendTimer) clearTimeout(eqSendTimer);
-      eqSendTimer = setTimeout(function () {
-        window.mine.engine('eq.set', { gains: ui.eqGains.slice(0, 15), enabled: !!ui.eqOn }).catch(function () { });
-      }, 60);
-    }
+    // 单一事实来源：annieEQ（eq.js 全局 Store）。本面板与悬浮面板共享状态、实时双向同步。
     var sEq = section(pgPlayback, '均衡器（15 段）');
     var eqRow = markItem(el('div', 'set-row'), '均衡器 eq equalizer 音效 低音增强 高音增强 人声 流行 摇滚 古典');
     eqRow.style.flexDirection = 'column'; eqRow.style.alignItems = 'stretch'; eqRow.style.gap = '10px';
-    var eqTop = el('div'); eqTop.style.display = 'flex'; eqTop.style.justifyContent = 'space-between'; eqTop.style.alignItems = 'center'; eqTop.style.gap = '10px';
-    var eqLab = el('div'); eqLab.appendChild(el('div', '', '均衡器（15 段，32Hz–16kHz）'));
-    eqLab.appendChild(el('div', 'set-hint', '引擎 PCM 域实时处理，拖动即时生效不破音；独占/ASIO 同样有效'));
-    var eqCtrls = el('div', 'set-ctrl');
-    var eqChk = document.createElement('input'); eqChk.type = 'checkbox'; eqChk.checked = !!ui.eqOn;
-    var eqSel = document.createElement('select');
-    [['flat', '平直'], ['pop', '流行'], ['rock', '摇滚'], ['classical', '古典'], ['vocal', '人声'], ['bass', '低音增强'], ['treble', '高音增强'], ['custom', '自定义']].forEach(function (o) {
-      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; eqSel.appendChild(op);
-    });
-    eqSel.value = ui.eqPreset in EQ_PRESETS || ui.eqPreset === 'custom' ? ui.eqPreset : 'flat';
-    eqChk.onchange = function () { ui.eqOn = eqChk.checked; save(); eqPush(); };
-    eqSel.onchange = function () {
-      ui.eqPreset = eqSel.value;
-      if (EQ_PRESETS[ui.eqPreset]) {
-        ui.eqGains = EQ_PRESETS[ui.eqPreset].slice();
-        eqSliders.forEach(function (sl, i) { sl.value = ui.eqGains[i]; });
-        if (!ui.eqOn) { ui.eqOn = true; eqChk.checked = true; } // 选预设即启用
+    if (!window.annieEQ) {
+      eqRow.appendChild(el('div', 'set-hint', 'EQ 模块未加载'));
+      sEq.appendChild(eqRow);
+    } else (function () {
+      var EQ = window.annieEQ;
+      var CN_NAMES = { flat: '平直', pop: '流行', rock: '摇滚', jazz: '爵士', classical: '古典', vocal: '人声', bass: '低音增强', treble: '高音增强', custom: '自定义' };
+      var eqTop = el('div'); eqTop.style.display = 'flex'; eqTop.style.justifyContent = 'space-between'; eqTop.style.alignItems = 'center'; eqTop.style.gap = '10px';
+      var eqLab = el('div'); eqLab.appendChild(el('div', '', '均衡器（15 段，32Hz–16kHz）'));
+      eqLab.appendChild(el('div', 'set-hint', '引擎 PCM 域实时处理，拖动即时生效不破音；与悬浮面板实时同步'));
+      var eqCtrls = el('div', 'set-ctrl');
+      var eqChk = document.createElement('input'); eqChk.type = 'checkbox';
+      var eqSel = document.createElement('select');
+      Object.keys(EQ.PRESETS).forEach(function (k) {
+        var op = document.createElement('option'); op.value = k; op.textContent = CN_NAMES[k] || EQ.PRESETS[k].name; eqSel.appendChild(op);
+      });
+      eqChk.onchange = function () { EQ.setEnabled(eqChk.checked); };
+      eqSel.onchange = function () { EQ.applyPreset(eqSel.value); if (!EQ.state.enabled) EQ.setEnabled(true); }; // 选预设即启用
+      eqCtrls.appendChild(eqChk); eqCtrls.appendChild(eqSel);
+      eqTop.appendChild(eqLab); eqTop.appendChild(eqCtrls);
+      eqRow.appendChild(eqTop);
+      // 15 根竖向推子
+      var eqWrap = el('div', 'eq-wrap');
+      var eqSliders = EQ.FREQ_LABELS.map(function (f, i) {
+        var band = el('div', 'eq-band');
+        var sl = document.createElement('input');
+        sl.type = 'range'; sl.min = -12; sl.max = 12; sl.step = 0.5;
+        sl.title = f + 'Hz';
+        sl.oninput = function () {
+          EQ.setGain(i, +sl.value);
+          if (!EQ.state.enabled) EQ.setEnabled(true); // 动手即启用
+        };
+        band.appendChild(sl);
+        band.appendChild(el('div', 'eq-f', f));
+        eqWrap.appendChild(band);
+        return sl;
+      });
+      eqRow.appendChild(eqWrap);
+      sEq.appendChild(eqRow);
+      // Store → 面板订阅同步（悬浮面板/命令面板的改动实时反映到此处）
+      function renderEq(s) {
+        eqChk.checked = s.enabled;
+        eqSel.value = EQ.PRESETS[s.preset] || s.preset === 'custom' ? s.preset : 'flat';
+        eqSliders.forEach(function (sl, i) { if (document.activeElement !== sl) sl.value = s.gains[i]; });
       }
-      save(); eqPush();
-    };
-    eqCtrls.appendChild(eqChk); eqCtrls.appendChild(eqSel);
-    eqTop.appendChild(eqLab); eqTop.appendChild(eqCtrls);
-    eqRow.appendChild(eqTop);
-    // 15 根竖向推子
-    var eqWrap = el('div', 'eq-wrap');
-    var eqSliders = EQ_FREQS.map(function (f, i) {
-      var band = el('div', 'eq-band');
-      var sl = document.createElement('input');
-      sl.type = 'range'; sl.min = -12; sl.max = 12; sl.step = 0.5;
-      sl.value = ui.eqGains[i] || 0; sl.title = f + 'Hz';
-      sl.oninput = function () {
-        ui.eqGains[i] = +sl.value;
-        if (ui.eqPreset !== 'custom') { ui.eqPreset = 'custom'; eqSel.value = 'custom'; }
-        if (!ui.eqOn) { ui.eqOn = true; eqChk.checked = true; } // 动手即启用
-        save(); eqPush();
-      };
-      band.appendChild(sl);
-      band.appendChild(el('div', 'eq-f', f));
-      eqWrap.appendChild(band);
-      return sl;
-    });
-    eqRow.appendChild(eqWrap);
-    sEq.appendChild(eqRow);
-    // 启动时把持久化的 EQ 推给引擎（引擎不自行持久化）
-    eqPush();
+      EQ.onChange(renderEq);
+      renderEq(EQ.state);
+    })();
 
     /* ================= 歌词 ================= */
     // —— 全局（AM / FB2K / 舞台逐字） ——

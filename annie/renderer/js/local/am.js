@@ -1460,15 +1460,17 @@
   }
   function tickLyrics() {
     if (!S.lyrLines.length || !R.lyrScroll) return;
+    // V3.5.15：歌词偏移（按曲记忆）——有效位置 = 播放位置 + 用户校准偏移
+    var epos = window.annieLyrOff ? window.annieLyrOff.pos(S.lyrPath || state.currentPath, S.pos) : S.pos;
     var cur = -1;
     for (var i = 0; i < S.lyrLines.length; i++) {
-      if (S.lyrLines[i].t <= S.pos + 0.15) cur = i; else break;
+      if (S.lyrLines[i].t <= epos + 0.15) cur = i; else break;
     }
     // 逐字扫过：每 tick 更新当前行（不吃下方 line-change 早退）
-    paintKara(R.lyrScroll, cur, S.pos);
+    paintKara(R.lyrScroll, cur, epos);
     // 沉浸/迷你歌词容器同样每 tick 平滑扫过（否则只在行切换时跳变）
-    if (R.imm && S.imm && S.immLyrOn) paintKara(R.immLyrBox, cur, S.pos);
-    if (R.mini && S.mini && S.miniLyrOn) paintKara(R.miniLyr, cur, S.pos);
+    if (R.imm && S.imm && S.immLyrOn) paintKara(R.immLyrBox, cur, epos);
+    if (R.mini && S.mini && S.miniLyrOn) paintKara(R.miniLyr, cur, epos);
     if (cur === S.lyrCur) return;
     S.lyrCur = cur;
     var nodes = R.lyrScroll.children;
@@ -1654,7 +1656,28 @@
     };
     row3.appendChild(sl3); row3.appendChild(v3);
     pop.appendChild(row3);
-    pop.appendChild(el('div', 'am-pop-hint', '超长行自动折行显示（不再缩小字号）；每行词数仅对逐字歌词生效，中文按字计'));
+    // V3.5.15：歌词偏移微调（±0.5s，按曲记忆；AM/FB2K/桌面歌词三处同一生效）
+    if (window.annieLyrOff) {
+      var row4 = el('div', 'am-pop-row');
+      row4.appendChild(el('span', null, '歌词偏移'));
+      var offVal = el('span', 'am-lyrset-v', window.annieLyrOff.fmt(window.annieLyrOff.get(state.currentPath)));
+      var mkOffBtn = function (txt, title, fn) {
+        var b = el('button', 'am-tbtn', txt); b.title = title;
+        b.onclick = function () {
+          if (!state.currentPath) { try { if (typeof proToast === 'function') proToast('未在播放，无法校准'); } catch (e) { } return; }
+          fn();
+          offVal.textContent = window.annieLyrOff.fmt(window.annieLyrOff.get(state.currentPath));
+          tickLyrics();
+        };
+        return b;
+      };
+      row4.appendChild(mkOffBtn('−', '歌词延后 0.5 秒（歌词比声音快时点）', function () { window.annieLyrOff.adjust(state.currentPath, -0.5); }));
+      row4.appendChild(offVal);
+      row4.appendChild(mkOffBtn('＋', '歌词提前 0.5 秒（歌词比声音慢时点）', function () { window.annieLyrOff.adjust(state.currentPath, 0.5); }));
+      row4.appendChild(mkOffBtn('↺', '重置本曲偏移', function () { window.annieLyrOff.set(state.currentPath, 0); }));
+      pop.appendChild(row4);
+    }
+    pop.appendChild(el('div', 'am-pop-hint', '超长行自动折行显示（不再缩小字号）；每行词数仅对逐字歌词生效，中文按字计；歌词偏移按曲目记忆，对所有歌词显示生效'));
     document.getElementById('am-root').appendChild(pop);
     R.lyrSetPop = pop;
   }
@@ -1781,7 +1804,8 @@
     var list = el('div', 'am-q-list');
     box.appendChild(list);
 
-    function addRow(coverUrl, track, title, sub, durText, cur, onclick) {
+    var qDragIdx = -1; // V3.5.15：待播清单拖拽排序（仅本地队列分支）
+    function addRow(coverUrl, track, title, sub, durText, cur, onclick, opts) {
       var row = el('div', 'am-q-row' + (cur ? ' cur' : ''));
       var img = document.createElement('img');
       img.className = 'am-q-cover'; img.alt = ''; img.draggable = false;
@@ -1793,8 +1817,55 @@
       tx.appendChild(el('div', 'am-q-sub', sub));
       row.appendChild(tx);
       row.appendChild(el('div', 'am-q-dur', durText || ''));
+      if (opts && opts.onRemove) {
+        var del = el('button', 'am-q-del', '✕');
+        del.title = '从待播清单移除';
+        del.onclick = function (e) { e.stopPropagation(); opts.onRemove(); };
+        row.appendChild(del);
+      }
+      if (opts && typeof opts.dragIdx === 'number') {
+        var myIdx = opts.dragIdx;
+        row.draggable = true;
+        row.title = '拖拽调整顺序';
+        row.addEventListener('dragstart', function (e) { qDragIdx = myIdx; try { e.dataTransfer.effectAllowed = 'move'; } catch (er) { } });
+        row.addEventListener('dragover', function (e) { e.preventDefault(); row.classList.add('drag-over'); });
+        row.addEventListener('dragleave', function () { row.classList.remove('drag-over'); });
+        row.addEventListener('drop', function (e) {
+          e.preventDefault(); row.classList.remove('drag-over');
+          if (qDragIdx >= 0 && qDragIdx !== myIdx) moveQueueRow(qDragIdx, myIdx);
+          qDragIdx = -1;
+        });
+        row.addEventListener('dragend', function () { qDragIdx = -1; });
+      }
       row.onclick = onclick;
       list.appendChild(row);
+    }
+
+    /* V3.5.15：待播清单编辑——重排/移除后按当前播放路径重映射索引（播放模式即时取索引，无内部顺序缓存） */
+    function remapQueueIndex() {
+      var q = state.queue, cp = state.currentPath;
+      state.index = -1;
+      for (var i = 0; i < q.length; i++) if (q[i] && q[i].path === cp) { state.index = i; break; }
+      if (state.index < 0) state.index = Math.min(state.index + 1, q.length - 1);
+    }
+    function moveQueueRow(from, to) {
+      var q = state.queue;
+      if (from < 0 || from >= q.length || to < 0 || to >= q.length) return;
+      var item = q.splice(from, 1)[0];
+      q.splice(to, 0, item);
+      remapQueueIndex();
+      renderQueuePanel(box);
+    }
+    function removeQueueRow(idx) {
+      var q = state.queue;
+      if (idx < 0 || idx >= q.length) return;
+      q.splice(idx, 1);
+      if (idx === state.index) {
+        // 移除正在播放的行：直接切到顺位下一首
+        if (q.length) { renderQueuePanel(box); playAt(Math.min(idx, q.length - 1)); return; }
+        state.index = -1;
+      } else remapQueueIndex();
+      renderQueuePanel(box);
     }
 
     if (S.qTab !== 'hist') {
@@ -1811,13 +1882,15 @@
       }
       var q = state.queue || [];
       if (!q.length) { list.appendChild(el('div', 'am-q-empty', '（无待播曲目）')); return; }
+      list.appendChild(el('div', 'am-q-empty', '拖拽调整顺序，✕ 移除'));
       for (var i = Math.max(0, state.index); i < q.length; i++) {
         (function (t, idx) {
           var m = trackMeta(t);
           var dm = S.meta[t.path];
           addRow(null, t, m.title, m.artist + (m.album ? ' — ' + m.album : ''),
             dm && dm.duration ? fmtTime(dm.duration) : '', idx === state.index,
-            function () { playAt(idx); });
+            function () { playAt(idx); },
+            { dragIdx: idx, onRemove: function () { removeQueueRow(idx); } });
         })(q[i], i);
       }
       return;
@@ -1950,9 +2023,11 @@
     head.appendChild(info);
     var wb = el('div', 'am-mini-winbtns');
     var bMin = el('button', 'am-tbtn', '—'); bMin.title = '最小化'; bMin.onclick = function () { window.mine.winMin(); };
+    var bPin = el('button', 'am-tbtn mini-pin-btn', '📌'); bPin.title = '窗口置顶（置于所有窗口之上）';
+    bPin.onclick = function () { if (window.annieMiniPin) window.annieMiniPin.set(!window.annieMiniPin.get()); };
     var bExit = el('button', 'am-tbtn', '⤢'); bExit.title = '退出迷你模式'; bExit.onclick = function () { exitMini(); };
     var bClose = el('button', 'am-tbtn am-close', '✕'); bClose.title = '关闭'; bClose.onclick = function () { window.mine.winClose(); };
-    wb.appendChild(bMin); wb.appendChild(bExit); wb.appendChild(bClose);
+    wb.appendChild(bMin); wb.appendChild(bPin); wb.appendChild(bExit); wb.appendChild(bClose);
     head.appendChild(wb);
     m.appendChild(head);
 
@@ -2013,6 +2088,7 @@
       root.classList.add('am-mini-on');
       root.classList.remove('am-mini-lyr-on', 'am-mini-q-on');
       R.miniBtnLyr.classList.remove('on'); R.miniBtnQ.classList.remove('on');
+      if (window.annieMiniPin) window.annieMiniPin.apply(); // V3.5.15：按偏好套用置顶
       syncAuxViews(); refreshAuxProgress();
       miniResize(); // 首启/共享位置记忆尺寸不一：强制校准为迷你基准尺寸（360×170）
     }).catch(function () { });

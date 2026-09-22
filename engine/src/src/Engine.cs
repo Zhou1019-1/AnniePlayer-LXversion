@@ -45,6 +45,8 @@ public sealed class Engine
     private const long ProbeCacheTtlMs = 10 * 60 * 1000L;
     private const int ProbeCacheMax = 64;
     private double _crossfadeSec;          // 交叉淡入时长（0=关闭）
+    private bool _gapless;                 // V3.5.15：无缝播放（mixer 常驻，切歌硬切不开关设备）
+    private bool _resampleHq;              // V3.5.15：重采样走 soxr 高质量
     private const int FadeMs = 60;         // V1.1.7：播放/暂停淡入淡出时长（无爆音暂停/恢复）
     private bool _autoPreamp = true;       // 自动前级补偿（防削波）
     private bool _limiter = true;          // 输出软限幅器
@@ -150,6 +152,9 @@ public sealed class Engine
             "dsp.set" => SetDsp(p),
             "loud.set" => SetLoudGain(p["gain"]?.GetValue<double>() ?? 1.0),
             "crossfade.set" => SetCrossfade(p["seconds"]?.GetValue<double>() ?? 0),
+            // V3.5.15：无缝播放（切歌保持设备流，硬切不重建）/ 重采样质量（soxr 高质量，下一曲生效）
+            "gapless.set" => SetGapless(p["on"]?.GetValue<bool>() ?? true),
+            "resample.set" => SetResampleHq(p["hq"]?.GetValue<bool>() ?? false),
 
             "asio.panel" => ShowAsioPanel(),
 
@@ -159,7 +164,9 @@ public sealed class Engine
             "shutdown" => Shutdown(),
             _ => throw new InvalidOperationException("未知方法: " + method),
         };
-        return Task.FromResult(result);
+        // V3.5.15 修复：async 方法里 return Task.FromResult(result) 会把 Task 本体当结果序列化
+        // （前端收到 {Result:..., Status:...} 导致 devices.list/stats/probe 等全部取不到字段）
+        return result;
     }
 
     /// <summary>输出健康/调试统计：设备格式、重采样、缓冲水位、欠载与限幅计数（未播放时健康计数为 0）。</summary>
@@ -645,6 +652,20 @@ public sealed class Engine
         return new { ok = true, seconds = _crossfadeSec };
     }
 
+    // V3.5.15：无缝播放——切歌走 mixer 硬切（FadeTo 0），设备流不重建，间隙从秒级缩到毫秒级
+    private object SetGapless(bool on)
+    {
+        _gapless = on;
+        return new { ok = true, gapless = on };
+    }
+
+    // V3.5.15：重采样质量——hq=soxr（仅引擎重采样时生效；当前曲不变，下一曲生效）
+    private object SetResampleHq(bool hq)
+    {
+        _resampleHq = hq;
+        return new { ok = true, hq };
+    }
+
     private object ShowAsioPanel()
     {
         if (_backend is AsioBackend ab) ab.ShowControlPanel();
@@ -732,19 +753,37 @@ public sealed class Engine
 
             // 设备释放延迟兜底：快速切歌时旧流刚释放，系统端设备句柄可能尚未完全复位
             // （USB 音频设备的独占锁释放可长达数秒），打开失败时延迟重试，总预算约 4 秒。
-            for (int openRetry = 0; ; openRetry++)
+            object OpenWithRetry(IOutputBackend be)
             {
-                if (gen != _playGeneration) return new { ok = false, reason = "superseded" };
-                try
+                for (int openRetry = 0; ; openRetry++)
                 {
-                    return PlayWithBackend(path, offsetSec, headers, info, backend, gen, quickStart);
+                    if (gen != _playGeneration) return new { ok = false, reason = "superseded" };
+                    try
+                    {
+                        return PlayWithBackend(path, offsetSec, headers, info, be, gen, quickStart);
+                    }
+                    catch (Exception openEx) when (openRetry < 6 && gen == _playGeneration)
+                    {
+                        Console.Error.WriteLine($"[engine] 打开输出设备失败，600ms 后重试 ({openRetry + 1}/6)：{openEx.GetType().Name}: {openEx.Message}");
+                        if (openRetry == 0) Console.Error.WriteLine("[engine] openEx stack: " + openEx.StackTrace);
+                        Thread.Sleep(600);
+                    }
                 }
-                catch (Exception openEx) when (openRetry < 6 && gen == _playGeneration)
-                {
-                    Console.Error.WriteLine($"[engine] 打开输出设备失败，600ms 后重试 ({openRetry + 1}/6)：{openEx.GetType().Name}: {openEx.Message}");
-                    if (openRetry == 0) Console.Error.WriteLine("[engine] openEx stack: " + openEx.StackTrace);
-                    Thread.Sleep(600);
-                }
+            }
+
+            try
+            {
+                return OpenWithRetry(backend);
+            }
+            catch (Exception openFail)
+            {
+                // V3.5.15：设备打开彻底失败（DAC 断开/驱动异常等）→ 自动回退 WASAPI 共享默认输出再试，
+                // 避免"点播放没反应"。已是兜底配置仍失败才向上抛错。
+                if (_backendKind == "wasapi" && _backendDeviceId is null && !_exclusive) throw;
+                Console.Error.WriteLine($"[engine] 输出设备打开失败，自动回退 WASAPI 共享默认输出：{openFail.GetType().Name}: {openFail.Message}");
+                _rpc.Emit("notify", new { text = "输出设备不可用（" + (_backendKind == "asio" ? "ASIO: " + (_backendDeviceId ?? "默认驱动") : "当前设备") + "），已自动切换 WASAPI 共享输出" });
+                SelectBackend("wasapi", null, exclusive: false);
+                return OpenWithRetry(EnsureBackend());
             }
         }
     }
@@ -776,7 +815,7 @@ public sealed class Engine
 
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            var pcm = FfmpegPcmStream.Start(path, offsetSec, resampled ? rate : 0, rate, channels, headers, CapacityFor(info, rate, channels));
+            var pcm = FfmpegPcmStream.Start(path, offsetSec, resampled ? rate : 0, rate, channels, headers, CapacityFor(info, rate, channels), _resampleHq);
             var source = new PcmFloatSource(pcm, rate, channels) { Gain = _gain, LoudGain = _loudGain };
             if (_eqEnabled) { source.Eq = new EqChain(rate, channels); source.Eq.Update(_eqGains); }
             AttachVst(source); // VST实验区：效果器链（每源私有实例）
@@ -785,8 +824,9 @@ public sealed class Engine
             source.OnLevel += OnLevelSample;
 
             // Pro：crossfade 开启时经混音器输出（设备流在切歌时保持打开，同流混音过渡）
+            // V3.5.15：gapless 开启时同样常驻 mixer（切歌 FadeTo(0) 硬切，设备不重建）
             IWaveProvider outProvider = source;
-            if (_crossfadeSec > 0)
+            if (_crossfadeSec > 0 || _gapless)
             {
                 if (_mixer is null || _mixer.WaveFormat.SampleRate != rate || _mixer.Channels != channels)
                     _mixer = new CrossfadeMixer(rate, channels);
@@ -958,8 +998,9 @@ public sealed class Engine
     {
         // V1.1.9：去掉 !_playing 条件——歌曲自然结束后 _playing=false 但 mixer/设备仍在，
         // 此时切歌应继续走 crossfade（FadeTo 无缝衔接）；旧实现回退普通 Play 触发设备开关。
+        // V3.5.15：gapless 开启且 crossfade=0 时仍走本路径（FadeTo(0) 硬切，设备流不重建）。
         if (_mixer is null || _backend is null || _dopActive
-            || DsfReader.IsDsf(path) || _crossfadeSec <= 0)
+            || DsfReader.IsDsf(path) || (_crossfadeSec <= 0 && !_gapless))
             return Play(path, 0, headers, loudGain);
         if (!FfmpegPcmStream.IsUrl(path) && !File.Exists(path)) throw new FileNotFoundException("文件不存在: " + path);
 
@@ -983,7 +1024,7 @@ public sealed class Engine
             var mixer = _mixer!;
             int mixRate = mixer.WaveFormat.SampleRate, mixCh = mixer.Channels;
             bool resampled = info.SampleRate != mixRate;
-            var pcm = FfmpegPcmStream.Start(path, 0, resampled ? mixRate : 0, mixRate, mixCh, headers, CapacityFor(info, mixRate, mixCh));
+            var pcm = FfmpegPcmStream.Start(path, 0, resampled ? mixRate : 0, mixRate, mixCh, headers, CapacityFor(info, mixRate, mixCh), _resampleHq);
             var source = new PcmFloatSource(pcm, mixRate, mixCh) { Gain = _gain, LoudGain = (float)Math.Clamp(loudGain, 0.05, 4.0) };
             if (_eqEnabled) { source.Eq = new EqChain(mixRate, mixCh); source.Eq.Update(_eqGains); }
             AttachVst(source); // VST实验区：效果器链（交叉淡入新源私有实例，与淡出旧源无共享）

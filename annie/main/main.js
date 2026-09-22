@@ -274,40 +274,13 @@ function createWindow() {
       try { app.quit(); } catch { }
     }
   });
-  setupThumbar();        // V3.5.8：任务栏缩略图播放控制
   applyGlobalHotkeys();  // V3.5.8：全局快捷键
 }
 
-// ---------- V3.5.8：任务栏缩略图按钮（悬停任务栏图标即可播控） ----------
-let thumbarApply = null;
-let thumbarState = { playing: false, title: '' };
-let _thumbIcons = null;
-function thumbIcons() {
-  if (_thumbIcons) return _thumbIcons;
-  const dir = path.join(__dirname, '..', 'build', 'thumbar');
-  const mk = (n) => nativeImage.createFromPath(path.join(dir, n + '.png'));
-  _thumbIcons = { prev: mk('prev'), play: mk('play'), pause: mk('pause'), next: mk('next') };
-  return _thumbIcons;
-}
+// 播控动作转发渲染层（全局快捷键/托盘共用通道；V3.5.15 移除任务栏缩略图按钮——Win11 不显示）
 function sendPlayerAction(action) { try { mainWindow?.webContents.send('tray:action', action); } catch { } }
 // SVLX 托盘（src/main.js）复用此通道发播控动作
 global.__svlxPlayerAction = sendPlayerAction;
-function setupThumbar() {
-  if (!mainWindow || process.platform !== 'win32') return;
-  const ic = thumbIcons();
-  thumbarApply = () => {
-    try {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.setThumbarButtons([
-        { tooltip: '上一首', icon: ic.prev, click: () => sendPlayerAction('prev') },
-        { tooltip: thumbarState.playing ? '暂停' : '播放', icon: thumbarState.playing ? ic.pause : ic.play, click: () => sendPlayerAction('toggle') },
-        { tooltip: '下一首', icon: ic.next, click: () => sendPlayerAction('next') },
-      ]);
-      if (thumbarState.title) mainWindow.setTitle(thumbarState.title + ' · 安妮播放器');
-    } catch { }
-  };
-  thumbarApply();
-}
 
 // ---------- V3.5.8：全局快捷键（媒体键 + Ctrl+Alt 组合；store.globalHotkeys=false 关闭） ----------
 const HOTKEY_MAP = [
@@ -407,11 +380,11 @@ function registerIpc() {
     applyGlobalHotkeys();
     return hotkeysOn;
   });
-  // V3.5.8：渲染侧上报播放状态 → 刷新缩略图播放/暂停图标与窗口标题
+  // 渲染侧上报播放状态 → 窗口标题 + 托盘提示
   ipcMain.on('player:state', (_e, s) => {
-    thumbarState = { playing: !!(s && s.playing), title: String((s && s.title) || '').slice(0, 80) };
-    if (thumbarApply) thumbarApply();
-    try { if (tray) tray.setToolTip(thumbarState.title ? '安妮播放器 · ' + thumbarState.title : '安妮播放器'); } catch { }
+    const st = { playing: !!(s && s.playing), title: String((s && s.title) || '').slice(0, 80) };
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(st.title ? st.title + ' · 安妮播放器' : '安妮播放器'); } catch { }
+    try { if (tray) tray.setToolTip(st.title ? '安妮播放器 · ' + st.title : '安妮播放器'); } catch { }
   });
 
   // EXP 7.28：选目录只更新文件夹列表，扫描交由 lib:scanStart（Worker 异步批量回传）
@@ -753,6 +726,12 @@ function registerIpc() {
     miniSaved = null; miniWasMax = false;
     return { ok: true, miniBounds: b };
   });
+  // V3.5.15：迷你模式一键置顶开关（默认置顶，📌 可临时取消；退出迷你强制恢复非置顶）
+  ipcMain.handle('mini:pin', (_e, on) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+    mainWindow.setAlwaysOnTop(!!on);
+    return { ok: true, on: !!on };
+  });
 
   /* ---------------- Pro beat0.0.1：桌面歌词窗口 ---------------- */
   let dlyrWin = null;
@@ -799,6 +778,21 @@ function registerIpc() {
   });
 
   /* ---------------- Pro beat0.0.1：诊断包导出 ---------------- */
+  /* 渲染层 JS 错误环形缓冲（window.onerror / unhandledrejection 上报），随诊断包导出 */
+  const rendererErrorRing = [];
+  ipcMain.on('renderer-error', (_e, payload) => {
+    try {
+      const p = payload || {};
+      rendererErrorRing.push({
+        t: new Date().toISOString(),
+        kind: String(p.kind || 'error').slice(0, 24),
+        msg: String(p.msg || '').slice(0, 500),
+        src: String(p.src || '').slice(0, 300),
+        line: p.line | 0, col: p.col | 0
+      });
+      if (rendererErrorRing.length > 100) rendererErrorRing.shift();
+    } catch { }
+  });
   ipcMain.handle('diag:export', async (_e, rendererSnapshot) => {
     const { dialog } = require('electron');
     const r = await dialog.showSaveDialog(mainWindow, {
@@ -829,6 +823,7 @@ function registerIpc() {
       { name: 'settings.json', content: JSON.stringify(settings, null, 2) },
       { name: 'engine-log.txt', content: engine.logRing.map(x => x.t + ' ' + x.line).join('\n') || '(空)' },
       { name: 'engine-errors.txt', content: engine.errorRing.map(x => x.t + ' ' + x.line).join('\n') || '(空)' },
+      { name: 'renderer-errors.txt', content: rendererErrorRing.map(x => x.t + ' [' + x.kind + '] ' + x.msg + (x.src ? ' @ ' + x.src + ':' + x.line + ':' + x.col : '')).join('\n') || '(空)' },
     ]);
     fs.writeFileSync(r.filePath, zip);
     return { ok: true, path: r.filePath };
@@ -869,7 +864,8 @@ function registerIpc() {
         genre: meta.genre || '', year: meta.year || 0, duration: meta.duration || 0,
         codec: meta.codec || '', sampleRate: meta.sampleRate || 0, bitsPerSample: meta.bitsPerSample || 0,
         bitrate: meta.bitrate || 0, channels: meta.channels || 0,
-        fileSize: meta.fileSize || 0, mtimeMs: mt
+        fileSize: meta.fileSize || 0, mtimeMs: mt,
+        rg: meta.rg || null // V3.5.15：ReplayGain 标签
       };
       saveStore({ metaCache: store.metaCache });
     }
@@ -918,7 +914,8 @@ function registerIpc() {
             genre: meta.genre || '', year: meta.year || 0, duration: meta.duration || 0,
             codec: meta.codec || '', sampleRate: meta.sampleRate || 0, bitsPerSample: meta.bitsPerSample || 0,
             bitrate: meta.bitrate || 0, channels: meta.channels || 0,
-            fileSize: meta.fileSize || 0, mtimeMs: mt
+            fileSize: meta.fileSize || 0, mtimeMs: mt,
+            rg: meta.rg || null // V3.5.15：ReplayGain 标签
           };
         }
         out[p] = meta;

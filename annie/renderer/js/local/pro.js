@@ -41,6 +41,8 @@
     const stats = state.library.stats || {};
     const tracks = state.library.tracks;
     if (kind === 'new') return [...tracks].sort((a, b) => b.mtime - a.mtime).slice(0, 100);
+    // V3.5.19：每日推荐（完全离线，按艺术家偏好加权 + 种子随机）
+    if (kind === 'daily') return window.annieSmart ? window.annieSmart.dailyMix(30) : [];
     const arr = tracks.filter(t => stats[t.path] && stats[t.path].count > 0);
     if (kind === 'top') arr.sort((a, b) => (stats[b.path].count || 0) - (stats[a.path].count || 0));
     else arr.sort((a, b) => (stats[b.path].lastPlayed || 0) - (stats[a.path].lastPlayed || 0));
@@ -161,6 +163,8 @@
       { special: 'smart:top', name: '最常听', sub: '按播放次数', count: topN, icon: '🔥' },
       { special: 'smart:recent', name: '最近播放', sub: '按最近播放时间', count: recentN, icon: '🕒' },
       { special: 'smart:new', name: '最近添加', sub: '按文件修改时间', count: Math.min(100, state.library.tracks.length), icon: '🆕' },
+      // V3.5.19：每日推荐（本地曲库，种子=日期，同日稳定；count 固定展示不算实数，避免每次渲染全库排序）
+      { special: 'smart:daily', name: '每日推荐', sub: '偏好 60% + 探索 40%', count: 30, icon: '✨' },
       { special: 'albums', name: '专辑', sub: '媒体库 · 按专辑聚合', count: aggAlbums().length, icon: '💿' },
       { special: 'artists', name: '艺术家', sub: '媒体库 · 按艺术家聚合', count: aggArtists().length, icon: '🎤' },
     ];
@@ -180,6 +184,7 @@
     if (f === 'smart:top') return '最常听';
     if (f === 'smart:recent') return '最近播放';
     if (f === 'smart:new') return '最近添加';
+    if (f === 'smart:daily') return '每日推荐';
     return null;
   }
 

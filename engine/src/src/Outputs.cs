@@ -66,6 +66,10 @@ public sealed class PcmFloatSource : IWaveProvider
     public bool Limiter = true;
     /// <summary>15 段 EQ 链（EXP 7.28）：null = 直通。由 Engine 在创建源/收到 eq.set 时挂载。</summary>
     public EqChain? Eq;
+    /// <summary>参量 EQ 链（V3.5.19）：图示 EQ 之后处理；null = 直通。</summary>
+    public PeqChain? Peq;
+    /// <summary>声道矩阵（V3.5.19）：[mLL,mLR,mRL,mRR]，outL=inL·mLL+inR·mLR；null = 直通。整体引用替换，无锁。</summary>
+    public float[]? ChMatrix;
     /// <summary>VST实验区：本源私有的 VST3 效果器实例链（EQ 之前处理）；null/空 = 直通。</summary>
     public VstFxInstance[]? VstFx;
     public WaveFormat WaveFormat { get; }
@@ -253,6 +257,21 @@ public sealed class PcmFloatSource : IWaveProvider
                 }
                 if (eq is not null)
                     for (int fr = 0; fr < frames; fr++) eq.ProcessFrame(f + fr * chs);
+                // V3.5.19：参量 EQ（图示 EQ 之后）
+                var peq = Peq;
+                if (peq is not null)
+                    for (int fr = 0; fr < frames; fr++) peq.ProcessFrame(f + fr * chs);
+                // V3.5.19：声道矩阵（平衡/互换/单声道/反相）——EQ 之后、增益限幅之前
+                var chm = ChMatrix;
+                if (chm is not null && chs == 2)
+                {
+                    for (int fr = 0; fr < frames; fr++)
+                    {
+                        float l = f[fr * 2], r = f[fr * 2 + 1];
+                        f[fr * 2] = l * chm[0] + r * chm[1];
+                        f[fr * 2 + 1] = l * chm[2] + r * chm[3];
+                    }
+                }
                 for (int i = 0; i < count / 4; i++)
                 {
                     float g = totalGain;

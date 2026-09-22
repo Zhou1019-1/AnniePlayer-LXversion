@@ -28,6 +28,11 @@ public sealed class Engine
     private float _gain = 1.0f;
     private double[] _eqGains = new double[EqChain.BandCount]; // EXP 7.28：15 段 EQ 增益（dB）
     private bool _eqEnabled = true;
+    // V3.5.19：参量 EQ（自由频段，与图示 EQ 串联）与声道工具（平衡/互换/单声道/反相）
+    private bool _peqEnabled;
+    private List<PeqChain.Band> _peqBands = new();
+    private string _chMode = "stereo";   // stereo | swap | mono | invertL | invertR
+    private double _chBalance;           // -1（全左）.. 0 .. 1（全右）
     /* ---------------- VST实验区：VST3 效果器链 ---------------- */
     private readonly List<VstFxSlot> _vstSlots = new();   // 槽位配置（路径/启用/状态），实例按源私有
     private readonly HashSet<string> _vstCrashNotified = new(); // 崩溃通知去重（音频线程置 Broken，定时器线程发通知）
@@ -155,6 +160,9 @@ public sealed class Engine
             // V3.5.15：无缝播放（切歌保持设备流，硬切不重建）/ 重采样质量（soxr 高质量，下一曲生效）
             "gapless.set" => SetGapless(p["on"]?.GetValue<bool>() ?? true),
             "resample.set" => SetResampleHq(p["hq"]?.GetValue<bool>() ?? false),
+            // V3.5.19：参量 EQ / 声道工具
+            "peq.set" => SetPeq(p),
+            "channel.set" => SetChannel(p),
 
             "asio.panel" => ShowAsioPanel(),
 
@@ -205,7 +213,16 @@ public sealed class Engine
             underrunFrames = src is null ? 0 : System.Threading.Interlocked.Read(ref src.UnderrunFrames),
             limiterClipBlocks = src is null ? 0 : System.Threading.Interlocked.Read(ref src.LimiterClipBlocks),
             decodeFailed = pcm?.Failed ?? false,
-            sourceEnded = src?.SourceEnded ?? false
+            sourceEnded = src?.SourceEnded ?? false,
+            // V3.5.19：链路图——各 DSP 段激活状态（渲染层拼链路图用）
+            eqActive = _eqEnabled && _eqGains.Any(g => Math.Abs(g) > 0.01),
+            peqActive = _peqEnabled && _peqBands.Any(b => Math.Abs(b.GainDb) > 0.01),
+            peqBands = _peqBands.Count,
+            channelMode = _chMode,
+            channelBalance = _chBalance,
+            loudGain = src?.LoudGain ?? 1.0f,
+            preamp = src?.Preamp ?? 1.0f,
+            vstActive = _vstSlots.Count(s => s.Enabled && !s.Broken)
         };
     }
 
@@ -299,6 +316,69 @@ public sealed class Engine
             _source.Eq = eq = new EqChain(_source.WaveFormat.SampleRate, _source.WaveFormat.Channels);
         eq.Update(_eqGains);
     }
+
+    /// <summary>V3.5.19：参量 EQ。params: { enabled: bool, bands: [{f: Hz, g: dB, q}] }</summary>
+    private object SetPeq(JsonObject p)
+    {
+        if (p["enabled"] is JsonNode en) _peqEnabled = en.GetValue<bool>();
+        if (p["bands"] is JsonArray arr)
+        {
+            var list = new List<PeqChain.Band>();
+            foreach (var it in arr)
+            {
+                if (it is not JsonObject o) continue;
+                list.Add(new PeqChain.Band(
+                    o["f"]?.GetValue<double>() ?? 1000,
+                    o["g"]?.GetValue<double>() ?? 0,
+                    o["q"]?.GetValue<double>() ?? 1.0));
+                if (list.Count >= PeqChain.MaxBands) break;
+            }
+            _peqBands = list;
+        }
+        lock (_gate) { ApplyPeqLocked(); ApplyDspLocked(); } // ApplyDspLocked：前级补偿需计入 PEQ 正增益
+        return new { ok = true, enabled = _peqEnabled, bands = _peqBands.Count };
+    }
+
+    /// <summary>把当前 PEQ 频段挂载到活动源（须持有 _gate）。</summary>
+    private void ApplyPeqLocked()
+    {
+        if (_source is null) return;
+        if (!_peqEnabled || _peqBands.Count == 0) { _source.Peq = null; return; }
+        var peq = _source.Peq;
+        if (peq is null || peq.SampleRate != _source.WaveFormat.SampleRate)
+            _source.Peq = peq = new PeqChain(_source.WaveFormat.SampleRate, _source.WaveFormat.Channels);
+        peq.Update(_peqBands);
+    }
+
+    /// <summary>V3.5.19：声道工具。params: { mode: stereo/swap/mono/invertL/invertR, balance: -1..1 }</summary>
+    private object SetChannel(JsonObject p)
+    {
+        if (p["mode"] is JsonNode m) _chMode = m.GetValue<string>();
+        if (p["balance"] is JsonNode b) _chBalance = Math.Clamp(b.GetValue<double>(), -1.0, 1.0);
+        lock (_gate) { ApplyChannelLocked(); }
+        return new { ok = true, mode = _chMode, balance = _chBalance };
+    }
+
+    /// <summary>由模式 + 平衡计算 2x2 声道矩阵（null = 直通，省去每帧矩阵乘法）。</summary>
+    private float[]? BuildChMatrix()
+    {
+        float gL = (float)(_chBalance > 0 ? 1.0 - _chBalance : 1.0);
+        float gR = (float)(_chBalance < 0 ? 1.0 + _chBalance : 1.0);
+        float mLL = 1, mLR = 0, mRL = 0, mRR = 1;
+        switch (_chMode)
+        {
+            case "swap": mLL = 0; mLR = 1; mRL = 1; mRR = 0; break;
+            case "mono": mLL = mLR = mRL = mRR = 0.5f; break;
+            case "invertL": mLL = -1; break;
+            case "invertR": mRR = -1; break;
+        }
+        if (mLL == 1 && mLR == 0 && mRL == 0 && mRR == 1 && gL == 1 && gR == 1) return null;
+        // 平衡作用在输出声道：列乘 gL/gR
+        return new[] { mLL * gL, mLR * gL, mRL * gR, mRR * gR };
+    }
+
+    /// <summary>把声道矩阵挂载到活动源（须持有 _gate）。</summary>
+    private void ApplyChannelLocked() { if (_source is not null) _source.ChMatrix = BuildChMatrix(); }
 
     /* ==================== VST实验区：VST3 效果器链 ==================== */
 
@@ -599,9 +679,12 @@ public sealed class Engine
         if (_source is null) return;
         double maxPos = 0;
         if (_eqEnabled) foreach (var g in _eqGains) if (g > maxPos) maxPos = g;
+        if (_peqEnabled) foreach (var b in _peqBands) if (b.GainDb > maxPos) maxPos = b.GainDb; // V3.5.19：PEQ 正增益同样计入前级补偿
         _source.Preamp = _autoPreamp ? (float)Math.Pow(10.0, -maxPos / 20.0) : 1.0f;
         _source.Limiter = _limiter;
         _source.LoudGain = _loudGain;
+        ApplyPeqLocked();      // V3.5.19：新源/换采样率时重建 PEQ 链
+        ApplyChannelLocked();  // V3.5.19：声道矩阵
     }
 
     /* ---------------- Pro beat0.0.1：新 RPC ---------------- */

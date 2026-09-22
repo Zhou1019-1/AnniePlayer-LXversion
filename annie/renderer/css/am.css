@@ -559,3 +559,8 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-chip-x { opacity:.45; margin-left:6px; font-size:11px; }
 .am-chip-x:hover { opacity:1; color:#ff6b6b; }
 span.am-chip { cursor:pointer; display:inline-flex; align-items:center; }
+
+/* ---- V3.5.19：评论面板（沉浸/迷你共享队列面板的第三页签） ---- */
+.am-cmt-row { padding: 10px 4px; border-bottom: 1px dashed rgba(128,128,128,.18); }
+.am-cmt-text { font-size: 13px; line-height: 1.6; color: inherit; word-break: break-word; }
+.am-cmt-meta { font-size: 11px; opacity: .5; margin-top: 4px; }

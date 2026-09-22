@@ -1029,6 +1029,7 @@ function registerIpc() {
 ipcMain.handle('stream:getPic', (_e, params) => streaming.getPic(params));
 ipcMain.handle('stream:coverProxy', (_e, url) => streaming.coverProxy(url));
 ipcMain.handle('stream:hotSearch', (_e, params) => streaming.hotSearch(params));
+ipcMain.handle('stream:hotComments', (_e, params) => streaming.hotComments(params)); // V3.5.19：网易云热门评论
 // 发现音乐：排行榜 / 歌单广场（V3.5.4）
 ipcMain.handle('stream:leaderboards', (_e, params) => streaming.leaderboards(params));
 ipcMain.handle('stream:leaderboardList', (_e, params) => streaming.leaderboardList(params));

@@ -95,6 +95,15 @@ async function hotSearch(params) {
   return lxsdk.hotSearch(params);
 }
 
+/** V3.5.19：网易云热门评论（AM 沉浸页评论面板） */
+async function hotComments(params) {
+  try {
+    return { ok: true, ...(await lxsdk.hotComments(params || {})) };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e).slice(0, 80), comments: [] };
+  }
+}
+
 /* ---------------- 下载 ---------------- */
 
 function sanitizeFileName(s) {
@@ -228,7 +237,7 @@ async function writeDownloadedTags(dest, song, provider, opts) {
 }
 
 module.exports = {
-  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, download, downloadDir, setDownloadDir,
+  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir,
   leaderboards, leaderboardList, songLists, songListDetail,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层

@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('mine', {
   streamGetPic: (params) => ipcRenderer.invoke('stream:getPic', params),
   streamCoverProxy: (url) => ipcRenderer.invoke('stream:coverProxy', url),
   streamHotSearch: (params) => ipcRenderer.invoke('stream:hotSearch', params),
+  streamHotComments: (params) => ipcRenderer.invoke('stream:hotComments', params), // V3.5.19：网易云热门评论
   // 发现音乐：排行榜 / 歌单广场（V3.5.4）
   streamLeaderboards: (params) => ipcRenderer.invoke('stream:leaderboards', params),
   streamLeaderboardList: (params) => ipcRenderer.invoke('stream:leaderboardList', params),

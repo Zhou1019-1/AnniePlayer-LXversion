@@ -15,9 +15,12 @@
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(KEY) || 'null');
-      if (d && d.songs && Array.isArray(d.hours) && d.hours.length === 24) return d;
+      if (d && d.songs && Array.isArray(d.hours) && d.hours.length === 24) {
+        if (!d.days) d.days = {};
+        return d;
+      }
     } catch (e) { }
-    return { totalSec: 0, totalPlays: 0, songs: {}, hours: new Array(24).fill(0) };
+    return { totalSec: 0, totalPlays: 0, songs: {}, hours: new Array(24).fill(0), days: {} };
   }
   // 节流落盘：播放中 position 10Hz 调用，最多每 8s 写一次
   function save() {
@@ -28,6 +31,15 @@
     }, 8000);
   }
   function normKey(p) { return String(p || '').replace(/#(cue|iso).*/i, ''); }
+  function dayKey(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  // 修剪 400 天前的按天记录（热力图只看近半年，长期留存防膨胀）
+  function pruneDays() {
+    const cutoff = dayKey(new Date(Date.now() - 400 * 86400000));
+    Object.keys(data.days).forEach(k => { if (k < cutoff) delete data.days[k]; });
+  }
 
   function prune() {
     const keys = Object.keys(data.songs);
@@ -64,6 +76,9 @@
       if (d > 0 && d <= 0.6) {
         data.totalSec += d;
         data.hours[new Date().getHours()] += d;
+        const dk = dayKey();
+        data.days[dk] = (data.days[dk] || 0) + d;
+        if (Object.keys(data.days).length > 410) pruneDays();
         if (curKey && data.songs[curKey]) data.songs[curKey].sec += d;
         save();
       }
@@ -93,11 +108,12 @@
       topArtists: agg(arr, s => s.artist),
       topAlbums: agg(arr, s => s.album),
       favHour: favSec > 60 ? favHour : -1,   // 不足 1 分钟不显示，避免误导
+      days: data.days,                        // V3.5.19：按天秒数（热力图）
     };
   }
 
   function clear() {
-    data = { totalSec: 0, totalPlays: 0, songs: {}, hours: new Array(24).fill(0) };
+    data = { totalSec: 0, totalPlays: 0, songs: {}, hours: new Array(24).fill(0), days: {} };
     curKey = null; lastPos = -1;
     try { localStorage.removeItem(KEY); } catch (e) { }
   }

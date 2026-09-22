@@ -579,4 +579,34 @@ async function songListDetail({ provider, id, page }) {
   };
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, normalize, leaderboards, leaderboardList, songLists, songListDetail };
+/**
+ * V3.5.19：网易云热门评论。
+ * 流媒体 wy 曲目直接传 songmid；本地/其他平台曲目按「歌名 歌手」搜 wy 取第一条匹配。
+ * 返回 { total, comments: [{text, userName, likedCount, timeStr}] }。
+ */
+async function hotComments({ songmid, name, artist, limit = 15 }) {
+  const sdk = await loadSdk();
+  const wy = sdk.wy;
+  if (!wy || !wy.comment) throw new Error('评论模块不可用');
+  let id = songmid;
+  if (!id) {
+    const kw = [name, artist].filter(Boolean).join(' ').trim();
+    if (!kw) throw new Error('缺少曲目信息');
+    const rs = await search({ provider: 'wy', keywords: kw, page: 1, limit: 5 });
+    const first = (rs.songs || [])[0];
+    id = first && first.meta && first.meta.songmid;
+    if (!id) throw new Error('网易云未找到该曲');
+  }
+  const r = await wy.comment.getHotComment({ songmid: id }, 1, limit);
+  return {
+    total: r.total || 0,
+    comments: (r.comments || []).map(c => ({
+      text: c.text || '',
+      userName: c.userName || '',
+      likedCount: c.likedCount || 0,
+      timeStr: c.timeStr || '',
+    })),
+  };
+}
+
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, normalize, leaderboards, leaderboardList, songLists, songListDetail, hotComments };

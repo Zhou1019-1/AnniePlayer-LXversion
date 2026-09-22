@@ -893,6 +893,19 @@ body.mini > *:not(#mini-bar) { display: none !important; }
 .lsr-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 .lsr-btns .btn-ghost { width: auto; padding: 6px 16px; font-size: 12px; }
 
+/* ---- V3.5.19：收听热力图 ---- */
+.lsr-heat-wrap { margin-bottom: 16px; }
+.lsr-heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 10px); gap: 2px; width: fit-content; margin-top: 8px; }
+.lsr-heat-c { width: 10px; height: 10px; border-radius: 2px; background: var(--bg3); }
+
+/* ---- V3.5.19：智能歌单生成器表单 ---- */
+.sls-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.sls-field { display: flex; align-items: center; gap: 10px; }
+.sls-label { width: 130px; flex: none; font-size: 12px; color: var(--dim); }
+.sls-input { flex: 1; background: var(--bg3); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 6px 10px; font-size: 13px; }
+.sls-input:focus { border-color: var(--accent); outline: none; }
+.sls-loss { font-size: 12px; color: var(--text); cursor: pointer; }
+
 /* ---- V3.5.18：氛围模式（全屏频谱） ---- */
 .amb-mask { position: fixed; inset: 0; z-index: 9500; background: rgba(4,5,9,.94); cursor: pointer; }
 .amb-canvas { position: absolute; left: 0; bottom: 0; width: 100%; height: 62%; }
@@ -900,6 +913,20 @@ body.mini > *:not(#mini-bar) { display: none !important; }
 .amb-title { font-size: 34px; font-weight: 700; color: #f2f3f7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .amb-artist { font-size: 16px; color: #9aa0b4; margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .amb-hint { position: absolute; bottom: 18px; right: 24px; font-size: 12px; color: #666c80; }
+
+/* ---- V3.5.19：PEQ 频段行 + 音质链路图 ---- */
+.peq-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.peq-row:last-child { border-bottom: none; }
+.peq-idx { width: 18px; text-align: center; color: var(--dim); font-size: 12px; flex: none; }
+.peq-row input[type="number"] { width: 68px; background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); padding: 4px 6px; font-size: 12px; }
+.peq-row input[type="range"] { flex: 1; min-width: 80px; }
+.peq-g { width: 56px; font-size: 12px; color: var(--accent); flex: none; text-align: right; }
+.peq-unit { font-size: 11px; color: var(--dim); flex: none; }
+.chain-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
+.chain-st { font-size: 11px; padding: 3px 10px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); background: var(--bg3); }
+.chain-st.on { color: var(--accent); border-color: var(--accent); background: rgba(250,201,0,.08); }
+.chain-arrow { color: var(--dim); font-size: 11px; }
 
 /* ---- V3.5.15：首次启动引导（三主题通用，样式自带不依赖主题变量） ---- */
 #ob-overlay { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center;

@@ -1801,14 +1801,51 @@
   function renderQueuePanel(box) {
     box.innerHTML = '';
     var tabs = el('div', 'am-q-tabs');
-    var tQ = el('button', 'am-q-tab' + (S.qTab !== 'hist' ? ' cur' : ''), '待播清单');
+    var tQ = el('button', 'am-q-tab' + (S.qTab !== 'hist' && S.qTab !== 'cmt' ? ' cur' : ''), '待播清单');
     var tH = el('button', 'am-q-tab' + (S.qTab === 'hist' ? ' cur' : ''), '历史记录');
+    var tC = el('button', 'am-q-tab' + (S.qTab === 'cmt' ? ' cur' : ''), '评论');
     tQ.onclick = function () { S.qTab = 'queue'; renderQueuePanel(box); };
     tH.onclick = function () { S.qTab = 'hist'; renderQueuePanel(box); };
-    tabs.appendChild(tQ); tabs.appendChild(tH);
+    tC.onclick = function () { S.qTab = 'cmt'; renderQueuePanel(box); };
+    tabs.appendChild(tQ); tabs.appendChild(tH); tabs.appendChild(tC);
     box.appendChild(tabs);
     var list = el('div', 'am-q-list');
     box.appendChild(list);
+
+    /* V3.5.19：网易云热门评论——流媒体 wy 曲目直接用 songmid，其他按「歌名 歌手」搜 wy 取首条 */
+    if (S.qTab === 'cmt') {
+      var cmtQ = {};
+      if (state.currentStream) {
+        var ctr = state.currentStream;
+        if (ctr.provider === 'wy' && ctr.meta && ctr.meta.songmid) cmtQ.songmid = ctr.meta.songmid;
+        cmtQ.name = ctr.title || ctr.name || ''; cmtQ.artist = ctr.artist || '';
+      } else if (state.currentPath) {
+        var cm = trackMeta({ path: state.currentPath });
+        cmtQ.name = cm.title || ''; cmtQ.artist = cm.artist || '';
+      }
+      var cmtKey = (state.currentStream ? state.currentStream.url : state.currentPath) || '';
+      list.appendChild(el('div', 'am-q-empty', '正在加载网易云热门评论…'));
+      window.mine.streamHotComments(cmtQ).then(function (r) {
+        var nowKey = (state.currentStream ? state.currentStream.url : state.currentPath) || '';
+        if (nowKey !== cmtKey || S.qTab !== 'cmt') return; // 切歌/切页签后丢弃旧响应
+        list.innerHTML = '';
+        if (!r || !r.ok || !r.comments || !r.comments.length) {
+          list.appendChild(el('div', 'am-q-empty', (r && r.error) || '暂无评论（该曲可能未收录网易云）'));
+          return;
+        }
+        list.appendChild(el('div', 'am-q-empty', '网易云热门评论 · 共 ' + (r.total || r.comments.length) + ' 条'));
+        r.comments.forEach(function (c) {
+          var row = el('div', 'am-cmt-row');
+          row.appendChild(el('div', 'am-cmt-text', c.text));
+          row.appendChild(el('div', 'am-cmt-meta', (c.userName || '匿名') + (c.likedCount ? ' · 👍 ' + c.likedCount : '') + (c.timeStr ? ' · ' + c.timeStr : '')));
+          list.appendChild(row);
+        });
+      }).catch(function (e) {
+        list.innerHTML = '';
+        list.appendChild(el('div', 'am-q-empty', '加载失败：' + (e && e.message ? e.message : e)));
+      });
+      return;
+    }
 
     var qDragIdx = -1; // V3.5.15：待播清单拖拽排序（仅本地队列分支）
     function addRow(coverUrl, track, title, sub, durText, cur, onclick, opts) {

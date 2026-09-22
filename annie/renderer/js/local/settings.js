@@ -31,6 +31,10 @@
     gapless: true,           // V3.5.15：无缝播放（切歌保持输出流，硬切不重建）
     resampleHq: false,       // V3.5.15：重采样质量（false=swresample 标准 / true=soxr 高质量）
     loudMode: 'off',        // 响度均衡：off | track | album
+    chMode: 'stereo',        // V3.5.19：声道模式 stereo|swap|mono|invertL|invertR
+    chBalance: 0,            // V3.5.19：声道平衡 -1（全左）.. 0 .. 1（全右）
+    peqOn: false,            // V3.5.19：参量 EQ 开关
+    peqBands: [],            // V3.5.19：参量 EQ 频段 [{f: Hz, g: dB, q}]，最多 12 段
     eqOn: false,           // （已废弃）15 段 EQ 状态现由 eq.js annieEQ Store 统一管理
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
     downloadDir: '',
@@ -693,11 +697,40 @@
     healthRow.appendChild(healthLab); healthRow.appendChild(healthBtn);
     sHealth.appendChild(healthRow);
     var healthText = el('div', 'set-hint', '点击「刷新」读取当前输出状态');
+    // V3.5.19：音质链路图——源 → DSP 各段 → 输出，激活段点亮、直通段灰显
+    var healthChain = el('div', 'chain-wrap');
+    healthChain.style.display = 'none';
+    sHealth.appendChild(healthChain);
     sHealth.appendChild(healthText);
+    function chainStage(label, active, detail) {
+      var s = el('span', 'chain-st' + (active ? ' on' : ''), label + (active && detail ? ' ' + detail : ''));
+      return s;
+    }
+    function renderChain(s) {
+      healthChain.innerHTML = '';
+      var chNames = { stereo: '立体声', swap: '左右互换', mono: '单声道', invertL: '左反相', invertR: '右反相' };
+      var stages = [
+        chainStage('源 ' + (s.requestedRate ? (s.requestedRate / 1000) + 'kHz' : '—'), true),
+        chainStage('VST', (s.vstActive || 0) > 0, '×' + s.vstActive),
+        chainStage('EQ', !!s.eqActive),
+        chainStage('PEQ', !!s.peqActive, s.peqBands + ' 段'),
+        chainStage('声道', (!!s.channelMode && s.channelMode !== 'stereo') || Math.abs(s.channelBalance || 0) > 0.001, s.channelMode !== 'stereo' ? chNames[s.channelMode] : ''),
+        chainStage('响度', Math.abs((s.loudGain || 1) - 1) > 0.005, (s.loudGain ? (20 * Math.log10(s.loudGain)).toFixed(1) + 'dB' : '')),
+        chainStage('前级限幅', (s.preamp || 1) < 0.999, s.preamp < 0.999 ? (20 * Math.log10(s.preamp)).toFixed(1) + 'dB' : ''),
+        chainStage('重采样', !!s.resampled, s.resampled && s.outputRate ? '→ ' + (s.outputRate / 1000) + 'kHz' : ''),
+        chainStage('输出 ' + (s.outputRate ? (s.outputRate / 1000) + 'kHz/' + s.bitsPerSample + 'bit' : '—'), true),
+      ];
+      stages.forEach(function (st, i) {
+        if (i > 0) healthChain.appendChild(el('span', 'chain-arrow', '→'));
+        healthChain.appendChild(st);
+      });
+      healthChain.style.display = '';
+    }
     function renderAudioHealth() {
       healthBtn.disabled = true;
       window.mine.engine('stats').then(function (s) {
         if (!s || s.ok === false) throw new Error((s && s.error) || 'stats 失败');
+        renderChain(s);
         var fmt = s.outputRate ? (s.requestedRate + ' → ' + s.outputRate + 'Hz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' + (s.resampled ? '（重采样）' : '')) : '未播放';
         healthText.textContent =
           '设备：' + (s.deviceName || '-') + '（' + (s.backendKind || '-') + (s.exclusive ? ' 独占' : ' 共享') + (s.dopActive ? ' / DoP' : '') + '）\n' +
@@ -781,6 +814,36 @@
     rsRow.appendChild(rsLab); rsRow.appendChild(rsSel);
     sPlay.appendChild(rsRow);
 
+    // —— 声道工具箱（V3.5.19：引擎 2x2 声道矩阵，实时生效不破音） ——
+    var chRow = markItem(el('div', 'set-row'), '声道 平衡 左右互换 单声道 反相 channel balance mono swap invert');
+    var chLab = el('div'); chLab.appendChild(el('div', '', '声道工具箱'));
+    chLab.appendChild(el('div', 'set-hint', '左右平衡 / 声道互换 / 单声道合并 / 单端反相（相位检查）；引擎实时处理，仅立体声输出生效'));
+    var chWrap = el('div', 'set-ctrl');
+    var chSel = document.createElement('select');
+    [['stereo', '立体声（默认）'], ['swap', '左右互换'], ['mono', '单声道合并'], ['invertL', '左声道反相'], ['invertR', '右声道反相']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; chSel.appendChild(op);
+    });
+    chSel.value = ui.chMode || 'stereo';
+    function pushChannel() {
+      window.mine.engine('channel.set', { mode: ui.chMode, balance: ui.chBalance }).catch(function () { });
+    }
+    chSel.onchange = function () { ui.chMode = chSel.value; save(); pushChannel(); };
+    var chBal = document.createElement('input');
+    chBal.type = 'range'; chBal.min = -100; chBal.max = 100; chBal.step = 1;
+    chBal.value = Math.round((ui.chBalance || 0) * 100);
+    chBal.title = '声道平衡';
+    var chBalVal = el('span', 'set-val', '');
+    function fmtBalance() {
+      var v = Math.round((ui.chBalance || 0) * 100);
+      chBalVal.textContent = v === 0 ? '居中' : (v < 0 ? '左 ' + (-v) + '%' : '右 ' + v + '%');
+    }
+    fmtBalance();
+    chBal.oninput = function () { ui.chBalance = +chBal.value / 100; fmtBalance(); pushChannel(); };
+    chBal.ondblclick = function () { ui.chBalance = 0; chBal.value = 0; fmtBalance(); pushChannel(); }; // 双击回中
+    chWrap.appendChild(chSel); chWrap.appendChild(chBal); chWrap.appendChild(chBalVal);
+    chRow.appendChild(chLab); chRow.appendChild(chWrap);
+    sPlay.appendChild(chRow);
+
     // —— 响度均衡 ——
     var loudRow = markItem(el('div', 'set-row'), '响度均衡 ebu r128 lufs 音量均衡 loudness');
     var loudLab = el('div'); loudLab.appendChild(el('div', '', '响度均衡（EBU R128）'));
@@ -846,6 +909,61 @@
       EQ.onChange(renderEq);
       renderEq(EQ.state);
     })();
+
+    /* ================= 参量均衡器 PEQ（V3.5.19） ================= */
+    // 自由频段 peaking biquad（与 15 段图示 EQ 串联，在之后处理）——面向耳机校准（AutoEq 方案）
+    var sPeq = section(pgPlayback, '参量均衡器（PEQ）');
+    var peqTopRow = markItem(el('div', 'set-row'), '参量均衡器 peq parametric 耳机校准 autoeq 频率 q值');
+    var peqTopLab = el('div'); peqTopLab.appendChild(el('div', '', '参量均衡器'));
+    peqTopLab.appendChild(el('div', 'set-hint', '自定义频率/增益/Q 值的自由频段（最多 12 段），与 15 段 EQ 串联；耳机校准方案（如 AutoEq）按频段逐条添加即可'));
+    var peqTopWrap = el('div', 'set-ctrl');
+    var peqTimer = 0;
+    function pushPeq() {
+      clearTimeout(peqTimer);
+      peqTimer = setTimeout(function () {
+        window.mine.engine('peq.set', { enabled: ui.peqOn, bands: ui.peqBands }).catch(function () { });
+      }, 200);
+    }
+    var peqChkWrap = el('label', 'switch');
+    var peqChk = document.createElement('input'); peqChk.type = 'checkbox'; peqChk.checked = !!ui.peqOn;
+    peqChk.onchange = function () { ui.peqOn = peqChk.checked; save(); pushPeq(); };
+    peqChkWrap.appendChild(peqChk); peqChkWrap.appendChild(el('span', 'knob'));
+    var peqAdd = el('button', 'btn-ghost', '＋ 加频段');
+    peqAdd.style.width = 'auto'; peqAdd.style.padding = '6px 12px'; peqAdd.style.fontSize = '12px';
+    peqTopWrap.appendChild(peqChkWrap); peqTopWrap.appendChild(peqAdd);
+    peqTopRow.appendChild(peqTopLab); peqTopRow.appendChild(peqTopWrap);
+    sPeq.appendChild(peqTopRow);
+    var peqList = el('div');
+    sPeq.appendChild(peqList);
+    function renderPeqBands() {
+      peqList.innerHTML = '';
+      if (!ui.peqBands.length) { peqList.appendChild(el('div', 'set-hint', '尚未添加频段——点「＋ 加频段」开始（典型起点：100Hz / +3dB / Q1.0 试低音）')); return; }
+      ui.peqBands.forEach(function (b, i) {
+        var row = el('div', 'peq-row');
+        var idx = el('span', 'peq-idx', String(i + 1));
+        var fIn = document.createElement('input'); fIn.type = 'number'; fIn.min = 20; fIn.max = 20000; fIn.step = 10; fIn.value = Math.round(b.f); fIn.title = '频率 Hz';
+        var gIn = document.createElement('input'); gIn.type = 'range'; gIn.min = -24; gIn.max = 24; gIn.step = 0.5; gIn.value = b.g; gIn.title = '增益 dB';
+        var gVal = el('span', 'peq-g', (b.g > 0 ? '+' : '') + b.g + 'dB');
+        var qIn = document.createElement('input'); qIn.type = 'number'; qIn.min = 0.3; qIn.max = 12; qIn.step = 0.1; qIn.value = b.q; qIn.title = 'Q 值（越大越窄）';
+        var del = el('button', 'set-lib-del', '✕'); del.title = '删除该频段';
+        fIn.onchange = function () { b.f = Math.min(20000, Math.max(20, +fIn.value || 1000)); fIn.value = Math.round(b.f); save(); pushPeq(); };
+        gIn.oninput = function () { b.g = +gIn.value; gVal.textContent = (b.g > 0 ? '+' : '') + b.g + 'dB'; save(); pushPeq(); if (!ui.peqOn) { ui.peqOn = true; peqChk.checked = true; } };
+        qIn.onchange = function () { b.q = Math.min(12, Math.max(0.3, +qIn.value || 1)); qIn.value = b.q; save(); pushPeq(); };
+        del.onclick = function () { ui.peqBands.splice(i, 1); save(); pushPeq(); renderPeqBands(); };
+        row.appendChild(idx); row.appendChild(fIn); row.appendChild(el('span', 'peq-unit', 'Hz'));
+        row.appendChild(gIn); row.appendChild(gVal);
+        row.appendChild(el('span', 'peq-unit', 'Q')); row.appendChild(qIn);
+        row.appendChild(del);
+        peqList.appendChild(row);
+      });
+    }
+    peqAdd.onclick = function () {
+      if (ui.peqBands.length >= 12) return;
+      ui.peqBands.push({ f: 1000, g: 0, q: 1.0 });
+      if (!ui.peqOn) { ui.peqOn = true; peqChk.checked = true; }
+      save(); pushPeq(); renderPeqBands();
+    };
+    renderPeqBands();
 
     /* ================= 歌词 ================= */
     // —— 全局（AM / FB2K / 舞台逐字） ——
@@ -1507,6 +1625,31 @@
       panel.appendChild(el('div', 'lsr-summary', r.totalPlays > 0
         ? '累计收听 ' + lsrFmtDur(r.totalSec) + ' · 共播放 ' + r.totalPlays + ' 次' + (r.favHour >= 0 ? ' · 最爱在 ' + r.favHour + ' 点听歌' : '')
         : '还没有统计数据——去播放几首歌吧！'));
+      // —— 收听热力图（V3.5.19：近 26 周，GitHub 风格，跟随强调色） ——
+      (function () {
+        var days = r.days || {};
+        var accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim() || '#fac900';
+        var wrap = el('div', 'lsr-heat-wrap');
+        wrap.appendChild(el('div', 'lsr-col-title', '收听热力图（近半年）'));
+        var grid = el('div', 'lsr-heat');
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+        var start = new Date(today.getTime() - (25 * 7 + ((today.getDay() + 6) % 7)) * 86400000); // 对齐到周一
+        var ymd = function (d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+        var opac = [0, 0.25, 0.45, 0.7, 1];
+        for (var w = 0; w < 26; w++) for (var d = 0; d < 7; d++) {
+          var day = new Date(start.getTime() + (w * 7 + d) * 86400000);
+          if (day > today) continue;
+          var key = ymd(day);
+          var sec = days[key] || 0;
+          var lv = sec <= 0 ? 0 : sec < 1200 ? 1 : sec < 3600 ? 2 : sec < 7200 ? 3 : 4;
+          var cell = el('span', 'lsr-heat-c');
+          cell.title = key + ' · ' + (sec > 0 ? Math.round(sec / 60) + ' 分钟' : '未收听');
+          if (lv > 0) { cell.style.background = accent; cell.style.opacity = opac[lv]; }
+          grid.appendChild(cell);
+        }
+        wrap.appendChild(grid);
+        panel.appendChild(wrap);
+      })();
       var cols = el('div', 'lsr-cols');
       cols.appendChild(lsrList('Top 歌曲', r.topSongs, function (s) { return s.title + (s.artist ? ' — ' + s.artist : ''); }));
       cols.appendChild(lsrList('Top 艺术家', r.topArtists, function (s) { return s.name; }));
@@ -1548,6 +1691,15 @@
     lsrBtn.onclick = openListenReport;
     lsrRow.appendChild(lsrLab); lsrRow.appendChild(lsrBtn);
     sFk.appendChild(lsrRow);
+
+    // —— 智能歌单生成器（V3.5.19：规则筛选本地曲库 → 播放/存为播放列表） ——
+    var slsRow = markItem(el('div', 'set-row'), '智能歌单 规则 筛选 生成 播放列表 smart playlist');
+    var slsLab = el('div'); slsLab.appendChild(el('div', '', '智能歌单生成器'));
+    slsLab.appendChild(el('div', 'set-hint', '按艺术家/专辑/流派/播放次数/最近播放/仅无损等规则筛选曲库，生成并播放或存为播放列表'));
+    var slsBtn = el('button', 'btn-ghost', '打开生成器');
+    slsBtn.onclick = function () { if (window.annieSmart) annieSmart.openBuilder(); };
+    slsRow.appendChild(slsLab); slsRow.appendChild(slsBtn);
+    sFk.appendChild(slsRow);
 
     /* ================= 下载 ================= */
     // 与流媒体面板下载目录同一份配置（主进程 stream-settings.json）；

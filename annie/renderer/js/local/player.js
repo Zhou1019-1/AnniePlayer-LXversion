@@ -1505,4 +1505,7 @@ async function applyAudioSettings() {
   // V3.5.15：无缝播放 + 重采样质量 启动同步
   try { await window.mine.engine('gapless.set', { on: u.gapless !== false }); } catch { }
   try { await window.mine.engine('resample.set', { hq: !!u.resampleHq }); } catch { }
+  // V3.5.19：参量 EQ + 声道工具 启动同步
+  try { await window.mine.engine('peq.set', { enabled: !!u.peqOn, bands: u.peqBands || [] }); } catch { }
+  try { await window.mine.engine('channel.set', { mode: u.chMode || 'stereo', balance: u.chBalance || 0 }); } catch { }
 }

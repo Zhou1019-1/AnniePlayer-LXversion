@@ -47,6 +47,7 @@ class EngineClient {
 
   start() {
     if (this.proc) return true;
+    if (this.crashStorm) { this.crashStorm = false; this.restartCount = 0; } // V3.5.16：熔断后手动重试（点播放等触发）
     const exe = resolveEnginePath();
     if (!exe) {
       console.error('[engineClient] 未找到 AnnieEngine.exe，请先编译 engine。');
@@ -84,6 +85,15 @@ class EngineClient {
     const now = Date.now();
     if (now - this.lastExitAt > 60000) this.restartCount = 0; // 稳定运行 1 分钟后重置退避
     this.lastExitAt = now;
+    // V3.5.16：崩溃风暴熔断——连崩 6 次（引擎启动即死，如被安全软件拦截）不再无限重启，
+    // 广播事件让渲染层提示用户；之后任何一次 RPC 调用（如点播放）会重置并再试。
+    if (this.restartCount >= 6) {
+      this.restarting = false;
+      this.crashStorm = true;
+      this._log(`引擎连续崩溃 ${this.restartCount} 次(code=${code})，停止自动重启；请点击播放重试或检查安全软件拦截`, true);
+      this._broadcast('engine-crash-storm', { code, count: this.restartCount });
+      return;
+    }
     const delay = Math.min(8000, 1000 * Math.pow(2, this.restartCount++));
     this._log(`引擎崩溃(code=${code})，${delay}ms 后自动重启（第 ${this.restartCount} 次）`, true);
     setTimeout(() => {

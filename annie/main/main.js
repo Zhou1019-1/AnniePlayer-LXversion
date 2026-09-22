@@ -824,6 +824,14 @@ function registerIpc() {
       { name: 'engine-log.txt', content: engine.logRing.map(x => x.t + ' ' + x.line).join('\n') || '(空)' },
       { name: 'engine-errors.txt', content: engine.errorRing.map(x => x.t + ' ' + x.line).join('\n') || '(空)' },
       { name: 'renderer-errors.txt', content: rendererErrorRing.map(x => x.t + ' [' + x.kind + '] ' + x.msg + (x.src ? ' @ ' + x.src + ':' + x.line + ':' + x.col : '')).join('\n') || '(空)' },
+      { name: 'engine-crash.log', content: (() => { // V3.5.16：引擎托管崩溃现场
+          try {
+            const p = path.join(process.env.LOCALAPPDATA || '', 'annie-player-svlx', 'engine-crash.log');
+            if (!fs.existsSync(p)) return '(无)';
+            const s = fs.readFileSync(p, 'utf8');
+            return s.length > 30000 ? '...(截断)...\n' + s.slice(-30000) : s;
+          } catch { return '(读取失败)'; }
+        })() },
     ]);
     fs.writeFileSync(r.filePath, zip);
     return { ok: true, path: r.filePath };

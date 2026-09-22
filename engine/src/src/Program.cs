@@ -8,6 +8,24 @@ using MineEngine;
 // 日志走 stderr。stdout/stderr 统一使用 UTF-8（无 BOM），与 Electron 主进程的解码方式一致，避免中文日志乱码
 Console.OutputEncoding = new System.Text.UTF8Encoding(false);
 
+// V3.5.16：崩溃现场日志——托管未处理异常落盘（宿主阶段 fast-fail 无法捕获，但覆盖其余崩溃）
+string crashLog = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "annie-player-svlx", "engine-crash.log");
+void WriteCrash(string kind, string detail)
+{
+    try
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
+        File.AppendAllText(crashLog, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{kind}] {detail}\r\n");
+    }
+    catch { }
+}
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    WriteCrash("unhandled", e.ExceptionObject?.ToString() ?? "unknown");
+TaskScheduler.UnobservedTaskException += (_, e) =>
+    { WriteCrash("unobserved", e.Exception.ToString()); e.SetObserved(); };
+
 Toolchain.Resolve(); // 定位 ffmpeg/ffprobe（tools 目录或 PATH）
 
 using var cts = new CancellationTokenSource();

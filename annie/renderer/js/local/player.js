@@ -1208,6 +1208,11 @@ window.mine.onEngineEvent((event, d) => {
       $('#tb-backend').textContent = '引擎已退出';
       $('#tb-backend').classList.remove('live');
       break;
+    case 'engine-crash-storm': // V3.5.16：熔断——连崩 6 次停止自动重启，明确指引
+      $('#tb-backend').textContent = '引擎崩溃';
+      $('#tb-backend').classList.remove('live');
+      proToast('音频引擎反复崩溃（可能被安全软件拦截）。请检查 360/电脑管家等拦截记录，或点击播放重试；仍不行请到 设置中心 → 曲库工具 导出诊断信息反馈', 10000);
+      break;
     case 'engine-restarted': // Pro beat0.0.1：崩溃守护——恢复播放位置与队列
       if (d.ok) {
         $('#tb-backend').textContent = '引擎已自动恢复';

@@ -6,6 +6,10 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- V3.5.16：卡巴斯基等杀软注入 DLL 投递 APC 时，CET 影子栈进程会触发
+         CoreCLR 断言 !AreShadowStacksEnabled() || UseSpecialUserModeApc() 直接 fast-fail
+         （引擎启动即崩 0xC0000602）。去掉 apphost 的 CET 兼容标记 → 进程不启用影子栈 → 规避。 -->
+    <CETCompat>false</CETCompat>
     <AssemblyName>AnnieEngine</AssemblyName>
     <RootNamespace>MineEngine</RootNamespace>
     <Version>1.0.0</Version>

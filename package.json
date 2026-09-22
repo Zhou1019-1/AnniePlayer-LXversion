@@ -14,6 +14,7 @@
     "dist:setup": "electron-builder --win nsis --x64 --publish never",
     "setup:tools": "node scripts/setup-tools.js",
     "smoke": "node scripts/smoke-test.js",
+    "gen:help": "node scripts/gen-readme-help.js",
     "release": "node scripts/release.js"
   },
   "dependencies": {

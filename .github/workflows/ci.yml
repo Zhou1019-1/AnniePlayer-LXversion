@@ -23,6 +23,9 @@ jobs:
       - name: JS 语法检查（node --check 全量）
         run: node scripts/check-syntax.js
 
+      - name: README 说明书章节同步检查
+        run: node scripts/gen-readme-help.js --check
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'

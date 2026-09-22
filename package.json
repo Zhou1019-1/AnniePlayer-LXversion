@@ -27,7 +27,6 @@
   "build": {
     "appId": "com.annieplayer.svlx",
     "productName": "安妮播放器融合版V3",
-    "electronDist": "node_modules/electron/dist",
     "publish": [
       {
         "provider": "github",

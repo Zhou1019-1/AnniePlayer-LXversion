@@ -544,6 +544,9 @@
     root.appendChild(top); root.appendChild(body); root.appendChild(R.pop); root.appendChild(R.timerPop);
     // V3.5.17：实时频谱可视化条（引擎 32 频段 10Hz 推送，贴底细条，迷你/沉浸下隐藏）
     R.vizBar = document.createElement('canvas'); R.vizBar.className = 'am-vizbar';
+    R.vizBar.style.pointerEvents = 'auto'; R.vizBar.style.cursor = 'pointer';
+    R.vizBar.title = '点击进入氛围模式（全屏频谱）';
+    R.vizBar.onclick = function () { if (window.annieAmbient) annieAmbient.open(); };
     root.appendChild(R.vizBar);
     buildMini(root);
     document.addEventListener('click', function (e) {

@@ -386,6 +386,15 @@ function registerIpc() {
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(st.title ? st.title + ' · 安妮播放器' : '安妮播放器'); } catch { }
     try { if (tray) tray.setToolTip(st.title ? '安妮播放器 · ' + st.title : '安妮播放器'); } catch { }
   });
+  // V3.5.18：渲染侧上报播放进度 → 任务栏图标进度条（ratio<0 清除；暂停显示暂停态）
+  ipcMain.on('player:progress', (_e, p) => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const r = p && Number(p.ratio);
+      if (!isFinite(r) || r < 0) { mainWindow.setProgressBar(-1); return; }
+      mainWindow.setProgressBar(Math.min(1, r), { mode: p.playing ? 'normal' : 'paused' });
+    } catch { }
+  });
 
   // EXP 7.28：选目录只更新文件夹列表，扫描交由 lib:scanStart（Worker 异步批量回传）
   ipcMain.handle('lib:pickFolder', async () => {

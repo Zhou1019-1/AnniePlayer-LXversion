@@ -162,7 +162,8 @@
     ['tools', '曲库工具'],
     ['download', '下载'],
     ['update', '更新与关于'],
-    ['ext', '扩展']
+    ['ext', '扩展'],
+    ['help', '使用说明']
   ];
 
   function el(tag, cls, text) {
@@ -486,6 +487,16 @@
     vizWrap.appendChild(vizChk); vizWrap.appendChild(el('span', 'knob'));
     vizRow.appendChild(vizLab); vizRow.appendChild(vizWrap);
     s5.appendChild(vizRow);
+
+    // —— 氛围模式（V3.5.18：全屏频谱，任意主题可用） ——
+    var ambRow = markItem(el('div', 'set-row'), '氛围模式 全屏 频谱 可视化 ambient');
+    var ambLab = el('div'); ambLab.appendChild(el('div', '', '氛围模式（全屏频谱）'));
+    ambLab.appendChild(el('div', 'set-hint', '全屏实时频谱 + 当前曲目信息，跟随强调色；AM 主题点击底部频谱条或按 Ctrl+Shift+V 也可进入'));
+    var ambBtn = el('button', 'btn-ghost', '进入氛围模式');
+    ambBtn.style.width = 'auto'; ambBtn.style.padding = '6px 16px'; ambBtn.style.fontSize = '12px';
+    ambBtn.onclick = function () { if (window.annieAmbient) annieAmbient.open(); };
+    ambRow.appendChild(ambLab); ambRow.appendChild(ambBtn);
+    s5.appendChild(ambRow);
 
     // —— V1.1.2：FB2K 外观（亮色/暗色，与工具栏按钮、Ctrl+Shift+D 三处同步） ——
     var sF2 = section(pgGeneral, 'FB2K 界面 · 外观');
@@ -1418,6 +1429,75 @@
       L.push('', '—— 安妮播放器融合版');
       return L.join('\n');
     }
+    // 分享图：canvas 绘制卡片 → PNG 复制到剪贴板（直接粘贴发群）
+    function lsrDrawCard(r) {
+      var W = 760, H = 1080;
+      var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      var ctx = cv.getContext('2d');
+      var accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim() || '#fac900';
+      var FONT = '"Segoe UI","Microsoft YaHei",sans-serif';
+      // 背景：深色渐变 + 顶部强调色光晕
+      var g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#141722'); g.addColorStop(1, '#0b0d13');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      var glow = ctx.createRadialGradient(W / 2, -80, 40, W / 2, -80, 480);
+      glow.addColorStop(0, accent + '55'); glow.addColorStop(1, accent + '00');
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, W, 400);
+      // 标题
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.roundRect(48, 56, 8, 34, 4); ctx.fill();
+      ctx.fillStyle = '#f2f3f7'; ctx.font = '700 30px ' + FONT;
+      ctx.fillText('安妮播放器 · 听歌报告', 70, 84);
+      ctx.fillStyle = '#8a90a3'; ctx.font = '14px ' + FONT;
+      ctx.fillText(new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }), 70, 112);
+      // 三大数字卡片
+      var stats = [
+        ['累计收听', lsrFmtDur(r.totalSec)],
+        ['播放次数', String(r.totalPlays)],
+        ['最爱时段', r.favHour >= 0 ? r.favHour + ' 点' : '—'],
+      ];
+      stats.forEach(function (s, i) {
+        var x = 48 + i * 226;
+        ctx.fillStyle = '#ffffff10'; ctx.beginPath(); ctx.roundRect(x, 140, 210, 96, 14); ctx.fill();
+        ctx.strokeStyle = accent + '44'; ctx.stroke();
+        ctx.fillStyle = '#8a90a3'; ctx.font = '13px ' + FONT; ctx.fillText(s[0], x + 18, 172);
+        ctx.fillStyle = accent; ctx.font = '700 26px ' + FONT; ctx.fillText(s[1], x + 18, 212);
+      });
+      // Top 歌曲
+      var y = 286;
+      ctx.fillStyle = accent; ctx.font = '600 17px ' + FONT; ctx.fillText('TOP 歌曲', 48, y); y += 14;
+      r.topSongs.slice(0, 5).forEach(function (s, i) {
+        y += 46;
+        ctx.fillStyle = '#ffffff0c'; ctx.beginPath(); ctx.roundRect(48, y - 26, W - 96, 38, 10); ctx.fill();
+        ctx.fillStyle = accent; ctx.font = '700 16px ' + FONT; ctx.fillText(String(i + 1), 66, y);
+        ctx.fillStyle = '#e8eaf2'; ctx.font = '15px ' + FONT;
+        var name = s.title + (s.artist ? ' — ' + s.artist : '');
+        if (ctx.measureText(name).width > 480) { while (name.length > 4 && ctx.measureText(name + '…').width > 480) name = name.slice(0, -1); name += '…'; }
+        ctx.fillText(name, 96, y);
+        ctx.fillStyle = '#8a90a3'; ctx.font = '13px ' + FONT; ctx.textAlign = 'right';
+        ctx.fillText(s.plays + ' 次', W - 66, y); ctx.textAlign = 'left';
+      });
+      // Top 艺术家 / 专辑 两栏
+      y += 56;
+      ctx.fillStyle = accent; ctx.font = '600 17px ' + FONT; ctx.fillText('TOP 艺术家', 48, y);
+      ctx.fillText('TOP 专辑', 400, y);
+      var col = function (arr, x) {
+        var yy = y + 14;
+        arr.slice(0, 3).forEach(function (s, i) {
+          yy += 36;
+          ctx.fillStyle = accent; ctx.font = '700 14px ' + FONT; ctx.fillText(String(i + 1), x, yy);
+          ctx.fillStyle = '#d5d9e6'; ctx.font = '14px ' + FONT;
+          var nm = s.name || ''; if (ctx.measureText(nm).width > 260) { while (nm.length > 4 && ctx.measureText(nm + '…').width > 260) nm = nm.slice(0, -1); nm += '…'; }
+          ctx.fillText(nm, x + 26, yy);
+        });
+        if (!arr.length) { ctx.fillStyle = '#8a90a3'; ctx.font = '13px ' + FONT; ctx.fillText('暂无数据', x, yy + 36); }
+      };
+      col(r.topArtists, 48); col(r.topAlbums, 400);
+      // 页脚
+      ctx.fillStyle = accent + '66'; ctx.fillRect(48, H - 88, W - 96, 1);
+      ctx.fillStyle = '#8a90a3'; ctx.font = '13px ' + FONT;
+      ctx.fillText('—— 安妮播放器融合版 · 本地统计，仅自己可见', 48, H - 52);
+      return new Promise(function (res, rej) { cv.toBlob(function (b) { b ? res(b) : rej(new Error('toBlob failed')); }, 'image/png'); });
+    }
     function openListenReport() {
       var st = window.annieListenStats; if (!st) return;
       var r = st.report();
@@ -1433,6 +1513,15 @@
       cols.appendChild(lsrList('Top 专辑', r.topAlbums, function (s) { return s.name; }));
       panel.appendChild(cols);
       var btns = el('div', 'lsr-btns');
+      var btnImg = el('button', 'btn-ghost', '生成分享图');
+      btnImg.onclick = function () {
+        btnImg.disabled = true;
+        lsrDrawCard(r).then(function (blob) {
+          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        }).then(function () { btnImg.textContent = '已复制 ✓ 直接粘贴发群'; })
+          .catch(function () { btnImg.textContent = '生成失败'; })
+          .finally(function () { btnImg.disabled = false; setTimeout(function () { btnImg.textContent = '生成分享图'; }, 3000); });
+      };
       var btnCopy = el('button', 'btn-ghost', '复制报告');
       btnCopy.onclick = function () {
         navigator.clipboard.writeText(lsrText(r)).then(function () { btnCopy.textContent = '已复制 ✓'; })
@@ -1446,7 +1535,7 @@
       };
       var btnClose = el('button', 'btn-ghost', '关闭');
       btnClose.onclick = function () { mask.remove(); };
-      btns.appendChild(btnCopy); btns.appendChild(btnClear); btns.appendChild(btnClose);
+      btns.appendChild(btnImg); btns.appendChild(btnCopy); btns.appendChild(btnClear); btns.appendChild(btnClose);
       panel.appendChild(btns);
       mask.onclick = function (e) { if (e.target === mask) mask.remove(); };
       mask.appendChild(panel);
@@ -1692,6 +1781,24 @@
     extCard.appendChild(el('div', 'set-ext-text', '可视化、主题、歌词源等更多插件类型正在加紧制作，敬请期待。'));
     extCard.appendChild(el('div', 'set-ext-sub', '章鱼出品，必属精品'));
     sExt.appendChild(extCard);
+
+    /* ================= 使用说明（V3.5.18：说明书应用内版，内容见 helpContent.js） ================= */
+    var pgHelp = pageEls.help;
+    if (window.ANNIE_HELP) {
+      var sHelpTop = section(pgHelp, '使用说明');
+      sHelpTop.appendChild(el('div', 'set-hint', '与《章鱼科技：安妮播放器全功能说明书》同步；顶部搜索框可直接搜功能名（如「独占」「频谱」「快捷键」）'));
+      window.ANNIE_HELP.forEach(function (sec2) {
+        var sH = section(pgHelp, sec2.t);
+        sec2.items.forEach(function (it) {
+          var row = markItem(el('div', 'set-row'), it[0] + ' ' + it[1]);
+          var lab = el('div');
+          lab.appendChild(el('div', '', it[0]));
+          lab.appendChild(el('div', 'set-hint', it[1]));
+          row.appendChild(lab);
+          sH.appendChild(row);
+        });
+      });
+    }
 
     document.body.appendChild(panel);
     showPage('general');

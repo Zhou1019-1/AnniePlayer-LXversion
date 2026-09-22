@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('mine', {
   hotkeysGet: () => ipcRenderer.invoke('hotkeys:get'),
   hotkeysSetEnabled: (on) => ipcRenderer.invoke('hotkeys:setEnabled', on),
   playState: (s) => ipcRenderer.send('player:state', s),
+  playerProgress: (p) => ipcRenderer.send('player:progress', p), // V3.5.18：任务栏进度条
 
   // 曲库
   pickFolder: () => ipcRenderer.invoke('lib:pickFolder'),

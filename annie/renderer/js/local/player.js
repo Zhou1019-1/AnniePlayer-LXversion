@@ -1084,6 +1084,7 @@ window.annieStreamPlay = async function (track) {
   // 悬浮信息层
   $('#thumb-title').textContent = track.title || '未知曲目';
   if (window.annieListenStats) annieListenStats.recordPlay(track.url, track); // V3.5.17：听歌统计（流媒体）
+  if (window.annieSMTC) annieSMTC.setMeta(track); // V3.5.18：系统媒体浮层
   $('#thumb-artist').textContent = [track.artist, track.album].filter(Boolean).join(' · ');
   reportPlayerState(); // V3.5.8
   // V1.1.8：http 封面（kwcdn.kuwo.cn 等）经代理转 dataURL 再显示——
@@ -1107,6 +1108,7 @@ async function showMeta(p) {
   const m = state.metaCache.get(p);
   if (state.currentPath !== p) return;
   if (window.annieListenStats) annieListenStats.recordPlay(p, m); // V3.5.17：听歌统计
+  if (window.annieSMTC) annieSMTC.setMeta(m); // V3.5.18：系统媒体浮层
   $('#thumb-title').textContent = m.title || '未知曲目';
   reportPlayerState(); // V3.5.8
   $('#thumb-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
@@ -1163,6 +1165,12 @@ window.mine.onEngineEvent((event, d) => {
       }
       // V3.5.17：听歌统计——按 position 事件累计收听时长（暂停无事件自然停表）
       if (state.playing && window.annieListenStats) annieListenStats.tick(state.position);
+      // V3.5.18：任务栏进度条 + 系统媒体浮层位置（1s 节流）
+      if (performance.now() - _pbSentAt > 1000) {
+        _pbSentAt = performance.now();
+        window.mine.playerProgress({ ratio: state.duration > 0 ? state.position / state.duration : -1, playing: state.playing });
+        if (window.annieSMTC) annieSMTC.setPosition(state.position, state.duration);
+      }
       break;
     case 'state':
       state.playing = d.state === 'playing';
@@ -1172,6 +1180,10 @@ window.mine.onEngineEvent((event, d) => {
       // V1.1.7：暂停→停止插值（position 冻结）；恢复→重置锚点（下一 position 事件重新起算）
       if (!state.playing) cancelProgressInterp();
       else state._posAt = performance.now();
+      // V3.5.18：系统媒体浮层播放状态 + 任务栏进度条模式（正常/暂停/结束清除）
+      if (window.annieSMTC) annieSMTC.setPlaying(state.playing);
+      if (d.state === 'ended') window.mine.playerProgress({ ratio: -1, playing: false });
+      else window.mine.playerProgress({ ratio: state.duration > 0 ? state.position / state.duration : -1, playing: state.playing });
       if (d.state === 'ended') {
         if (state.currentStream && window.annieStream) window.annieStream.playNext();
         else if (window.annieAutoNext && window.annieAutoNext()) { /* 播放模式/定时已接管（仅本地） */ }
@@ -1243,6 +1255,7 @@ window.mine.onEngineEvent((event, d) => {
 
 /* ---------------- V3.5.8：播放状态上报（任务栏缩略图 / 窗口标题） ---------------- */
 let _psTimer = 0;
+let _pbSentAt = 0; // V3.5.18：任务栏进度条/SMTC 位置 1s 节流锚点
 function reportPlayerState() {
   if (_psTimer) return; // 合并连发（state 事件密集时）
   _psTimer = setTimeout(() => {

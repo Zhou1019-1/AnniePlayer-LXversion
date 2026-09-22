@@ -30,8 +30,9 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: 引擎编译检查（dotnet build，不打包）
-        run: dotnet build engine/src -c Release --nologo
+      # 用 publish（而非 build）：产物放 engine/publish，与 tools/ffmpeg 的相对位置和发版一致
+      - name: 引擎编译（dotnet publish 单文件）
+        run: dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo
 
       # V4：音频正确性测试集（lavfi 生成测试音 → test.decode 拉取 DSP 链断言）
       - name: 准备 ffmpeg

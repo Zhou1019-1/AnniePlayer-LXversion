@@ -1,35 +1,40 @@
 @echo off
 rem ============================================================
-rem  安妮播放器 · 一键长稳测试（8 小时）
-rem  双击运行即可。窗口请勿关闭；想提前结束按 Ctrl+C 再输 N，
-rem  测试会正常收尾并生成报告。
+rem  AnniePlayer SVLX - One-click Soak Test (8 hours)
+rem  Double-click to run. Do NOT close this window.
+rem  To stop early: press Ctrl+C, answer N when asked.
+rem  (Keep this file pure ASCII: cmd parses .bat in the console
+rem   codepage, Chinese bytes break parsing under UTF-8/GBK mix.)
 rem ============================================================
 chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ============================================================
-echo   安妮播放器 · 一键长稳测试（8 小时）
-echo   报告输出：%CD%\长稳测试报告.md
-echo   提示：测试音为低音量正弦波，可把系统音量静音，不影响数据
+echo  AnniePlayer SVLX - Soak Test (8 hours)
+echo  Working dir: %CD%
+echo  Tip: you may mute Windows volume; the test tone is quiet
+echo  and muting does NOT affect the measurement.
+echo  Do NOT close this window. Ctrl+C then N to stop early.
 echo ============================================================
 echo.
 
-echo [1/3] 禁止系统睡眠/休眠（插电状态）...
+echo [1/3] Disable sleep / hibernate on AC power...
 powercfg /change standby-timeout-ac 0 >nul
 powercfg /change hibernate-timeout-ac 0 >nul
 
-echo [2/3] 开始长稳测试（8 小时，采样间隔 15s）...
+echo [2/3] Running soak test (8 hours, sample every 15s)...
+echo       (Chinese progress output below comes from Node)
 echo.
 node scripts\soak-test.js --minutes 480 --interval 15
 
 echo.
-echo [3/3] 恢复电源设置（30 分钟睡眠 / 60 分钟休眠）...
+echo [3/3] Restore power settings (30min sleep / 60min hibernate)...
 powercfg /change standby-timeout-ac 30 >nul
 powercfg /change hibernate-timeout-ac 60 >nul
 
 echo.
 echo ============================================================
-echo   测试结束，报告见：长稳测试报告.md
-echo   把报告发给开发即可分析结果
+echo  Finished. Find the Markdown soak report in this folder
+echo  and send it to the developer for analysis.
 echo ============================================================
 pause

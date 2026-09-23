@@ -1,16 +1,19 @@
 'use strict';
 // ============================================================================
-// 音源沙箱 Worker —— 隔离第三方音源脚本的执行环境。
-// 脚本在主进程 vm 沙箱内同步执行，死循环/超重同步计算会冻结整个主进程；
-// 迁移到 worker_threads 后，脚本卡死只阻塞本 Worker，主进程可 terminate 熔断重建。
-// 消息协议（主进程 ⇄ Worker）:
-//   主→Worker: {type:'init', dir, entries} | {type:'load', entry} | {type:'unload', id}
-//               | {type:'request', jobId, sourceId|null, action, source, info} | {type:'ping', id}
-//   Worker→主: {type:'ready'} | {type:'loaded', id, ok, error?} | {type:'unloaded', id}
-//               | {type:'pong', id} | {type:'result', jobId, ok, value?|error?}
+// 音源沙箱子进程 —— 隔离第三方音源脚本的执行环境。
+// V4.0.3：worker_threads 升级为独立子进程（child_process.fork），并带
+//   --disallow-code-generation-from-strings 启动旗标——进程级禁用 eval/Function，
+//   堵住「宿主函数 .constructor('return process')()」经典逃逸链（实测 8/8 阻断，
+//   见 scripts/sandbox-escape-test.js）。vm 层另加 codeGeneration 双保险。
+//   注意：Node vm 官方声明不是安全边界，第三方脚本仍须来源可信。
+// 死循环/卡死只阻塞本子进程，主进程 ping 探测后 kill 熔断重建。
+// 消息协议（主进程 ⇄ 子进程，process IPC）:
+//   主→子: {type:'init', dir, entries} | {type:'load', entry} | {type:'unload', id}
+//          | {type:'request', jobId, sourceId|null, action, source, info} | {type:'ping', id}
+//   子→主: {type:'ready'} | {type:'loaded', id, ok, error?} | {type:'unloaded', id}
+//          | {type:'pong', id} | {type:'result', jobId, ok, value?|error?}
 // 结果统一 JSON 序列化往返（与跨线程结构化克隆相比行为更可控，兼容 Buffer/字符串/对象）。
 // ============================================================================
-const { parentPort } = require('worker_threads');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -124,7 +127,13 @@ function loadRuntime(entry) {
   const info = { name: entry.name, version: entry.version, description: entry.description, author: entry.author };
   const { sandbox, state } = createSandbox(entry.id, info);
   try {
-    vm.createContext(sandbox, { name: 'lx-source:' + entry.id });
+    // V4.0.3 安全加固：codeGeneration 全关——禁用 eval / Function 构造器 / WebAssembly，
+    // 堵住「宿主函数 .constructor('return process')()」经典逃逸链。
+    // 注意：Node vm 官方声明不是安全边界，此处为纵深防御；导入第三方脚本仍需来源可信。
+    vm.createContext(sandbox, {
+      name: 'lx-source:' + entry.id,
+      codeGeneration: { strings: false, wasm: false },
+    });
     vm.runInContext(script, sandbox, { timeout: 5000, filename: entry.id + '.js' });
   } catch (e) {
     _runtimes.delete(entry.id);
@@ -141,7 +150,7 @@ function loadRuntime(entry) {
 }
 
 /* ---------------- 消息处理 ---------------- */
-function post(obj) { parentPort.postMessage(obj); }
+function post(obj) { try { process.send(obj); } catch { } }
 
 /** 结果统一 JSON 序列化：URL 字符串/普通对象直接透传；Buffer 转 {type:'Buffer',data}；不可序列化降级 String */
 function safeClone(value) {
@@ -154,16 +163,21 @@ function safeClone(value) {
 
 function handleRequestMessage(msg) {
   const rt = msg.sourceId ? _runtimes.get(msg.sourceId) : null;
-  Promise.resolve()
-    .then(() => {
-      if (!rt) throw new Error(msg.sourceId ? '音源未加载' : '没有已启用的音源');
-      return rt.handler({ action: msg.action, source: msg.source, info: msg.info });
-    })
+  // V4.0.3：异步处理超时兜底——脚本返回永不 resolve 的 Promise 时不再无限挂起（死循环仍由主进程看门狗 terminate）
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('音源脚本处理超时 (15s)')), 15000));
+  Promise.race([
+    Promise.resolve()
+      .then(() => {
+        if (!rt) throw new Error(msg.sourceId ? '音源未加载' : '没有已启用的音源');
+        return rt.handler({ action: msg.action, source: msg.source, info: msg.info });
+      }),
+    timeout,
+  ])
     .then((value) => post({ type: 'result', jobId: msg.jobId, ok: true, value: safeClone(value) }))
     .catch((err) => post({ type: 'result', jobId: msg.jobId, ok: false, error: String((err && err.message) || err) }));
 }
 
-parentPort.on('message', (msg) => {
+process.on('message', (msg) => {
   switch (msg.type) {
     case 'init':
       _dir = msg.dir;

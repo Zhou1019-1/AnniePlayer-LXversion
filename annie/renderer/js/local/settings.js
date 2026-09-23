@@ -34,7 +34,7 @@
     chMode: 'stereo',        // V3.5.19：声道模式 stereo|swap|mono|invertL|invertR
     chBalance: 0,            // V3.5.19：声道平衡 -1（全左）.. 0 .. 1（全右）
     peqOn: false,            // V3.5.19：参量 EQ 开关
-    peqBands: [],            // V3.5.19：参量 EQ 频段 [{f: Hz, g: dB, q}]，最多 12 段
+    peqBands: [],            // V3.5.19：参量 EQ 频段 [{f: Hz, g: dB, q}]，最多 8 段（引擎上限）
     eqOn: false,           // （已废弃）15 段 EQ 状态现由 eq.js annieEQ Store 统一管理
     // —— 下载设置 ——（下载目录与 stream-settings.json 同源，此处仅作展示/入口，不持久化）
     downloadDir: '',
@@ -1087,7 +1087,7 @@
     var sPeq = section(pgPlayback, '参量均衡器（PEQ）');
     var peqTopRow = markItem(el('div', 'set-row'), '参量均衡器 peq parametric 耳机校准 autoeq 频率 q值');
     var peqTopLab = el('div'); peqTopLab.appendChild(el('div', '', '参量均衡器'));
-    peqTopLab.appendChild(el('div', 'set-hint', '自定义频率/增益/Q 值的自由频段（最多 12 段），与 15 段 EQ 串联；耳机校准方案（如 AutoEq）按频段逐条添加即可'));
+    peqTopLab.appendChild(el('div', 'set-hint', '自定义频率/增益/Q 值的自由频段（最多 8 段），与 15 段 EQ 串联；耳机校准方案（如 AutoEq）按频段逐条添加即可'));
     var peqTopWrap = el('div', 'set-ctrl');
     var peqTimer = 0;
     function pushPeq() {
@@ -1130,7 +1130,7 @@
       });
     }
     peqAdd.onclick = function () {
-      if (ui.peqBands.length >= 12) return;
+      if (ui.peqBands.length >= 8) return; // V4.0.3：与引擎上限对齐（引擎 peq.set 拒绝 >8 段）
       ui.peqBands.push({ f: 1000, g: 0, q: 1.0 });
       if (!ui.peqOn) { ui.peqOn = true; peqChk.checked = true; }
       save(); pushPeq(); renderPeqBands();

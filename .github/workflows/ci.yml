@@ -40,3 +40,6 @@ jobs:
 
       - name: 音频正确性测试（DSP 链断言）
         run: npm run test:audio
+
+      - name: 音源沙箱安全验证（逃逸阻断端到端）
+        run: npm run test:sandbox

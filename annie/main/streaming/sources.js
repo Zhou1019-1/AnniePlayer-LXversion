@@ -7,17 +7,20 @@
 //   userData/stream-sources.json    注册表 [{id,name,version,description,author,enabled}]
 //
 // V1.0.1 (R1)：脚本执行迁移到 worker_threads（sources-worker.js）。
-//   原因：脚本在主进程 vm 沙箱同步执行，第三方脚本的死循环/超重同步计算
+// V4.0.3：再升级为独立子进程（child_process.fork + --disallow-code-generation-from-strings），
+//   进程级禁用 eval/Function 构造器，堵住 vm 沙箱经宿主函数 constructor 的经典逃逸链；
+//   独立进程崩溃/卡死不占主进程句柄表，kill 熔断重建语义与 worker 版一致。
+//   原因：脚本若与主进程同 vm 沙箱同步执行，第三方脚本的死循环/超重同步计算
 //   会冻结整个主进程（所有 IPC 无响应，只能杀进程）。
-//   现在：脚本卡死只阻塞 Worker；请求超时先 ping 探测，确认无响应后
-//   terminate + 退避重建 + 重新加载 + 排队请求重试一次。
+//   现在：脚本卡死只阻塞子进程；请求超时先 ping 探测，确认无响应后
+//   kill + 退避重建 + 重新加载 + 排队请求重试一次。
 // 对外 API 签名保持不变（setEnabled / importFromPath 因需等待加载回执变为 async，
 // 调用方均为 ipcMain.handle，天然兼容）。
 // ============================================================================
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Worker } = require('worker_threads');
+const { fork } = require('child_process');
 
 let _app = null;
 let _dir = '';          // 脚本目录
@@ -38,10 +41,14 @@ const _pendingJobs = new Map(); // jobId -> {resolve, reject, timer, sourceId, s
 
 function startWorker() {
   if (_worker) return;
-  _worker = new Worker(path.join(__dirname, 'sources-worker.js'));
+  // V4.0.3：独立子进程 + 进程级禁用字符串代码生成（eval/Function 全进程失效），
+  // 沙箱内任何经宿主函数 .constructor 的逃逸尝试都会抛 EvalError
+  _worker = fork(path.join(__dirname, 'sources-worker.js'), [], {
+    execArgv: ['--disallow-code-generation-from-strings'],
+  });
   _workerReady = false;
   _worker.on('message', onWorkerMessage);
-  _worker.on('error', (err) => console.error('[lx-source] worker error:', err && err.message));
+  _worker.on('error', (err) => console.error('[lx-source] sandbox error:', err && err.message));
   _worker.on('exit', onWorkerExit);
 }
 
@@ -146,7 +153,7 @@ function onWorkerMessage(msg) {
 /* ---------------- 请求 + 超时熔断 ---------------- */
 function postToWorker(msg) {
   if (!_worker) throw new Error('音源沙箱未启动');
-  _worker.postMessage(msg);
+  _worker.send(msg);
 }
 
 /**
@@ -170,7 +177,7 @@ function onJobTimeout(jobId) {
     _worker.removeListener('message', pongHandler);
     if (!ponged) {
       console.error(`[lx-source][${Date.now()}] 音源沙箱疑似卡死，熔断重启`);
-      try { _worker.terminate(); } catch { }
+      try { _worker.kill(); } catch { }
     }
     job.reject(new Error('音源响应超时' + (ponged ? '' : '（沙箱已重置）')));
   }, 1000);

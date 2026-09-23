@@ -74,11 +74,12 @@ function benchScan(n, tmpRoot, baseWav) {
   for (let i = 0; i < n; i++) {
     const dir = path.join(libDir, '艺术家' + (i % 100), '专辑' + (i % 500));
     fs.mkdirSync(dir, { recursive: true });
-    fs.copyFileSync(baseWav, path.join(dir, '曲目' + String(i % 20).padStart(2, '0') + '.wav'));
+    fs.copyFileSync(baseWav, path.join(dir, '曲目' + i + '.wav')); // 全局唯一文件名（i 取模会互相覆盖）
   }
   const t0 = now();
   const tracks = library.scanFolders([libDir]);
   const scanMs = now() - t0;
+  if (tracks.length !== n) throw new Error(`曲库生成异常：预期 ${n} 个文件，实际扫到 ${tracks.length}（检查文件名是否冲突）`);
   const t1 = now();
   // readMetaBatch 全量解析太慢（10k×music-metadata），抽样 2000 条换算
   const sample = tracks.slice(0, Math.min(2000, tracks.length)).map(t => t.path);

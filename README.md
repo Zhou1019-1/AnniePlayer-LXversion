@@ -10,7 +10,7 @@
 
 AnniePlayer 将 Electron UI、独立 .NET 9 音频引擎、FFmpeg 解码与 VST3 DSP 链组合成完整的桌面音频系统：UI 负责人机交互，音频实时处理全部交给独立引擎进程，两端经 JSON-RPC（stdio）通信。
 
-**[下载安装](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest) · [更新日志](更新日志.md) · [全功能说明书](#全功能说明书)**
+**[下载安装](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest) · [界面截图](#界面截图) · [架构](#架构) · [性能实测](#性能实测) · [音频正确性测试](#音频正确性测试) · [更新日志](更新日志.md) · [全功能说明书](#全功能说明书)**
 
 ## 下载安装
 
@@ -20,6 +20,12 @@ AnniePlayer 将 Electron UI、独立 .NET 9 音频引擎、FFmpeg 解码与 VST3
 - 安装包未购买代码签名，SmartScreen 提示时点 **「更多信息 → 仍要运行」** 即可
 - **在线更新**：V3.3.1 之后的版本支持差量自动更新，打开软件即静默下载、下次启动生效（每次只需下载几 MB）
 - 覆盖安装 / 升级不会丢失曲库、歌单与设置（数据在 `%APPDATA%\annie-player-svlx`）
+
+## 界面截图
+
+| Apple Music 主题 | FB2K 主题 | 粒子舞台 |
+| :---: | :---: | :---: |
+| ![Apple Music 主题](docs/screenshots/theme-apple.jpg) | ![FB2K 主题](docs/screenshots/theme-fb2k.jpg) | ![粒子舞台](docs/screenshots/theme-fairy.jpg) |
 
 ## AnnieEngine：独立音频引擎
 
@@ -58,12 +64,103 @@ AnniePlayer 的核心音频后端是独立进程 **AnnieEngine**（.NET 9）。E
 - 独立进程架构：渲染层崩溃不影响播放链路；引擎异常退出可独立重启恢复
 - FFmpeg 解码（本地文件 / HTTP 流 / CUE / SACD ISO），float32 PCM 域处理
 - WASAPI 独占 / 共享、ASIO 输出；DSD 转 PCM / DoP 直通
-- DSP 链：15 段图示 EQ + 12 段参量 EQ + 声道矩阵 + 响度增益 + 自动前级 + 软限幅，全部热更新不破音
+- DSP 链：20 段图示 EQ + 8 段参量 EQ + 声道矩阵 + 响度增益 + 自动前级 + 软限幅，全部热更新不破音
 - Gapless 无缝播放与交叉淡入（引擎内混音器，切歌不重建输出流）
 - 输出健康监控：缓冲水位 / 欠载计数 / 限幅触发实时上报
 - 内置 `test.decode` 自测接口：不开输出设备拉取整条 DSP 链返回计量指标，供 CI 断言
 
 **为什么用独立引擎？** 音频实时处理对时延与稳定性敏感：独立进程让 UI 线程完全离开音频回调路径，解码 / DSP / 输出与界面解耦，WASAPI / ASIO / VST3 有独立运行环境，引擎也可脱离 UI 单独做自动化正确性测试。
+
+### 引擎内部信号链
+
+```text
+源文件 / 流（FLAC · APE · DSD · CUE · SACD ISO）
+    ↓
+FFmpeg 解码 ──────── DSD64–512（原生 / DoP / 转 PCM 三档）
+    ↓
+Float32 PCM（全程浮点）
+    ↓
+VST3 插件槽位 ×N（实时链，可挂原生编辑器）
+    ↓
+图示 EQ 20 段
+    ↓
+参量 EQ 8 段（f / g / Q）
+    ↓
+声道矩阵（上混 / 下混 / 平衡 / 互换 / 5.1 环绕）
+    ↓
+响度增益（ReplayGain / 预设均衡）
+    ↓
+前级限幅（防削波）
+    ↓
+重采样（soxr 高精度，可选 44.1k–384k）
+    ↓
+┌───┴───┐
+WASAPI   ASIO
+独占/共享
+└───┬───┘
+    ↓
+   DAC
+```
+
+## 音质链路：Bit-perfect 可验证
+
+「设置中心 → 音频输出 → 输出健康」的链路图可点击展开，11 个环节逐段显示真实参数并给出 bit-perfect 判定（V4.0.1）。两种典型状态：
+
+**直通状态**（输出格式匹配且未启用任何 DSP / 重采样）：
+
+```text
+FLAC 24bit/96kHz
+  → FFmpeg 解码 → Float32
+  → DSP 全部直通（VST/EQ/PEQ/矩阵/响度 OFF）
+  → 无重采样
+  → WASAPI 独占 24bit/96kHz
+  → DAC
+  ✓ BIT-PERFECT
+```
+
+**DSP 激活状态**（数字域处理中，每一环都可查证，不再是 bit-perfect）：
+
+```text
+FLAC 24/96
+  → Float32
+  → 参量 EQ +3dB @1kHz
+  → 响度均衡（标准模式 -3.0dB）
+  → 限幅待命（余量 +5.0dB）
+  → 重采样 96k → 192k（soxr）
+  → WASAPI 独占 24/192
+  → DAC
+  ✗ 非 bit-perfect（原因：响度 / EQ / 重采样，浮层逐项列出）
+```
+
+## 性能实测
+
+曲库性能 Benchmark（`npm run bench:library` 可自行复现；扫描列为真实文件实测，启动/排序/搜索/内存为合成数据层实测，**排序直接执行生产代码 listWorker.js**）：
+
+| 曲库规模 | 扫描（遍历+拼音排序） | 元数据解析（估算） | 启动加载 | 排序·名称 | 排序·专辑分组 | 搜索 | 内存占用 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 70 ms | 1.6 s（冷启动） | 5 ms | 2 ms | 2 ms | 0 ms | 1 MB |
+| 10,000 | 131 ms | 3.3 s | 26 ms | 19 ms | 19 ms | 3 ms | 6 MB |
+| 50,000 | 532 ms | 13.7 s | 107 ms | 80 ms | 118 ms | 18 ms | 25 MB |
+| 100,000 | — | — | 212 ms | 160 ms | 271 ms | 42 ms | 49 MB |
+| 200,000 | — | — | 454 ms | 297 ms | 543 ms | 49 ms | 77 MB |
+
+实测环境：Intel Core Ultra 9 275HX / Node 24 / Windows 11（数据随机型与磁盘波动，数量级可靠）。元数据解析仅在首次全量扫描发生，之后按文件修改时间增量更新；20 万首数据层存储 JSON 约 33 MB。
+
+长稳测试（`npm run test:soak`）：循环播放 + 内存/句柄/欠载采样，自动出 Markdown 报告；8h/24h 实测数据积累中，跑完补到这里。
+
+## 音频正确性测试
+
+引擎内置 `test.decode` 自检接口（不依赖声卡，拉取整条 DSP 链返回实测指标），每次提交由 CI 自动执行（ci.yml 与 release.yml 双闸门）：
+
+**27 / 27 PASS**
+
+- ✓ 采样率直通（44.1k / 48k）　✓ 重采样（soxr：帧数精确 + 带宽保持）
+- ✓ 声道矩阵（单声道→立体声 / 立体声→单声道 / 自定义矩阵 / 5.1 环绕能量守恒）
+- ✓ 图示 EQ（+6dB @1kHz）　✓ 参量 EQ（增益 / 段间叠加 / 全关直通 / 非法参数拒绝）
+- ✓ 前级限幅（TP>1 压回阈值）　✓ 防削波链（EQ +12dB 时限幅自动待命）
+- ✓ 响度增益　✓ 削波恢复　✓ 边界用例（空文件 / 极端音量 / 声道探测 / 循环受控 / 快速播放）
+
+复现：`npm run test:audio`
 
 ## 三套界面主题（设置中心 → 常规，随时切换）
 
@@ -289,6 +386,15 @@ A：安装包未签名 + 内含 ffmpeg 子进程调用，属误报，添加信�
 
 **Q：Apple Music 浅色模式背景刺眼？**
 A：V3.5.12 起已改为柔和暖白，文字对比度同步加深。右上角 ☀ 可切回深色。
+
+## 工程模块与目录结构
+
+| 模块 | 职责 |
+| --- | --- |
+| `engine/src/` | AnnieEngine 源码（.NET 9 控制台，JSON-RPC stdio 协议） |
+| `annie/` | Electron 壳：主进程（曲库扫描 Worker / IPC）+ 三套主题渲染层（Apple Music / FB2K / 粒子舞台） |
+| `annie/lx/` | 洛雪音乐深度集成：音源检索、歌单代理、排行榜、搜索 |
+| `engine/` | 解码与播放工具（ffmpeg / sacd_extract），引擎二进制发布目录 |
 
 ## 开发与构建
 

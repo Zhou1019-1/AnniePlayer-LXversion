@@ -280,7 +280,12 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 <script src="js/local/proUi.js"></script>
 <script src="js/local/theme.js"></script>
 <script src="js/local/fb2k.js"></script>
+<!-- Apple Music 主题拆分片（加载顺序即依赖顺序：核心 → 在线 → 歌词 → 界面 → 刷新/挂载） -->
 <script src="js/local/am.js"></script>
+<script src="js/local/am-stream.js"></script>
+<script src="js/local/am-lyrics.js"></script>
+<script src="js/local/am-dom.js"></script>
+<script src="js/local/am-render.js"></script>
 <script src="js/local/onboard.js"></script>
 </body>
 </html>

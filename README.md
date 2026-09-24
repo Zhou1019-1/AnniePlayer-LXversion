@@ -25,7 +25,7 @@ AnniePlayer 将 Electron UI、独立 .NET 9 音频引擎、FFmpeg 解码与 VST3
 
 | Apple Music 主题 | FB2K 主题 | 粒子舞台 |
 | :---: | :---: | :---: |
-| ![Apple Music 主题](docs/screenshots/theme-apple.jpg) | ![FB2K 主题](docs/screenshots/theme-fb2k.jpg) | ![粒子舞台](docs/screenshots/theme-fairy.jpg) |
+| ![Apple Music 主题](docs/screenshots/theme-apple.png) | ![FB2K 主题](docs/screenshots/theme-fb2k.png) | ![粒子舞台](docs/screenshots/theme-fairy.png) |
 
 ## AnnieEngine：独立音频引擎
 

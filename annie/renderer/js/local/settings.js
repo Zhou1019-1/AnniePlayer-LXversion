@@ -1535,41 +1535,66 @@
     loudBtnRow.appendChild(loudBtnLab); loudBtnRow.appendChild(loudBtn);
     sFk.appendChild(loudBtnRow);
 
-    // —— 假无损批量检测 ——
-    var fkRow = markItem(el('div', 'set-row'), '假无损 批量检测 频谱 fake lossless');
-    var fkLab = el('div'); fkLab.appendChild(el('div', '', '假无损批量检测'));
-    fkLab.appendChild(el('div', 'set-hint', '后台逐轨频谱分析（仅检测无损格式），可疑曲目在列表打 ⚠ 标记'));
-    var fkBtn = el('button', 'btn-ghost', '开始检测');
-    var fkBusy = false, fkResults = [];
-    fkBtn.onclick = function () {
+    // —— 假无损批量检测（V4.0.5：四方法加权融合；整库/文件夹/单曲三种范围；只出报告不打标） ——
+    var fkRow = markItem(el('div', 'set-row'), '假无损 批量检测 频谱 fake lossless 文件夹 单曲');
+    var fkLab = el('div'); fkLab.appendChild(el('div', '', '无损鉴别（假无损检测）'));
+    fkLab.appendChild(el('div', 'set-hint', '四方法加权融合（频谱截止/编码帧痕迹/位深量化/上转换）；结果只出诊断报告，不在列表打标记'));
+    var fkWrap = el('div', 'set-ctrl');
+    var fkBtnAll = el('button', 'btn-ghost', '整个曲库');
+    var fkBtnDir = el('button', 'btn-ghost', '文件夹…');
+    var fkBtnOne = el('button', 'btn-ghost', '单曲…');
+    var fkBusy = false, fkResults = [], fkLast = null;
+    function fkResetBtns() { fkBtnAll.textContent = '整个曲库'; fkBtnDir.textContent = '文件夹…'; fkBtnOne.textContent = '单曲…'; }
+    function fkRun(paths, btn, label) {
       if (fkBusy) { window.mine.fakeScanCancel(); return; }
-      var lib = (typeof state !== 'undefined') ? state.library : null;
-      if (!lib || !lib.tracks.length) return;
-      fkBusy = true; fkResults = [];
-      fkBtn.textContent = '检测中 0/' + lib.tracks.length + '（点击取消）';
-      window.mine.fakeScanBatchStart(lib.tracks.map(function (t) { return t.path; }));
+      if (!paths || !paths.length) { btn.textContent = '未发现音频文件'; setTimeout(fkResetBtns, 2000); return; }
+      fkBusy = true; fkResults = []; fkLast = null;
+      btn.textContent = '检测中 0/' + paths.length + '（点击取消）';
+      window.mine.fakeScanBatchStart(paths);
       var off = window.mine.onFakeScanEvent(function (ev) {
         if (ev.type === 'progress') {
-          fkBtn.textContent = '检测中 ' + ev.done + '/' + ev.total + ' · 疑似 ' + ev.suspect + '（点击取消）';
+          btn.textContent = '检测中 ' + ev.done + '/' + ev.total + ' · 疑似 ' + ev.suspect + '（点击取消）';
           if (ev.verdict === 'suspect' || ev.verdict === 'clean') {
-            fkResults.push({ path: ev.path, cutoff: ev.cutoff, verdict: ev.verdict, reason: ev.reason });
-            var mc = state.library.metaCache[ev.path] || (state.library.metaCache[ev.path] = {});
-            mc.fakeScan = { cutoff: ev.cutoff, verdict: ev.verdict, reason: ev.reason };
+            fkResults.push({ path: ev.path, cutoff: ev.cutoff, verdict: ev.verdict, reason: ev.reason, score: ev.score, grade: ev.grade });
+            fkLast = { path: ev.path, verdict: ev.verdict, score: ev.score, grade: ev.grade, reason: ev.reason };
           }
         } else if (ev.type === 'end') {
           off(); fkBusy = false;
-          fkBtn.textContent = '完成：疑似 ' + ev.suspect + ' 首 / 共 ' + ev.done + ' 首';
+          btn.textContent = (ev.canceled ? '已取消，' : '完成：') + '疑似 ' + ev.suspect + ' 首 / 共 ' + ev.done + ' 首';
           fkCsvBtn.disabled = fkHtmlBtn.disabled = fkResults.length === 0;
-          renderCurrentView(); // ⚠ 标记刷新
-          setTimeout(function () { fkBtn.textContent = '开始检测'; }, 5000);
+          // 单曲模式：直接弹判定结论
+          if (label === 'one' && fkLast) {
+            try { if (typeof proToast === 'function') proToast(fkLast.grade + '（' + fkLast.score + '/100）：' + (fkLast.reason || ''), 6000); } catch (e) { }
+          }
+          setTimeout(fkResetBtns, 5000);
         }
       });
+    }
+    fkBtnAll.onclick = function () {
+      var lib = (typeof state !== 'undefined') ? state.library : null;
+      if (!lib || !lib.tracks.length) return;
+      fkRun(lib.tracks.map(function (t) { return t.path; }), fkBtnAll);
     };
-    fkRow.appendChild(fkLab); fkRow.appendChild(fkBtn);
+    fkBtnDir.onclick = function () {
+      if (fkBusy) { window.mine.fakeScanCancel(); return; }
+      window.mine.fakeScanPickFolder().then(function (r) {
+        if (!r || !r.ok) return;
+        fkRun(r.paths, fkBtnDir);
+      }).catch(function () { });
+    };
+    fkBtnOne.onclick = function () {
+      if (fkBusy) { window.mine.fakeScanCancel(); return; }
+      window.mine.fakeScanPickFile().then(function (r) {
+        if (!r || !r.ok) return;
+        fkRun(r.paths, fkBtnOne, 'one');
+      }).catch(function () { });
+    };
+    fkWrap.appendChild(fkBtnAll); fkWrap.appendChild(fkBtnDir); fkWrap.appendChild(fkBtnOne);
+    fkRow.appendChild(fkLab); fkRow.appendChild(fkWrap);
     sFk.appendChild(fkRow);
     var fkExpRow = markItem(el('div', 'set-row'), '导出检测报告 csv html 频谱');
     var fkExpLab = el('div'); fkExpLab.appendChild(el('div', '', '导出检测报告'));
-    fkExpLab.appendChild(el('div', 'set-hint', 'CSV（路径/截止频率/判定）或 HTML（含频段能量图）'));
+    fkExpLab.appendChild(el('div', 'set-hint', 'CSV（路径/得分/判定）或 HTML（含频谱剖面图）'));
     var fkExpWrap = el('div', 'set-ctrl');
     var fkCsvBtn = el('button', 'btn-ghost', '导出 CSV');
     var fkHtmlBtn = el('button', 'btn-ghost', '导出 HTML');

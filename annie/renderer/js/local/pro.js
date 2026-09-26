@@ -85,12 +85,6 @@
     return state.library.tracks.filter(t => (metaOf(t.path).artist || UNKNOWN_ARTIST) === key);
   }
 
-  /* ================= 假无损标记 ================= */
-  function fakeMark(p) {
-    const fs = (state.library.metaCache[p] || {}).fakeScan;
-    return fs && fs.verdict === 'suspect' ? fs : null;
-  }
-
   /* ================= 粒子舞台：媒体库视图渲染 ================= */
   /* 专辑封面懒加载（并发 3，避免一次拉爆 meta 通道） */
   const coverCache = new Map();
@@ -189,7 +183,7 @@
   }
 
   window.anniePro = {
-    smartTracks, aggAlbums, aggArtists, albumTracks, artistTracks, fakeMark,
+    smartTracks, aggAlbums, aggArtists, albumTracks, artistTracks,
     renderAlbumGrid, renderArtistList, legacySpecialRows, enterLibNav, navLabel,
     UNKNOWN_ARTIST, UNKNOWN_ALBUM
   };

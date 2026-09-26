@@ -1,11 +1,12 @@
 'use strict';
 // 音频分析器：ffmpeg 解码 → FFT → 频谱图帧 / 波形 / 无损检测。
-// 无损检测规则移植自 spek-lossless-detector（V4.0 扣分制），
-// 但直接作用于真实 FFT 频谱数据而非 Spek 截图像素，避免对数轴硬编码失准。
+// V4.0.5：无损检测改用 UltraMusicTestTool 四方法加权融合（losslessDetect.js，
+// 原生采样率/原生位深独立解码通道）；网络流仍走本文件内 44.1kHz 旧判定兜底。
 
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { detectLossless } = require('./losslessDetect');
 
 /* ---------------- 工具链定位（与 engineClient 一致的 dev/prod 双路径） ---------------- */
 function resolveTool(name) {
@@ -110,6 +111,7 @@ function cancelAnalyze() {
   if (current) {
     current.cancelled = true;
     try { current.proc.kill(); } catch { }
+    if (current.det) current.det.cancel();
     current = null;
   }
 }
@@ -161,8 +163,14 @@ function startAnalyze(win, input, headers, gen, forcedLossless) {
   args.push('-t', '300', 'pipe:1');
 
   const proc = spawn(resolveTool('ffmpeg.exe'), args, { windowsHide: true });
-  const session = { proc, gen, cancelled: false };
+  const session = { proc, gen, cancelled: false, det: null };
   current = session;
+
+  // V4.0.5：本地文件并行启动四方法检测通道（原生采样率/位深，见 losslessDetect.js）；
+  // 网络流不重复下载，沿用 44.1kHz 显示流的旧判定
+  if (!forcedLossless && !isUrl(input)) {
+    session.det = detectLossless(input, { headers });
+  }
 
   // 状态
   const byteQueue = []; let queued = 0;
@@ -242,13 +250,21 @@ function startAnalyze(win, input, headers, gen, forcedLossless) {
       return;
     }
     const wf = downsampleWaveform(waveform, MAX_WAVEFORM_POINTS);
-    const lossless = forcedLossless || computeLossless();
-    send(win, {
-      type: 'done', gen,
-      waveform: Float32Array.from(wf),
-      durationSec: totalSamples / SAMPLE_RATE,
-      lossless,
-    });
+    const finish = (detResult) => {
+      // 优先用四方法融合结果；检测失败/超时回退 44.1kHz 旧判定（网络流亦然）
+      const lossless = forcedLossless || detResult || computeLossless();
+      send(win, {
+        type: 'done', gen,
+        waveform: Float32Array.from(wf),
+        durationSec: totalSamples / SAMPLE_RATE,
+        lossless,
+      });
+    };
+    if (session.det) {
+      // 检测通道与显示解码并行，此处等它收尾（30s 兜底，不卡住报告）
+      Promise.race([session.det.done, new Promise(r => setTimeout(() => r(null), 30000))])
+        .then(finish, () => finish(null));
+    } else finish(null);
   });
 
   function processFrame(buf) {

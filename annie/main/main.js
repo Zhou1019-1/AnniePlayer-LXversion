@@ -659,29 +659,38 @@ function registerIpc() {
   });
   ipcMain.handle('stats:get', () => statsMem);
 
-  /* ---------------- Pro beat0.0.1：假无损批量检测 + 报告导出 ---------------- */
+  /* ---------------- 假无损批量检测 + 报告导出（V4.0.5：不再落盘/打标，结果仅出报告） ---------------- */
   const fakeScan = require('./fakeScan');
-  let fakeCollected = {}; // path -> 判定结果（供导出报告）
   ipcMain.handle('fakescan:batchStart', (_e, paths) => {
-    fakeCollected = {};
-    const collected = {};
-    // 分批落盘（同 loudness 范式）：每首歌一次全量读写 library.json 是 O(N²) IO
-    const flush = (obj) => {
-      const keys = Object.keys(obj);
-      if (!keys.length) return;
-      const s = loadStore();
-      for (const p of keys) {
-        const v = obj[p];
-        s.metaCache[p] = { ...(s.metaCache[p] || {}), fakeScan: { cutoff: v.cutoff, verdict: v.verdict, reason: v.reason } };
-        delete obj[p];
-      }
-      saveStore({ metaCache: s.metaCache });
-    };
-    fakeScan.batchStart(mainWindow, paths || [], (p, v) => {
-      collected[p] = v; fakeCollected[p] = v;
-      if (Object.keys(collected).length >= 20) flush(collected);
-    }).then(() => flush(collected));
+    fakeScan.batchStart(mainWindow, paths || [], () => { });
     return { ok: true };
+  });
+  // 文件夹/单曲检测：系统对话框选目标，文件夹递归枚举音频文件
+  ipcMain.handle('fakescan:pickFolder', async () => {
+    const { dialog } = require('electron');
+    const r = await dialog.showOpenDialog(mainWindow, { title: '选择要检测的文件夹', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, reason: 'canceled' };
+    const AUDIO_EXT = /\.(flac|wav|ape|aiff?|alac|tta|wv|dsf|dff|m4a|mp3|aac|ogg|opus|wma)$/i;
+    const found = [];
+    (function walk(dir) {
+      let ents;
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (AUDIO_EXT.test(e.name)) found.push(p);
+      }
+    })(r.filePaths[0]);
+    return { ok: true, dir: r.filePaths[0], paths: found };
+  });
+  ipcMain.handle('fakescan:pickFile', async () => {
+    const { dialog } = require('electron');
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要检测的音频文件', properties: ['openFile'],
+      filters: [{ name: '音频文件', extensions: ['flac', 'wav', 'ape', 'aif', 'aiff', 'alac', 'tta', 'wv', 'dsf', 'dff', 'm4a', 'mp3', 'aac', 'ogg', 'opus', 'wma'] }]
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, reason: 'canceled' };
+    return { ok: true, paths: [r.filePaths[0]] };
   });
   ipcMain.handle('fakescan:cancel', () => { fakeScan.batchCancel(); return { ok: true }; });
   ipcMain.handle('fakescan:export', async (_e, format, items) => {

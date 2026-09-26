@@ -831,9 +831,6 @@
     d.style.height = S.rowH + 'px';
     d.dataset.path = t.path;
     d.dataset.qi = trackIdx;
-    // Pro beat0.0.1：假无损 ⚠ 标记（悬浮显示判定理由）
-    var fk = window.anniePro && window.anniePro.fakeMark(t.path);
-    if (fk) { var fkw = el('span', 'fake-warn', '⚠'); fkw.title = fk.reason || '疑似假无损'; d.appendChild(fkw); }
     COLS.forEach(function (c) {
       if (S.viewMode === 'split' && c.k === 'cover') return;
       var cell = el('div', 'f2-cell f2-c-' + c.k);

@@ -138,8 +138,10 @@ contextBridge.exposeInMainWorld('mine', {
   statsTime: (p, sec) => ipcRenderer.invoke('stats:time', p, sec),
   statsGet: () => ipcRenderer.invoke('stats:get'),
 
-  // Pro beat0.0.1：假无损批量检测
+  // 假无损批量检测（V4.0.5：支持整库/文件夹/单曲三种范围）
   fakeScanBatchStart: (paths) => ipcRenderer.invoke('fakescan:batchStart', paths),
+  fakeScanPickFolder: () => ipcRenderer.invoke('fakescan:pickFolder'),
+  fakeScanPickFile: () => ipcRenderer.invoke('fakescan:pickFile'),
   fakeScanCancel: () => ipcRenderer.invoke('fakescan:cancel'),
   fakeScanExport: (format, items) => ipcRenderer.invoke('fakescan:export', format, items),
   onFakeScanEvent: (cb) => {

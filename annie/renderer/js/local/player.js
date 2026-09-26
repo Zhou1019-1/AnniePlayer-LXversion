@@ -589,10 +589,7 @@ function buildTrackRow(t, qi, queueRef) {
   row.dataset.path = t.path;
   row.dataset.qi = qi;
   const fav = state.favorites.has(t.path);
-  // Pro beat0.0.1：假无损 ⚠ 标记（批量频谱检测判定，悬浮显示理由）
-  const fk = window.anniePro && window.anniePro.fakeMark(t.path);
-  const fkHtml = fk ? `<span class="fake-warn" title="${(fk.reason || '疑似假无损').replace(/"/g, '&quot;')}">⚠</span>` : '';
-  row.innerHTML = `<div class="t-body"><div class="t-name">${fkHtml}${t.name.replace(/\.[^.]+$/, '')}</div><div class="t-sub">${t.dir}</div></div><span class="fav-btn${fav ? ' on' : ''}" title="${fav ? '取消喜爱' : '添加到喜爱'}">${fav ? '♥' : '♡'}</span>`;
+  row.innerHTML = `<div class="t-body"><div class="t-name">${t.name.replace(/\.[^.]+$/, '')}</div><div class="t-sub">${t.dir}</div></div><span class="fav-btn${fav ? ' on' : ''}" title="${fav ? '取消喜爱' : '添加到喜爱'}">${fav ? '♥' : '♡'}</span>`;
   row.querySelector('.fav-btn').onclick = (e) => { e.stopPropagation(); toggleFavorite(t.path); };
   return row;
 }

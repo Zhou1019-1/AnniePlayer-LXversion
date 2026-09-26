@@ -41,5 +41,8 @@ jobs:
       - name: 音频正确性测试（DSP 链断言）
         run: npm run test:audio
 
+      - name: 无损鉴别准确性验证（已知真值样本）
+        run: npm run test:lossless
+
       - name: 音源沙箱安全验证（逃逸阻断端到端）
         run: npm run test:sandbox

@@ -838,8 +838,6 @@ html, body, button, input, select, textarea {
 /* ==========================================================================
    Pro beat0.0.1 —— 曲库与管理 UI
    ========================================================================== */
-/* 假无损 ⚠ 标记 */
-.fake-warn { color: #f5b942; margin-right: 4px; cursor: help; flex: none; }
 
 /* 专辑卡片网格（粒子舞台媒体库视图） */
 .album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; padding: 4px 12px 16px; }

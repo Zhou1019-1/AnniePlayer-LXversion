@@ -1154,6 +1154,60 @@
     };
     renderPeqBands();
 
+    // —— AutoEq 耳机校正导入（V4.2）：精选子集内置（autoeq-subset.json，scripts/autoeq-build.js 生成） ——
+    var aeWrap = markItem(el('div', 'set-row'), 'autoeq 耳机校正 headphone calibration 导入 型号');
+    var aeLab = el('div'); aeLab.appendChild(el('div', '', 'AutoEq 耳机校正'));
+    aeLab.appendChild(el('div', 'set-hint', '按耳机型号套用 AutoEq 实测校正曲线（oratory1990 / crinacle / Rtings 等来源）；低架/高架滤波以峰值滤波近似，前级增益由自动前级补偿接管'));
+    aeWrap.appendChild(aeLab);
+    sPeq.appendChild(aeWrap);
+    var aeBox = el('div', 'autoeq-box');
+    var aeIn = document.createElement('input');
+    aeIn.type = 'text'; aeIn.className = 'autoeq-search'; aeIn.placeholder = '输入耳机型号，如 HD 650 / AirPods / Kato…';
+    aeBox.appendChild(aeIn);
+    var aeList = el('div', 'autoeq-list');
+    var aePrev = el('div', 'set-hint');
+    aeBox.appendChild(aeList); aeBox.appendChild(aePrev);
+    sPeq.appendChild(aeBox);
+    var aeData = null, aeSel = null, aeLoading = false;
+    var AE_TYPE = { 'in-ear': '入耳', 'over-ear': '头戴', 'earbud': '平头/耳塞', other: '其他' };
+    function aeLoad() { // 首次输入时懒加载子集
+      if (aeData || aeLoading) return; aeLoading = true;
+      fetch('autoeq-subset.json').then(function (r) { return r.json(); }).then(function (d) {
+        aeData = d; aeLoading = false;
+        if (aeIn.value.trim()) aeRender();
+      }).catch(function () { aeLoading = false; aePrev.textContent = '校正数据加载失败（autoeq-subset.json 缺失？）'; });
+    }
+    function aeRender() {
+      aeList.innerHTML = '';
+      var q = aeIn.value.trim().toLowerCase();
+      if (!q || !aeData) { if (q && !aeData) aeLoad(); return; }
+      var hits = aeData.models.filter(function (m) { return m.n.toLowerCase().includes(q); }).slice(0, 8);
+      if (!hits.length) { aeList.appendChild(el('div', 'set-hint', '子集内无匹配型号（共 ' + aeData.count + ' 款精选，冷门型号可手动按 AutoEq 网页结果加频段）')); return; }
+      hits.forEach(function (m) {
+        var it = el('div', 'autoeq-item' + (aeSel === m ? ' sel' : ''));
+        it.appendChild(el('span', 'autoeq-name', m.n));
+        it.appendChild(el('span', 'autoeq-meta', (AE_TYPE[m.type] || m.type) + ' · ' + m.src));
+        it.onclick = function () { aeSel = m; aeRender(); aeShowPrev(); };
+        aeList.appendChild(it);
+      });
+    }
+    function aeShowPrev() {
+      var m = aeSel; if (!m) return;
+      aePrev.innerHTML = '';
+      aePrev.appendChild(el('div', '', m.n + '（' + m.b.length + ' 段' + (m.pre != null ? '，AutoEq 前级 ' + m.pre + ' dB 由自动补偿接管' : '') + '）：' +
+        m.b.map(function (b) { return b[0] + 'Hz ' + (b[1] > 0 ? '+' : '') + b[1] + 'dB Q' + b[2]; }).join(' · ')));
+      var btn = el('button', 'btn-ghost', '✓ 套用到参量 EQ');
+      btn.style.cssText = 'width:auto;padding:6px 14px;font-size:12px;margin-top:6px';
+      btn.onclick = function () {
+        ui.peqBands = m.b.map(function (b) { return { f: b[0], g: b[1], q: b[2] }; });
+        ui.peqOn = true; peqChk.checked = true;
+        save(); pushPeq(); renderPeqBands();
+        try { if (typeof proToast === 'function') proToast('已套用 ' + m.n + ' 的 AutoEq 校正（' + m.b.length + ' 段）'); } catch (e) { }
+      };
+      aePrev.appendChild(btn);
+    }
+    aeIn.addEventListener('input', function () { aeSel = null; aePrev.innerHTML = ''; aeLoad(); aeRender(); });
+
     /* ================= 歌词 ================= */
     // —— 全局（AM / FB2K / 舞台逐字） ——
     var sLg = section(pgLyrics, '全局（AM / FB2K / 舞台）');

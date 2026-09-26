@@ -921,6 +921,17 @@ body.mini > *:not(#mini-bar) { display: none !important; }
 .peq-row input[type="range"] { flex: 1; min-width: 80px; }
 .peq-g { width: 56px; font-size: 12px; color: var(--accent); flex: none; text-align: right; }
 .peq-unit { font-size: 11px; color: var(--dim); flex: none; }
+/* ---- V4.2：AutoEq 耳机校正导入 ---- */
+.autoeq-box { padding: 4px 0 8px; }
+.autoeq-search { width: 100%; box-sizing: border-box; background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); padding: 6px 10px; font-size: 12px; }
+.autoeq-list { margin-top: 6px; }
+.autoeq-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; }
+.autoeq-item:hover { background: var(--bg3); }
+.autoeq-item.sel { background: rgba(250,201,0,.08); outline: 1px solid var(--accent); }
+.autoeq-name { color: var(--text); }
+.autoeq-meta { color: var(--dim); font-size: 11px; flex: none; }
 .chain-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
 .chain-st { font-size: 11px; padding: 3px 10px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); background: var(--bg3); }
 .chain-st.on { color: var(--accent); border-color: var(--accent); background: rgba(250,201,0,.08); }

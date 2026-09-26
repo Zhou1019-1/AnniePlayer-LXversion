@@ -12,7 +12,38 @@ catch (e) { document.documentElement.dataset.theme = 'am'; }
 // Plus：配色早标记（localStorage key: annieplayer.palette）
 try { document.documentElement.dataset.palette = localStorage.getItem('annieplayer.palette') || 'gold'; }
 catch (e) { document.documentElement.dataset.palette = 'gold'; }
+// 界面动效早标记（V4.1）：full 完整 / reduced 精简 / off 关闭（localStorage key: annieplayer.ui.motion）
+try { document.documentElement.dataset.motion = localStorage.getItem('annieplayer.ui.motion') || 'full'; }
+catch (e) { document.documentElement.dataset.motion = 'full'; }
 </script>
+<style>
+/* 启动序列开屏（V4.1 仪式感版）：内联保证首帧即显，不依赖外部 CSS 加载。
+ * boot.js 在主界面首帧就绪后加 .bs-out 淡出并移除；8s 兜底强制退场。 */
+#boot-splash { position: fixed; inset: 0; z-index: 9999; background: #16181d;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  transition: opacity .5s ease;
+  font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+#boot-splash.bs-out { opacity: 0; pointer-events: none; }
+.bs-logo { display: flex; gap: 5px; align-items: flex-end; height: 34px;
+  padding: 18px 22px; box-sizing: content-box;
+  background: linear-gradient(135deg, #fa2d55, #ff5c7a); border-radius: 22px;
+  box-shadow: 0 14px 44px rgba(250, 45, 85, .35);
+  animation: bsLogoIn .7s cubic-bezier(.22, 1, .36, 1) backwards; }
+.bs-logo i { width: 5px; height: 100%; background: #fff; border-radius: 3px;
+  transform-origin: bottom; animation: bsBar 1s ease-in-out infinite; }
+.bs-logo i:nth-child(1) { animation-delay: 0s; } .bs-logo i:nth-child(2) { animation-delay: .12s; }
+.bs-logo i:nth-child(3) { animation-delay: .24s; } .bs-logo i:nth-child(4) { animation-delay: .36s; }
+.bs-logo i:nth-child(5) { animation-delay: .48s; }
+.bs-name { color: #f5f5f7; font-size: 20px; font-weight: 700; letter-spacing: .35em; text-indent: .35em;
+  animation: bsFadeUp .6s .22s cubic-bezier(.22, 1, .36, 1) backwards; }
+.bs-status { color: rgba(245, 245, 247, .45); font-size: 12px;
+  animation: bsFadeUp .6s .38s cubic-bezier(.22, 1, .36, 1) backwards; }
+@keyframes bsBar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+@keyframes bsLogoIn { from { opacity: 0; transform: scale(.78); } }
+@keyframes bsFadeUp { from { opacity: 0; transform: translateY(10px); } }
+html[data-motion="off"] #boot-splash { transition: none; }
+html[data-motion="off"] #boot-splash * { animation: none !important; }
+</style>
 <script>
 // 渲染层 JS 错误监控：上报主进程环形缓冲，随诊断包导出（V3.5.15）
 // 注意：script-src 已含 'unsafe-inline'；同消息 3s 内去重，避免错误风暴刷屏
@@ -40,6 +71,13 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 <link rel="stylesheet" href="css/am.css">
 </head>
 <body>
+
+<!-- 启动序列开屏（V4.1 仪式感版；boot.js 在主界面就绪后淡出移除） -->
+<div id="boot-splash">
+  <div class="bs-logo"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="bs-name">安妮播放器</div>
+  <div class="bs-status">引擎点火中…</div>
+</div>
 
 <!-- 标题栏 -->
 <header id="titlebar">
@@ -287,5 +325,6 @@ catch (e) { document.documentElement.dataset.palette = 'gold'; }
 <script src="js/local/am-dom.js"></script>
 <script src="js/local/am-render.js"></script>
 <script src="js/local/onboard.js"></script>
+<script src="js/local/boot.js"></script>
 </body>
 </html>

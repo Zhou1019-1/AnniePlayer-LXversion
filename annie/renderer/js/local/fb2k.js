@@ -604,8 +604,10 @@
       var id = key.slice(3);
       items.push(['重命名', function () {
         var p = S.playlists.find(function (x) { return x.id === id; });
-        var n = prompt('播放列表名称', p ? p.name : '');
-        if (n && p) { p.name = n; savePlaylists(); rebuildTree(); }
+        // V4.1：Electron 不支持原生 prompt()，走应用内输入对话框
+        window.anniePrompt('播放列表名称', p ? p.name : '', function (n) {
+          if (p) { p.name = n; savePlaylists(); rebuildTree(); }
+        });
       }]);
       items.push(['删除', function () {
         S.playlists = S.playlists.filter(function (x) { return x.id !== id; });
@@ -617,10 +619,11 @@
     ctxMenu(e, items);
   }
   function newPlaylist() {
-    var n = prompt('新建播放列表名称', '新建列表');
-    if (!n) return;
-    S.playlists.push({ id: Date.now().toString(36), name: n, paths: [] });
-    savePlaylists(); rebuildTree();
+    // V4.1：Electron 不支持原生 prompt()，走应用内输入对话框
+    window.anniePrompt('新建播放列表名称', '新建列表', function (n) {
+      S.playlists.push({ id: Date.now().toString(36), name: n, paths: [] });
+      savePlaylists(); rebuildTree();
+    });
   }
   function savePlaylists() { S.plVer++; LS.set('annieplayer.fb2k.playlists', S.playlists); }
 

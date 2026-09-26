@@ -150,15 +150,16 @@
     btnSave.onclick = async function () {
       const list = query(readRule());
       if (!list.length) { countEl.textContent = '没有匹配的曲目'; return; }
-      const name = prompt('播放列表名称', '智能歌单 ' + new Date().toLocaleDateString());
-      if (!name) return;
-      btnSave.disabled = true;
-      try {
-        await saveAsPlaylist(name, list);
-        btnSave.textContent = '已保存 ✓';
-      } catch (e) { btnSave.textContent = '保存失败'; }
-      btnSave.disabled = false;
-      setTimeout(function () { btnSave.textContent = '存为播放列表'; }, 3000);
+      // V4.1：Electron 不支持原生 prompt()，走应用内输入对话框
+      window.anniePrompt('播放列表名称', '智能歌单 ' + new Date().toLocaleDateString(), async function (name) {
+        btnSave.disabled = true;
+        try {
+          await saveAsPlaylist(name, list);
+          btnSave.textContent = '已保存 ✓';
+        } catch (e) { btnSave.textContent = '保存失败'; }
+        btnSave.disabled = false;
+        setTimeout(function () { btnSave.textContent = '存为播放列表'; }, 3000);
+      });
     };
     const btnClose = mk('button', 'btn-ghost', '关闭');
     btnClose.onclick = function () { mask.remove(); };

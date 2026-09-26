@@ -308,6 +308,8 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-imm-lyr::-webkit-scrollbar, .am-mini-lyr::-webkit-scrollbar { width: 8px; }
 .am-imm-lyr::-webkit-scrollbar-thumb, .am-mini-lyr::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
 .am-imm-lyr.scrolling::-webkit-scrollbar-thumb, .am-mini-lyr.scrolling::-webkit-scrollbar-thumb { background: rgba(255,255,255,.32); }
+/* V4.1：沉浸/迷你歌词行切换平滑滚动（主面板 .am-lyr-scroll 已有） */
+.am-imm-lyr, .am-mini-lyr { scroll-behavior: smooth; }
 /* 歌词外观设置：悬浮 ⚙（hover 面板显现）+ 弹层 */
 .am-lyrics { position: relative; }
 .am-lyr-set {
@@ -564,3 +566,134 @@ span.am-chip { cursor:pointer; display:inline-flex; align-items:center; }
 .am-cmt-row { padding: 10px 4px; border-bottom: 1px dashed rgba(128,128,128,.18); }
 .am-cmt-text { font-size: 13px; line-height: 1.6; color: inherit; word-break: break-word; }
 .am-cmt-meta { font-size: 11px; opacity: .5; margin-top: 4px; }
+
+/* ================= V4.1：AM 界面动效体系 =================
+ * 原则：只动 transform/opacity（GPU 合成层，不触发布局）；
+ * 缓动统一 --ease-out「先快后柔」；时长分级 --dur-micro/.18s、--dur-comp/.28s、--dur-page/.42s；
+ * html[data-motion="reduced"] 缩短时长；html[data-motion="off"] 全局关停。 */
+:root {
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --dur-micro: .18s;
+  --dur-comp: .28s;
+  --dur-page: .42s;
+}
+html[data-motion="reduced"] { --dur-micro: .1s; --dur-comp: .13s; --dur-page: .16s; }
+/* 系统级「减少动效」偏好自动映射为精简档 */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="off"]) { --dur-micro: .1s; --dur-comp: .13s; --dur-page: .16s; }
+}
+html[data-motion="off"] #am-root, html[data-motion="off"] #am-root *,
+html[data-motion="off"] #am-root::before {
+  animation: none !important; transition: none !important;
+}
+
+/* ---- 主界面入场错峰（仅首次挂载：am-render mount() 加 .am-enter，1s 后移除） ---- */
+@keyframes amEnterDown { from { opacity: 0; transform: translateY(-14px); } }
+@keyframes amEnterLeft { from { opacity: 0; transform: translateX(-24px); } }
+@keyframes amEnterUp { from { opacity: 0; transform: translateY(14px); } }
+#am-root.am-enter .am-topbar { animation: amEnterDown var(--dur-page) var(--ease-out) backwards; }
+#am-root.am-enter .am-side { animation: amEnterLeft var(--dur-page) var(--ease-out) .08s backwards; }
+#am-root.am-enter .am-side > * { animation: amEnterLeft var(--dur-page) var(--ease-out) backwards; }
+#am-root.am-enter .am-side > *:nth-child(2) { animation-delay: .12s; }
+#am-root.am-enter .am-side > *:nth-child(3) { animation-delay: .16s; }
+#am-root.am-enter .am-side > *:nth-child(4) { animation-delay: .2s; }
+#am-root.am-enter .am-side > *:nth-child(5) { animation-delay: .24s; }
+#am-root.am-enter .am-side > *:nth-child(6) { animation-delay: .28s; }
+#am-root.am-enter .am-side > *:nth-child(n+7) { animation-delay: .32s; }
+#am-root.am-enter .am-content > * { animation: amEnterUp var(--dur-page) var(--ease-out) .18s backwards; }
+#am-root.am-enter .am-vizbar { animation: amEnterUp var(--dur-page) var(--ease-out) .3s backwards; }
+
+/* ---- 视图/导航切换：内容区错相淡入上浮（renderView 重建时触发，窗口化表格作为整块动画） ---- */
+@keyframes amViewIn { from { opacity: 0; transform: translateY(8px); } }
+.am-content.am-vsw > * { animation: amViewIn var(--dur-comp) var(--ease-out) backwards; }
+.am-content.am-vsw > *:nth-child(2) { animation-delay: .05s; }
+.am-content.am-vsw > *:nth-child(n+3) { animation-delay: .09s; }
+
+/* ---- 切歌时刻 ---- */
+/* 氛围背景 dip-fade：单伪层无法真 crossfade，先淡出 180ms 换图再淡入（am-render swapBg） */
+#am-root.am-bgout::before { opacity: 0; }
+/* 封面卡片弹入 */
+@keyframes amCoverIn { from { opacity: 0; transform: scale(.85); } }
+.am-np-cover.am-swap, .am-imm-cover.am-swap, .am-mini-cover.am-swap {
+  animation: amCoverIn var(--dur-micro) var(--ease-out);
+}
+/* 标题/艺人文本：上浮淡出 → 新文本下移淡入（am-render 两阶段 class） */
+.am-np-text { position: relative; }
+.am-np-title, .am-np-sub { transition: opacity .14s ease, transform .14s ease; }
+.am-np-text.am-tx-out .am-np-title, .am-np-text.am-tx-out .am-np-sub { opacity: 0; transform: translateY(-6px); }
+.am-np-text.am-tx-in .am-np-title, .am-np-text.am-tx-in .am-np-sub { animation: amViewIn var(--dur-micro) var(--ease-out); }
+
+/* ---- 播放控制微交互 ---- */
+/* 播放/暂停图标形变（刷新时图标变化触发 am-ico-sw） */
+@keyframes amIcoSw { 0% { opacity: .2; transform: scale(.6); } 100% { opacity: 1; transform: scale(1); } }
+.am-ico-sw { animation: amIcoSw var(--dur-micro) var(--ease-out); }
+/* 进度条：位置脉冲之间线性插值平滑（seek 跳变也变为滑行） */
+.am-np-prog i { transition: width .25s linear, background .15s; }
+.am-imm-fill { transition: width .25s linear; }
+.am-mini-fill { transition: width .25s linear; }
+/* 音量条 hover 展开（Apple 风：元素滑开让位） */
+.am-vol input[type="range"] { width: 0; opacity: 0;
+  transition: width var(--dur-comp) var(--ease-out), opacity var(--dur-micro); }
+.am-vol:hover input[type="range"], .am-vol input[type="range"]:focus { width: 84px; opacity: 1; }
+/* 行内迷你按钮/弹层项补齐按压反馈 */
+.am-mini-btn { transition: opacity .12s, color .12s, transform .1s; }
+.am-mini-btn:active { transform: scale(.88); }
+.am-nav { transition: background .15s, transform .1s; }
+.am-nav:active { transform: scale(.97); }
+.am-chip { transition: background .15s, color .15s, border-color .15s, transform .1s; }
+.am-chip:active { transform: scale(.95); }
+
+/* ---- 弹层与面板：从触发点生长 ---- */
+@keyframes amPopIn { from { opacity: 0; transform: scale(.94) translateY(-4px); } }
+.am-pop.on { animation: amPopIn var(--dur-micro) var(--ease-out); transform-origin: top right; }
+
+/* ---- 外壳模式切换 ---- */
+@keyframes amImmIn { from { opacity: 0; transform: scale(1.05); } }
+#am-root.am-imm-on .am-imm { animation: amImmIn var(--dur-page) var(--ease-out); }
+#am-root.am-imm-on .am-imm-cover { animation: amCoverIn var(--dur-page) var(--ease-out) .06s backwards; }
+#am-root.am-mini-on .am-mini { animation: amImmIn var(--dur-comp) var(--ease-out); }
+@keyframes amSlideL { from { opacity: 0; transform: translateX(40px); } }
+#am-root.am-imm-q-on .am-imm-queue { animation: amSlideL var(--dur-comp) var(--ease-out); }
+/* 歌词面板宽度过渡已有（.25s width）；换用统一缓动 */
+.am-lyrics { transition: width var(--dur-comp) var(--ease-out); }
+
+/* ---- 歌词氛围：整组重建（切歌/外观变更）时逐行浮入 ---- */
+@keyframes amLyrIn { from { opacity: 0; transform: translateY(12px); } }
+.am-lyr-fresh .am-lyr-line { animation: amLyrIn var(--dur-page) var(--ease-out) backwards; }
+.am-lyr-fresh .am-lyr-line:nth-child(2) { animation-delay: .04s; }
+.am-lyr-fresh .am-lyr-line:nth-child(3) { animation-delay: .07s; }
+.am-lyr-fresh .am-lyr-line:nth-child(4) { animation-delay: .1s; }
+.am-lyr-fresh .am-lyr-line:nth-child(5) { animation-delay: .13s; }
+.am-lyr-fresh .am-lyr-line:nth-child(6) { animation-delay: .16s; }
+.am-lyr-fresh .am-lyr-line:nth-child(n+7) { animation-delay: .18s; }
+
+/* ---- 应用内输入对话框（window.anniePrompt；挂 body，CSS 变量全部带兜底值，主题外也可用） ---- */
+@keyframes amFadeIn { from { opacity: 0; } }
+.am-prompt-ov {
+  position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, .42);
+  display: flex; align-items: center; justify-content: center;
+  animation: amFadeIn var(--dur-micro, .18s) ease;
+}
+.am-prompt {
+  min-width: 320px; padding: 14px;
+  background: var(--am-glass, rgba(38, 38, 38, .92)); border: 1px solid var(--am-sep, rgba(255, 255, 255, .1));
+  border-radius: 12px; box-shadow: var(--am-shadow, 0 12px 40px rgba(0, 0, 0, .45));
+  backdrop-filter: var(--am-blur, blur(24px)); -webkit-backdrop-filter: var(--am-blur, blur(24px));
+  color: var(--am-text, #f5f5f7); font: 13px/1.5 var(--am-font, "Microsoft YaHei UI", sans-serif);
+  animation: amPopIn var(--dur-micro, .18s) var(--ease-out, ease);
+}
+.am-prompt .am-pop-h { color: inherit; }
+.am-prompt-in {
+  width: 100%; box-sizing: border-box; margin: 10px 0 14px;
+  border: 1px solid var(--am-sep, rgba(255, 255, 255, .14)); outline: none; border-radius: 8px;
+  background: var(--am-glass-2, rgba(128, 128, 128, .12)); color: inherit;
+  padding: 8px 12px; font: 13px var(--am-font, "Microsoft YaHei UI", sans-serif);
+}
+.am-prompt-in:focus { border-color: var(--am-accent, #fa2d55); }
+.am-prompt-btns { display: flex; justify-content: flex-end; gap: 8px; }
+/* 非 AM 主题下对话框按钮的全局兜底（am-btn 变量在 #am-root 上定义） */
+.am-prompt .am-btn { background: rgba(128, 128, 128, .18); color: inherit; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.am-prompt .am-btn.am-btn-accent { background: var(--am-accent, #fa2d55); color: #fff; }
+
+/* ---- 音量图标按钮（点击静音） ---- */
+.am-vol .am-vol-ico { width: 30px; height: 30px; font-size: 14px; flex: none; }

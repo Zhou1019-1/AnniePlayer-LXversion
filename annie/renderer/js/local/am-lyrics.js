@@ -181,6 +181,8 @@
     });
     fitLyrLines(box);
     tickLyrics();
+    // V4.1：歌词整组重建（切歌/外观变更）逐行浮入
+    box.classList.remove('am-lyr-fresh'); void box.offsetWidth; box.classList.add('am-lyr-fresh');
   }
   function tickLyrics() {
     if (!S.lyrLines.length || !R.lyrScroll) return;
@@ -376,6 +378,8 @@
     });
     fitLyrLines(box);
     paintLyrBox(box, S.lyrCur, 0.35);
+    // V4.1：整组重建时逐行浮入（重放 class 触发动画）
+    box.classList.remove('am-lyr-fresh'); void box.offsetWidth; box.classList.add('am-lyr-fresh');
   }
   function paintLyrBox(box, cur, rate) {
     if (!box) return;

@@ -57,6 +57,7 @@
     var npRow = el('div', 'am-np-row');
     R.npCover = el('img', 'am-np-cover'); R.npCover.alt = '';
     var npText = el('div', 'am-np-text');
+    R.npText = npText; // V4.1：切歌文本过渡动画需要容器引用
     R.npTitle = el('div', 'am-np-title', '未在播放');
     R.npSub = el('div', 'am-np-sub', '');
     npText.appendChild(R.npTitle); npText.appendChild(R.npSub);
@@ -79,7 +80,17 @@
 
     var right = el('div', 'am-tb-right');
     var vol = el('div', 'am-vol');
-    vol.appendChild(el('span', null, '🔊'));
+    // V4.1：🔊 图标可点击（静音/取消静音），悬停展开音量条
+    var volIco = el('button', 'am-tbtn am-vol-ico', '🔊');
+    volIco.title = '点击静音/取消静音；悬停展开音量条';
+    volIco.onclick = function () {
+      var cur = +R.vol.value;
+      if (cur > 0) { S._muteVol = cur; R.vol.value = 0; }
+      else { R.vol.value = S._muteVol || 80; }
+      R.vol.oninput();
+      volIco.textContent = +R.vol.value > 0 ? '🔊' : '🔇';
+    };
+    vol.appendChild(volIco);
     R.vol = document.createElement('input');
     R.vol.type = 'range'; R.vol.min = 0; R.vol.max = 100;
     var legacyVol = document.querySelector('#volume');
@@ -266,12 +277,12 @@
     add.appendChild(el('span', 'am-nav-ico', '＋'));
     add.appendChild(el('span', 'am-nav-name', '新建播放列表'));
     add.onclick = function () {
-      var name = prompt('播放列表名称：', '新建播放列表');
-      if (name == null) return;
-      window.mine.playlistCreate(name).then(function (pls) {
-        S.playlists = pls;
-        S.view = 'pl:' + pls[pls.length - 1].id;
-        renderSidebar(); renderView();
+      amPrompt('播放列表名称', '新建播放列表', function (name) {
+        window.mine.playlistCreate(name).then(function (pls) {
+          S.playlists = pls;
+          S.view = 'pl:' + pls[pls.length - 1].id;
+          renderSidebar(); renderView();
+        });
       });
     };
     sb.appendChild(add);
@@ -303,6 +314,14 @@
     if (!R.content || (window.annieTheme && annieTheme.current !== 'am')) return;
     var c = R.content;
     c.innerHTML = '';
+    // V4.1：视图切换动画只在「视图签名变化」时播放——切歌高亮/搜索输入/标签到达的重绘不闪
+    var sig = S.view + '|' + (S.albumKey || '') + '|' + (S.folderKey ? S.folderKey.root + S.folderKey.seg : '');
+    if (sig !== S._vswSig) {
+      S._vswSig = sig;
+      c.classList.remove('am-vsw'); void c.offsetWidth; c.classList.add('am-vsw');
+      clearTimeout(S._vswT);
+      S._vswT = setTimeout(function () { c.classList.remove('am-vsw'); }, 400);
+    }
 
     if (S.view === 'stream') { renderStreamView(c); return; }
 
@@ -420,8 +439,9 @@
     c.appendChild(head);
   }
 
-  /* 本地曲目表：封面按专辑共享（每张专辑只解析一次，行内复用同一 dataURL，解码一次）；
-     超 2000 行的巨型列表不渲染封面列以保流畅。
+  /* 本地曲目表：封面按专辑共享（每张专辑只解析一个文件的封面，行内复用同一 dataURL，解码一次）；
+     V4.1：移除 2000 行封面硬顶——窗口化渲染已把同时在屏的 <img> 限制在可视区 ±15 行，
+     叠加专辑级缓存 + 并发限流 3 的 lazy 队列，超大曲库封面列也流畅。
      V3.1：>300 行窗口化渲染——只构建可视区 ±15 行，上下用占位行撑高度，滚动 rAF 合并。 */
   var AM_ROW_H_COVER = 52, AM_ROW_H_PLAIN = 41, AM_WINDOW_MIN = 300, AM_OVERSCAN = 15;
   function buildTrackRow(t, i, opts) {
@@ -478,7 +498,7 @@
     var tb = el('table', 'am-table');
     var inPlaylist = S.view.indexOf('pl:') === 0;
     var opts = {
-      withCover: tracks.length <= 2000,
+      withCover: true, // V4.1：封面列全量开启（窗口化 + 专辑共享缓存兜底）
       inPlaylist: inPlaylist,
       plId: inPlaylist ? S.view.slice(3) : null,
       tracks: tracks
@@ -519,6 +539,35 @@
     win.body.appendChild(frag);
   }
 
+  /* V4.1：应用内输入对话框——Electron 不支持原生 window.prompt()（静默无反应），
+   * 全局挂 window.anniePrompt(title, 默认值, cb) 供所有主题/设置面板使用。 */
+  function amPrompt(title, defVal, cb) {
+    var ov = el('div', 'am-prompt-ov');
+    var box = el('div', 'am-prompt');
+    box.appendChild(el('div', 'am-pop-h', title));
+    var inp = document.createElement('input');
+    inp.className = 'am-prompt-in';
+    inp.value = defVal || '';
+    box.appendChild(inp);
+    var row = el('div', 'am-prompt-btns');
+    var bNo = el('button', 'am-btn', '取消');
+    var bOk = el('button', 'am-btn am-btn-accent', '确定');
+    function close(v) { ov.remove(); if (v != null) cb(v); }
+    bNo.onclick = function () { close(null); };
+    bOk.onclick = function () { var v = inp.value.trim(); if (v) close(v); else inp.focus(); };
+    inp.onkeydown = function (e) {
+      e.stopPropagation();
+      if (e.key === 'Enter') bOk.onclick();
+      else if (e.key === 'Escape') close(null);
+    };
+    ov.onclick = function (e) { if (e.target === ov) close(null); };
+    row.appendChild(bNo); row.appendChild(bOk);
+    box.appendChild(row); ov.appendChild(box);
+    document.body.appendChild(ov); // 挂 body：设置面板/其他主题同样可用（CSS 变量带兜底值）
+    inp.focus(); inp.select();
+  }
+  window.anniePrompt = amPrompt;
+
   /* "添加到播放列表"菜单 */
   function openAddMenu(x, y, trackPath) {
     var pop = R.pop;
@@ -553,12 +602,12 @@
     var nw = el('button', 'am-pop-item', '＋ 新建播放列表…');
     nw.onclick = function () {
       pop.classList.remove('on');
-      var name = prompt('播放列表名称：', '新建播放列表');
-      if (name == null) return;
-      window.mine.playlistCreate(name).then(function (pls) {
-        S.playlists = pls;
-        return window.mine.playlistAdd(pls[pls.length - 1].id, [trackPath]);
-      }).then(function (pls) { S.playlists = pls; renderSidebar(); });
+      amPrompt('播放列表名称', '新建播放列表', function (name) {
+        window.mine.playlistCreate(name).then(function (pls) {
+          S.playlists = pls;
+          return window.mine.playlistAdd(pls[pls.length - 1].id, [trackPath]);
+        }).then(function (pls) { S.playlists = pls; renderSidebar(); });
+      });
     };
     pop.appendChild(nw);
     pop.classList.add('on');
@@ -567,16 +616,10 @@
     pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
   }
 
-  /* 定位当前播放文件：当前视图找不到时切回歌曲全库，滚动到播放行并闪烁高亮 */
-  function locatePlaying() {
-    var p = state.currentPath;
-    if (!p || state.currentStream) return; // 流媒体不入库，无法定位
-    var inView = currentTracks().some(function (t) { return t.path === p; });
-    if (!inView) {
-      S.view = 'songs'; S.albumKey = null; S.folderKey = null; S.search = '';
-      renderSidebar();
-    }
-    renderView();
+  /* 滚动到指定曲目行并闪烁高亮（窗口化时先按索引滚再重建可视区）。
+   * opts.auto：自动定位模式——行已在可视区内则不打扰（手动双击播放等场景）。 */
+  function scrollRowIntoView(p, opts) {
+    opts = opts || {};
     setTimeout(function () {
       if (!R.content) return;
       var sel = '.am-tr[data-path="' + CSS.escape(p) + '"]';
@@ -595,18 +638,36 @@
         // 非窗口化：手动滚容器——不能用 scrollIntoView，它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
         var cRect = R.content.getBoundingClientRect();
         var rRect = row.getBoundingClientRect();
-        var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
-        if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
-        else R.content.scrollTop = Math.max(0, target);
+        var visible = rRect.top >= cRect.top && rRect.bottom <= cRect.bottom;
+        if (visible && opts.auto) return; // 已在可视区：自动定位不打扰
+        if (!visible) {
+          var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
+          if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+          else R.content.scrollTop = Math.max(0, target);
+        }
       }
       if (!row) return;
       var root = document.getElementById('am-root');
       if (root && root.scrollTop) root.scrollTop = 0; // 防御：壳容器永不允许滚动
+      if (opts.flash === false) return;
       row.classList.remove('locate-flash');
       void row.offsetWidth; // 重启动画
       row.classList.add('locate-flash');
       setTimeout(function () { row.classList.remove('locate-flash'); }, 2000);
     }, 60);
+  }
+
+  /* 定位当前播放文件：当前视图找不到时切回歌曲全库，滚动到播放行并闪烁高亮 */
+  function locatePlaying() {
+    var p = state.currentPath;
+    if (!p || state.currentStream) return; // 流媒体不入库，无法定位
+    var inView = currentTracks().some(function (t) { return t.path === p; });
+    if (!inView) {
+      S.view = 'songs'; S.albumKey = null; S.folderKey = null; S.search = '';
+      renderSidebar();
+    }
+    renderView();
+    scrollRowIntoView(p, { auto: false });
   }
 
 
@@ -615,4 +676,5 @@
   AM.renderSidebar = renderSidebar;
   AM.renderView = renderView;
   AM.renderAmWindow = renderAmWindow;
+  AM.scrollRowIntoView = scrollRowIntoView;
 })();

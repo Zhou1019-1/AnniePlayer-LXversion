@@ -522,6 +522,23 @@
     f2row.appendChild(f2lab); f2row.appendChild(btnF2);
     sF2.appendChild(f2row);
 
+    // —— V4.1：界面动效（完整/精简/关闭；精简缩短时长，关闭全局关停动画与过渡） ——
+    var sMo = section(pgGeneral, '外观 · 界面动效');
+    var moRow = markItem(el('div', 'set-row'), '界面动效 动画 过渡 流畅 motion animation 减少动效');
+    var moLab = el('div'); moLab.appendChild(el('div', '', '界面动效'));
+    moLab.appendChild(el('div', 'set-hint', '启动序列 / 入场错峰 / 切歌过渡 / 弹层生长；低配机器或晕动敏感可选精简/关闭'));
+    var moSel = document.createElement('select');
+    [['full', '完整'], ['reduced', '精简'], ['off', '关闭']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; moSel.appendChild(op);
+    });
+    try { moSel.value = localStorage.getItem('annieplayer.ui.motion') || 'full'; } catch (e) { moSel.value = 'full'; }
+    moSel.onchange = function () {
+      try { localStorage.setItem('annieplayer.ui.motion', moSel.value); } catch (e) { }
+      document.documentElement.dataset.motion = moSel.value;
+    };
+    moRow.appendChild(moLab); moRow.appendChild(moSel);
+    sMo.appendChild(moRow);
+
     // —— Plus：外观 · 配色方案（四套 WCAG AA 实算配色，即时切换） ——
     var s6 = section(pgGeneral, '外观 · 配色方案');
     var palGrid = markItem(el('div', 'pal-grid'), '配色方案 暗夜金 靛蓝极光 翡翠深空 白昼 palette');
@@ -1247,17 +1264,18 @@
         }).catch(function (e) { fxStat.textContent = '应用方案失败：' + (e && e.message ? e.message : e); })
           .then(function () { prSel.disabled = false; prSel.value = ''; });
       };
-      prSaveBtn.onclick = async function () {
+      prSaveBtn.onclick = function () {
         if (!fx.cfg.slots.length) { fxStat.textContent = '当前链为空，先添加插件'; return; }
-        var name = prompt('方案名称：', '我的方案 ' + (fx.presets.list().length + 1));
-        if (name == null || !name.trim()) return;
-        prSaveBtn.disabled = true; prSaveBtn.textContent = '保存中…';
-        try {
-          await fx.presets.saveAs(name.trim());
-          refreshPresets();
-          fxStat.textContent = '已保存方案「' + name.trim() + '」';
-        } catch (e) { fxStat.textContent = '保存失败：' + (e && e.message ? e.message : e); }
-        prSaveBtn.disabled = false; prSaveBtn.textContent = '存为方案…';
+        // V4.1：Electron 不支持原生 prompt()，走应用内输入对话框
+        window.anniePrompt('方案名称', '我的方案 ' + (fx.presets.list().length + 1), async function (name) {
+          prSaveBtn.disabled = true; prSaveBtn.textContent = '保存中…';
+          try {
+            await fx.presets.saveAs(name.trim());
+            refreshPresets();
+            fxStat.textContent = '已保存方案「' + name.trim() + '」';
+          } catch (e) { fxStat.textContent = '保存失败：' + (e && e.message ? e.message : e); }
+          prSaveBtn.disabled = false; prSaveBtn.textContent = '存为方案…';
+        });
       };
       prDelBtn.onclick = function () {
         if (!prSel.value) { fxStat.textContent = '先在左侧选择要删除的方案'; return; }

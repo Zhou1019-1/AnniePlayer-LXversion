@@ -30,6 +30,8 @@
   var renderSidebar = AM.renderSidebar;
   var renderView = AM.renderView;
   var renderAmWindow = AM.renderAmWindow;
+  var scrollRowIntoView = AM.scrollRowIntoView;
+  var currentTracks = AM.currentTracks;
   var loadLyrics = AM.loadLyrics;
   var tickLyrics = AM.tickLyrics;
   var refitAllLyr = AM.refitAllLyr;
@@ -503,18 +505,18 @@
     miniResize();
   }
 
-  /* 沉浸/迷你界面字段同步（封面/标题/参数 与 进度/播放键） */
+  /* 沉浸/迷你界面字段同步（封面/标题/参数 与 进度/播放键）；封面走 swapCover 弹入动画 */
   function syncAuxViews() {
     var cover = R.npCover && R.npCover.getAttribute('src');
     if (R.imm) {
-      if (cover) R.immCover.src = cover; else R.immCover.removeAttribute('src');
+      swapCover(R.immCover, cover || null);
       R.immTitle.textContent = R.npTitle.textContent;
       R.immSub.textContent = R.npSub.textContent;
       R.immFmt.textContent = S.fmt || '';
       if (R.vol) R.immVol.value = R.vol.value;
     }
     if (R.mini) {
-      if (cover) R.miniCover.src = cover; else R.miniCover.removeAttribute('src');
+      swapCover(R.miniCover, cover || null);
       R.miniTitle.textContent = R.npTitle.textContent;
       R.miniSub.textContent = R.npSub.textContent;
       R.miniFmt.textContent = S.fmt || '';
@@ -525,20 +527,62 @@
     var pct = S.dur > 0 ? Math.min(1, S.pos / S.dur) : 0;
     var cur = fmtTime(S.pos);
     var rem = S.dur > 0 ? '-' + fmtTime(Math.max(0, S.dur - S.pos)) : '-0:00';
-    var playIcon = state.playing ? '⏸' : '▶';
     if (R.imm && S.imm) {
       R.immCur.textContent = cur; R.immRemain.textContent = rem;
       R.immFill.style.width = (pct * 100) + '%';
-      R.immPlay.textContent = playIcon;
+      setPlayIcon(R.immPlay);
     }
     if (R.mini && S.mini) {
       R.miniCur.textContent = cur; R.miniRemain.textContent = rem;
       R.miniFill.style.width = (pct * 100) + '%';
-      R.miniPlay.textContent = playIcon;
+      setPlayIcon(R.miniPlay);
     }
   }
 
   /* ---------------- 播放状态刷新 ---------------- */
+  /* V4.1 切歌动效助手：氛围背景 dip-fade / 封弹入 / 文本两阶段过渡，全部可重入（连点切歌重置定时器） */
+  var _bgSwapT = 0, _bgLast = undefined;
+  function swapAtmosphere(url) {
+    var root = document.getElementById('am-root');
+    if (!root || url === _bgLast) return;
+    _bgLast = url;
+    root.classList.add('am-bgout');
+    clearTimeout(_bgSwapT);
+    _bgSwapT = setTimeout(function () {
+      if (url) { root.style.setProperty('--am-bgimage', 'url("' + url + '")'); root.classList.remove('am-nobg'); }
+      else root.classList.add('am-nobg');
+      root.classList.remove('am-bgout');
+    }, 180);
+  }
+  function swapCover(img, url) {
+    if (!img) return;
+    if ((img.getAttribute('src') || '') === (url || '')) return;
+    if (url) img.src = url; else img.removeAttribute('src');
+    img.classList.remove('am-swap'); void img.offsetWidth; img.classList.add('am-swap');
+  }
+  var _txT = 0;
+  function swapNpText(title, sub) {
+    if (!R.npText) return;
+    if (R.npTitle.textContent === title && R.npSub.textContent === sub) return;
+    clearTimeout(_txT);
+    R.npText.classList.remove('am-tx-in');
+    R.npText.classList.add('am-tx-out');
+    _txT = setTimeout(function () {
+      R.npTitle.textContent = title;
+      R.npSub.textContent = sub;
+      R.npText.classList.remove('am-tx-out');
+      R.npText.classList.add('am-tx-in');
+    }, 140);
+  }
+  /* 播放/暂停图标形变（图标变化时才重放动画；进度 tick 高频调用零开销） */
+  function setPlayIcon(btn) {
+    if (!btn) return;
+    var icon = state.playing ? '⏸' : '▶';
+    if (btn.textContent !== icon) {
+      btn.classList.remove('am-ico-sw'); void btn.offsetWidth; btn.classList.add('am-ico-sw');
+      btn.textContent = icon;
+    }
+  }
   function refreshBadge() {
     if (!R.npBadge) return;
     R.npBadge.textContent = S.fmt;
@@ -555,11 +599,10 @@
     if (!R.npTitle) return;
     var p = state.currentPath;
     if (!p) {
-      R.npTitle.textContent = '未在播放';
-      R.npSub.textContent = '';
-      R.npCover.removeAttribute('src');
+      swapNpText('未在播放', '');
+      swapCover(R.npCover, null);
       S.fmt = ''; refreshBadge();
-      document.getElementById('am-root').classList.add('am-nobg');
+      swapAtmosphere(null);
       return;
     }
     var t = allTracks().find(function (x) { return x.path === p; });
@@ -571,33 +614,30 @@
       streamCover = state.currentStream.cover || '';
     } else if (state.currentCue && state.currentCue.title) { title = state.currentCue.title; artist = state.currentCue.artist || ''; }
     else if (t) { var m = trackMeta(t); title = m.title; artist = m.artist; album = m.album; }
-    R.npTitle.textContent = title;
-    R.npSub.textContent = artist + (album ? ' — ' + album : '');
-    var root = document.getElementById('am-root');
+    swapNpText(title, artist + (album ? ' — ' + album : ''));
     if (streamCover) {
       // 流媒体：封面是 URL，直接用（不经 meta 解析）
-      R.npCover.src = streamCover;
-      root.style.setProperty('--am-bgimage', 'url("' + streamCover + '")');
-      root.classList.remove('am-nobg');
+      swapCover(R.npCover, streamCover);
+      swapAtmosphere(streamCover);
       syncAuxViews();
     } else {
       var srcPath = (state.currentCue && state.currentCue.src) ||
                     (state.currentIso && state.currentIso.src) || (t && t.path);
       if (srcPath) (t ? albumCover : ensureCover).call(null, t || srcPath, function (url) {
         if (state.currentPath !== p) return;
-        if (url) { R.npCover.src = url; }
-        if (url) { root.style.setProperty('--am-bgimage', 'url("' + url + '")'); root.classList.remove('am-nobg'); }
-        else root.classList.add('am-nobg');
+        swapCover(R.npCover, url || null);
+        swapAtmosphere(url || null);
         syncAuxViews();
       });
+      else { swapCover(R.npCover, null); swapAtmosphere(null); }
+      syncAuxViews();
     }
-    syncAuxViews();
     loadLyrics(state.currentStream ? state.currentPath : ((state.currentCue && state.currentCue.src) || (t && t.path) || null), !!state.currentStream);
   }
   function refreshTransport() {
     if (!R.btnPlay) return;
     S.playing = !!state.playing;
-    R.btnPlay.textContent = S.playing ? '⏸' : '▶';
+    setPlayIcon(R.btnPlay);
     refreshAuxProgress();
   }
   function refresh() {
@@ -646,7 +686,17 @@
     var lastPath = null;
     setInterval(function () {
       if (!window.annieTheme || annieTheme.current !== 'am' || !S.mounted) return;
-      if (state.currentPath !== lastPath) { lastPath = state.currentPath; refresh(); }
+      if (state.currentPath !== lastPath) {
+        lastPath = state.currentPath; refresh();
+        // V4.1：切歌后自动定位到当前播放行（随机/顺序播放跳转到远处时滚动跟随；
+        // 行已在可视区则不打扰；流媒体与专辑/文件夹网格视图跳过）
+        var p2 = state.currentPath;
+        if (p2 && !state.currentStream && S.view !== 'stream'
+            && !(S.view === 'albums' && !S.albumKey) && !(S.view === 'folders' && !S.folderKey)
+            && currentTracks().some(function (t) { return t.path === p2; })) {
+          scrollRowIntoView(p2, { auto: true });
+        }
+      }
       refreshTransport();
     }, 500);
   }
@@ -712,6 +762,9 @@
       bindGlobal();
       patchStreamPlayNext();
       S.mounted = true;
+      // V4.1：主界面入场错峰动画（仅首次挂载；1s 后移除类，避免后续 DOM 重建重放）
+      var root0 = document.getElementById('am-root');
+      if (root0) { root0.classList.add('am-enter'); setTimeout(function () { root0.classList.remove('am-enter'); }, 1000); }
     }
     refreshPlaylists();
     refreshLibFolders(true);

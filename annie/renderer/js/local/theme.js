@@ -26,8 +26,7 @@
     document.dispatchEvent(new CustomEvent('annie-theme-changed', { detail: { theme: theme } }));
   }
 
-  function switchTheme(theme) {
-    if (VALID.indexOf(theme) < 0) return;
+  function doSwitch(theme) {
     if (switching) {
       // 上一次切换尚未完成：允许打断（定时器在窗口失焦时可能被节流到 1s，
       // 若静默丢弃会表现为"切换没反应"）
@@ -36,7 +35,6 @@
       if (f0) f0.classList.remove('on');
       switching = false;
     }
-    if (theme === current) return;
     switching = true;
     try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { }
     try { localStorage.setItem(KEY, theme); } catch (e) { }
@@ -56,6 +54,39 @@
       apply(theme);
       switching = false;
     }
+  }
+
+  /* AM 为主力开发界面；切往粒子舞台/FB2K 前弹确认（两个界面半停止开发） */
+  var THEME_NAME = { legacy: '粒子舞台', fb2k: 'FB2K', am: 'AM' };
+  function confirmLegacySwitch(theme) {
+    var mask = document.createElement('div');
+    mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
+    var box = document.createElement('div');
+    box.style.cssText = 'background:#22252d;color:#e8ebf2;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px 26px;max-width:430px;box-shadow:0 16px 48px rgba(0,0,0,.55);font-size:14px;line-height:1.8';
+    var msg = document.createElement('div');
+    msg.textContent = '安妮播放器主力开发AM模拟界面，另外两个界面已经半停止开发，可能存在各类未知BUG，请问是否确认切换？';
+    box.appendChild(msg);
+    var btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:16px';
+    var bCancel = document.createElement('button');
+    bCancel.textContent = '取消';
+    bCancel.style.cssText = 'padding:6px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#cfd4de;cursor:pointer;font-size:13px';
+    var bOk = document.createElement('button');
+    bOk.textContent = '确认切换到 ' + (THEME_NAME[theme] || theme);
+    bOk.style.cssText = 'padding:6px 20px;border-radius:8px;border:none;background:#e0485f;color:#fff;cursor:pointer;font-size:13px';
+    bCancel.onclick = function () { mask.remove(); };
+    bOk.onclick = function () { mask.remove(); doSwitch(theme); };
+    mask.onclick = function (e) { if (e.target === mask) mask.remove(); };
+    btns.appendChild(bCancel); btns.appendChild(bOk);
+    box.appendChild(btns); mask.appendChild(box);
+    document.body.appendChild(mask);
+  }
+
+  function switchTheme(theme) {
+    if (VALID.indexOf(theme) < 0) return;
+    if (theme === current) return;
+    if (theme !== 'am') { confirmLegacySwitch(theme); return; }
+    doSwitch(theme);
   }
 
   window.annieTheme = {

@@ -400,6 +400,9 @@ async function playStreamAt(i) {
     if (ly && ly.lrc && state.currentPath) {
       window.__annieStreamLrcByPath = window.__annieStreamLrcByPath || {};
       window.__annieStreamLrcByPath[state.currentPath] = ly.lrc;
+      // 译文轨（wy/tx/kg 等源自带 tlyric）：一并缓存，AM 歌词按时间戳合并显示
+      window.__annieStreamTlyByPath = window.__annieStreamTlyByPath || {};
+      window.__annieStreamTlyByPath[state.currentPath] = ly.tlyric || '';
       try { document.dispatchEvent(new CustomEvent('annie-stream-lyric', { detail: { path: state.currentPath } })); } catch { }
     }
     // V1.1.4：播放确认后预取下一首（URL 缓存 + 引擎 probe 预热）——切歌时秒起播

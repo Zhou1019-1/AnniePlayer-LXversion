@@ -1643,23 +1643,30 @@
       });
     }
     fkBtnAll.onclick = function () {
-      var lib = (typeof state !== 'undefined') ? state.library : null;
-      if (!lib || !lib.tracks.length) return;
-      fkRun(lib.tracks.map(function (t) { return t.path; }), fkBtnAll);
+      if (fkBusy) { window.mine.fakeScanCancel(); return; }
+      window.annieConfirmFakeScan(function () {
+        var lib = (typeof state !== 'undefined') ? state.library : null;
+        if (!lib || !lib.tracks.length) return;
+        fkRun(lib.tracks.map(function (t) { return t.path; }), fkBtnAll);
+      });
     };
     fkBtnDir.onclick = function () {
       if (fkBusy) { window.mine.fakeScanCancel(); return; }
-      window.mine.fakeScanPickFolder().then(function (r) {
-        if (!r || !r.ok) return;
-        fkRun(r.paths, fkBtnDir);
-      }).catch(function () { });
+      window.annieConfirmFakeScan(function () {
+        window.mine.fakeScanPickFolder().then(function (r) {
+          if (!r || !r.ok) return;
+          fkRun(r.paths, fkBtnDir);
+        }).catch(function () { });
+      });
     };
     fkBtnOne.onclick = function () {
       if (fkBusy) { window.mine.fakeScanCancel(); return; }
-      window.mine.fakeScanPickFile().then(function (r) {
-        if (!r || !r.ok) return;
-        fkRun(r.paths, fkBtnOne, 'one');
-      }).catch(function () { });
+      window.annieConfirmFakeScan(function () {
+        window.mine.fakeScanPickFile().then(function (r) {
+          if (!r || !r.ok) return;
+          fkRun(r.paths, fkBtnOne, 'one');
+        }).catch(function () { });
+      });
     };
     fkWrap.appendChild(fkBtnAll); fkWrap.appendChild(fkBtnDir); fkWrap.appendChild(fkBtnOne);
     fkRow.appendChild(fkLab); fkRow.appendChild(fkWrap);

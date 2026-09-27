@@ -1310,6 +1310,7 @@ $('#btn-play').onclick = async () => {
 // streaming.js 的播放队列（window.annieStream），否则会误播本地队列第 0 首。
 $('#btn-next').onclick = () => {
   if (state.currentStream && window.annieStream) window.annieStream.playNext();
+  else if (window.annieNextByMode && window.annieNextByMode()) { /* 播放模式接管（随机/单曲循环等，与 AM 界面一致） */ }
   else requestLocalSwitch(1); // V1.1.4：合并连点，只执行最后一次
 };
 $('#btn-prev').onclick = () => {

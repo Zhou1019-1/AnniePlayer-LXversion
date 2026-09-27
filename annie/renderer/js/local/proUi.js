@@ -389,7 +389,7 @@
     });
     add('FB2K 暗色模式切换', '界面', () => window.annieFb2kDark && annieFb2kDark.toggle());
     add('扫描曲库', '曲库', () => window.mine.scanStart());
-    add('假无损批量检测', '曲库', () => window.mine.fakeScanBatchStart(state.library.tracks.map(t => t.path)));
+    add('假无损批量检测', '曲库', () => window.annieConfirmFakeScan(() => window.mine.fakeScanBatchStart(state.library.tracks.map(t => t.path))));
     add('响度均衡：关闭', '音质', () => annieSettings.update({ loudMode: 'off' }));
     add('响度均衡：按曲目', '音质', () => annieSettings.update({ loudMode: 'track' }));
     add('响度均衡：按专辑', '音质', () => annieSettings.update({ loudMode: 'album' }));

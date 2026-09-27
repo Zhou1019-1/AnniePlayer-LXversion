@@ -101,6 +101,10 @@ function currentVizTab() {
 document.querySelectorAll('.viz-tab').forEach(btn => {
   btn.onclick = () => {
     autoSwitchedTab = false; // 用户手动切换后不再自动切回
+    if (btn.dataset.vtab === 'lossless') {
+      window.annieConfirmFakeScan(function () { switchVizTab('lossless'); });
+      return;
+    }
     switchVizTab(btn.dataset.vtab);
   };
 });
@@ -404,6 +408,31 @@ function renderSpec() {
 }
 
 /* ---------------- 无损检测报告 ---------------- */
+/* 无损检测使用确认（性能受限、结果不可靠，引导用 Q 群专用工具；每次启动会话只问一次） */
+window.annieConfirmFakeScan = window.annieConfirmFakeScan || function (cb) {
+  if (window.__fkScanAcked) { cb(); return; }
+  var mask = document.createElement('div');
+  mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#22252d;color:#e8ebf2;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px 26px;max-width:460px;box-shadow:0 16px 48px rgba(0,0,0,.55);font-size:14px;line-height:1.8';
+  var msg = document.createElement('div');
+  msg.textContent = '受制于软件内性能，本检测不可靠且伴有未知bug，请使用Q群1023637098内的无损检测软件。执意使用软件内无损鉴别功能，作者不保证效果，请问是否继续';
+  box.appendChild(msg);
+  var btns = document.createElement('div');
+  btns.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:16px';
+  var bCancel = document.createElement('button');
+  bCancel.textContent = '取消';
+  bCancel.style.cssText = 'padding:6px 20px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#cfd4de;cursor:pointer;font-size:13px';
+  var bOk = document.createElement('button');
+  bOk.textContent = '继续';
+  bOk.style.cssText = 'padding:6px 20px;border-radius:8px;border:none;background:#e0485f;color:#fff;cursor:pointer;font-size:13px';
+  bCancel.onclick = function () { mask.remove(); };
+  bOk.onclick = function () { window.__fkScanAcked = true; mask.remove(); cb(); };
+  mask.onclick = function (e) { if (e.target === mask) mask.remove(); };
+  btns.appendChild(bCancel); btns.appendChild(bOk);
+  box.appendChild(btns); mask.appendChild(box);
+  document.body.appendChild(mask);
+};
 // V3.1：无损判定改为用户主动触发——分析照常产出波形/频谱，判定结果仅暂存，
 // 用户点击"开始无损检测"才展示；无现成结果时对当前曲目跑一次分析。
 function renderLosslessIdle() {
@@ -419,7 +448,7 @@ function renderLosslessIdle() {
   btn.style.cssText = 'margin-top:8px;padding:6px 16px;border:1px solid var(--line);border-radius:8px;background:none;color:var(--fg,#e8eaf0);cursor:pointer;font-size:12px';
   btn.onmouseenter = () => { btn.style.borderColor = '#fac900'; };
   btn.onmouseleave = () => { btn.style.borderColor = 'var(--line)'; };
-  btn.onclick = () => window.annieViz.detectLossless();
+  btn.onclick = () => window.annieConfirmFakeScan(function () { window.annieViz.detectLossless(); });
   rs.appendChild(btn);
 }
 

@@ -2035,6 +2035,11 @@ function stageLyricUsesSingleLineSwap(mesh) {
   return mode === 'single' && !data.usesTrack;
 }
 
+/* 每帧复用的静态 profile（原每帧新建对象字面量，60fps 下是稳定 GC 源） */
+var SHELF_LYRIC_PROFILE_SKULL = { opacity: 0.30, readability: 0.20, bloom: 0.20, glowCap: 0.050, outgoing: 0.34, easeDown: 0.34 };
+var SHELF_LYRIC_PROFILE_NORMAL = { opacity: 0.38, readability: 0.26, bloom: 0.24, glowCap: 0.070, outgoing: 0.42, easeDown: 0.34 };
+var SHELF_LYRIC_PROFILE_DEFAULT = { opacity: 0.96, readability: 0.86, bloom: 1, glowCap: 1.0, outgoing: 1, easeDown: 0.16 };
+
 function updateStageLyrics3D(dt) {
   if (!stageLyrics.group) return;
   if (!fx.particleLyrics && !stageLyrics.current && (!stageLyrics.outgoing || !stageLyrics.outgoing.length)) return;
@@ -2091,21 +2096,9 @@ function updateStageLyrics3D(dt) {
   var multiLayerLyricsActive = normalizeLyricDisplayMode(fx && fx.lyricDisplayMode) !== 'single' || normalizeLyricTranslationMode(fx && fx.lyricTranslationMode) !== 'off';
   var stageLyricRenderBase = shelfDetailOpen ? 24 : 260;
   stageLyrics.group.renderOrder = stageLyricRenderBase;
-  var shelfDetailLyricProfile = shelfDetailOpen ? {
-    opacity: skullShelfDetailOpen ? 0.30 : 0.38,
-    readability: skullShelfDetailOpen ? 0.20 : 0.26,
-    bloom: skullShelfDetailOpen ? 0.20 : 0.24,
-    glowCap: skullShelfDetailOpen ? 0.050 : 0.070,
-    outgoing: skullShelfDetailOpen ? 0.34 : 0.42,
-    easeDown: 0.34
-  } : {
-    opacity: 0.96,
-    readability: 0.86,
-    bloom: 1,
-    glowCap: 1.0,
-    outgoing: 1,
-    easeDown: 0.16
-  };
+  var shelfDetailLyricProfile = shelfDetailOpen
+    ? (skullShelfDetailOpen ? SHELF_LYRIC_PROFILE_SKULL : SHELF_LYRIC_PROFILE_NORMAL)
+    : SHELF_LYRIC_PROFILE_DEFAULT;
   var shelfLyricAvoid = shouldAvoidStageLyricsForShelf();
   var wallpaperLyricLock = shouldUseWallpaperLyricCameraLock();
   var wallpaperShelfLyrics = wallpaperLyricLock && shouldDimWallpaperForShelf();

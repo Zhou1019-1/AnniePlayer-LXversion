@@ -146,6 +146,20 @@
     });
     return merged;
   }
+  /* 流媒体译文轨合并：tlyric 是独立 LRC 文本，按时间戳就近挂到主歌词行（±0.8s） */
+  function mergeTly(lines, tlyText) {
+    if (!tlyText || !lines.length) return lines;
+    var tl = parseLrc(tlyText);
+    tl.forEach(function (x) {
+      var best = -1, bd = 0.8;
+      for (var i = 0; i < lines.length; i++) {
+        var d = Math.abs(lines[i].t - x.t);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best >= 0 && !lines[best].tly) lines[best].tly = x.text;
+    });
+    return lines;
+  }
   function loadLyrics(path, isStream) {
     if (S.lyrPath === path) return;
     S.lyrPath = path; S.lyrLines = []; S.lyrCur = -1;
@@ -154,7 +168,11 @@
     // 流媒体曲目：path 是真实播放 URL；歌词由 AM/streaming.js 取到后注入 __annieStreamLrcByPath 并广播 annie-stream-lyric
     if (isStream) {
       var cached = window.__annieStreamLrcByPath && window.__annieStreamLrcByPath[path];
-      if (cached) { S.lyrLines = parseLrc(cached); }
+      if (cached) {
+        S.lyrLines = parseLrc(cached);
+        var tly = window.__annieStreamTlyByPath && window.__annieStreamTlyByPath[path];
+        if (tly) mergeTly(S.lyrLines, tly);
+      }
       renderLyrics();
       return;
     }
@@ -262,18 +280,22 @@
   }
   /* 字号/行距/每行词数自定义（localStorage 持久化，CSS 变量驱动，三处歌词容器同效） */
   function applyLyrStyle() {
-    var sc = 1, lh = 1.45, wl = 0;
+    var sc = 1, lh = 1.45, wl = 0, blurOn = true, tlySc = 1;
     try {
       sc = Math.min(1.6, Math.max(0.7, parseFloat(localStorage.getItem('annieplayer.am.lyrscale')) || 1));
       lh = Math.min(2.2, Math.max(1.2, parseFloat(localStorage.getItem('annieplayer.am.lyrlh')) || 1.45));
       wl = Math.min(20, Math.max(0, parseInt(localStorage.getItem('annieplayer.am.lyrwordlimit'), 10) || 0));
+      blurOn = localStorage.getItem('annieplayer.am.lyrblur') !== '0'; // 歌词虚化默认开
+      tlySc = Math.min(1.6, Math.max(0.7, parseFloat(localStorage.getItem('annieplayer.am.tlyscale')) || 1)); // 译文字号独立缩放
     } catch (e) { }
     S.lyrFsV = (S.lyrFsV || 0) + 1; // 递增使各行字号缓存失效
-    S.lyrScale = sc; S.lyrLh = lh; S.lyrWordLimit = wl;
+    S.lyrScale = sc; S.lyrLh = lh; S.lyrWordLimit = wl; S.lyrBlur = blurOn; S.lyrTlyScale = tlySc;
     var root = document.getElementById('am-root');
     if (root) {
       root.style.setProperty('--am-lyr-scale', sc);
       root.style.setProperty('--am-lyr-lh', lh);
+      root.style.setProperty('--am-tly-scale', tlySc);
+      root.classList.toggle('am-no-lyrblur', !blurOn);
     }
     refitAllLyr();
   }
@@ -309,6 +331,21 @@
     };
     row1.appendChild(sl1); row1.appendChild(v1);
     pop.appendChild(row1);
+    // 译文字号（独立缩放，与原文同款滑条）
+    var rowT = el('div', 'am-pop-row');
+    rowT.appendChild(el('span', null, '译文字号'));
+    var slT = document.createElement('input');
+    slT.type = 'range'; slT.min = 70; slT.max = 160; slT.step = 5;
+    slT.value = Math.round((S.lyrTlyScale || 1) * 100);
+    slT.className = 'am-lyrset-slider';
+    var vT = el('span', 'am-lyrset-v', slT.value + '%');
+    slT.oninput = function () {
+      vT.textContent = slT.value + '%';
+      try { localStorage.setItem('annieplayer.am.tlyscale', String(slT.value / 100)); } catch (e) { }
+      applyLyrStyle();
+    };
+    rowT.appendChild(slT); rowT.appendChild(vT);
+    pop.appendChild(rowT);
     var row2 = el('div', 'am-pop-row');
     row2.appendChild(el('span', null, '行距'));
     var sl2 = document.createElement('input');
@@ -340,6 +377,19 @@
     };
     row3.appendChild(sl3); row3.appendChild(v3);
     pop.appendChild(row3);
+    // 歌词虚化开关（默认开；非当前行模糊，关闭后仅压暗，沉浸页同步生效）
+    var rowB = el('div', 'am-pop-row');
+    rowB.appendChild(el('span', null, '歌词虚化'));
+    var bBlur = el('button', 'am-tbtn', S.lyrBlur !== false ? '开' : '关');
+    bBlur.title = '非当前歌词行的模糊效果（默认打开）';
+    bBlur.onclick = function () {
+      var on = !(S.lyrBlur !== false);
+      bBlur.textContent = on ? '开' : '关';
+      try { localStorage.setItem('annieplayer.am.lyrblur', on ? '1' : '0'); } catch (e) { }
+      applyLyrStyle();
+    };
+    rowB.appendChild(bBlur);
+    pop.appendChild(rowB);
     // V3.5.15：歌词偏移微调（±0.5s，按曲记忆；AM/FB2K/桌面歌词三处同一生效）
     if (window.annieLyrOff) {
       var row4 = el('div', 'am-pop-row');

@@ -1,5 +1,8 @@
 async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
   options = options || {};
+  // 内存护栏：超长曲目（>15min）全轨解码 + 4 路全长 OfflineAudioContext 会把渲染进程堆打爆（闪退主因），
+  // 直接跳过节奏分析——舞台无节拍图仍可正常工作
+  if (durationSec && durationSec > 900) return null;
   var analysisProfile = cinemaAnalysisProfileForSong(options.song);
   var softGrooveAnalysis = !!(analysisProfile && analysisProfile.softGroove);
   try {
@@ -20,7 +23,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
     var DecodeCtx = window.AudioContext || window.webkitAudioContext;
     var dc = new DecodeCtx();
     var buffer = await new Promise(function (resolve, reject) {
-      dc.decodeAudioData(ab.slice(0), resolve, reject);
+      dc.decodeAudioData(ab, resolve, reject); // ab 此后不再使用，无需 slice(0) 双份拷贝
     }).catch(function (e) { console.warn('decode failed:', e); return null; });
     dc.close && dc.close();
     if (!buffer) { hideBeatChip(); return null; }
@@ -32,8 +35,10 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
 
     // 用 OfflineAudioContext 分离低频重鼓 / 中频鼓身 / 高频敲击感.
     var sr = buffer.sampleRate;
+    // 内存护栏：每路渲染都是一条全长 PCM，封顶前 10 分钟（节拍密度前段已足够代表）
+    var renderLen = Math.min(buffer.length, Math.floor(sr * 600));
     async function renderBand(hpFreq, lpFreq) {
-      var off = new TmpCtx(1, buffer.length, sr);
+      var off = new TmpCtx(1, renderLen, sr);
       var src = off.createBufferSource(); src.buffer = buffer;
       var node = src;
       if (hpFreq) {

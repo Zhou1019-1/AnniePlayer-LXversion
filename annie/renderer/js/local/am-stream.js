@@ -80,6 +80,9 @@
               if (S.stIndex !== i || !state.currentStream || !state.currentPath) return;
               window.__annieStreamLrcByPath = window.__annieStreamLrcByPath || {};
               window.__annieStreamLrcByPath[state.currentPath] = ly.lrc;
+              // 译文轨（源自带 tlyric）：一并缓存，AM 歌词按时间戳合并显示
+              window.__annieStreamTlyByPath = window.__annieStreamTlyByPath || {};
+              window.__annieStreamTlyByPath[state.currentPath] = ly.tlyric || '';
               if (window.annieStage && window.annieStage.setLyricText) window.annieStage.setLyricText(ly.lrc);
               try { document.dispatchEvent(new CustomEvent('annie-stream-lyric', { detail: { path: state.currentPath } })); } catch (e) { }
             }).catch(function () { });
@@ -268,10 +271,25 @@
     } else img.style.visibility = 'hidden';
   }
 
+  /* 音质列只显示「实际会播的档位」：与主进程 qualityCandidates 同一降级链（所选档 → 向下回退） */
+  var QORDER = ['flac24bit', 'flac', '320k', '128k'];
+  function effectiveQuality(song) {
+    var avail = (song.types || []).map(function (t) { return t.type; });
+    if (!avail.length) return S.stQuality; // 无档位信息（如专辑详情）→ 按所选档尝试
+    var start = Math.max(0, QORDER.indexOf(S.stQuality));
+    for (var i = start; i < QORDER.length; i++) if (avail.indexOf(QORDER[i]) >= 0) return QORDER[i];
+    return S.stQuality; // 库里没有更低档：实际播放仍会从所选档尝试
+  }
+  function fillQualityBadge(badge, song) {
+    var qt = effectiveQuality(song);
+    badge.className = 'am-qbadge' + (qt === 'flac' || qt === 'flac24bit' ? ' hq' : '');
+    badge.textContent = TYPE_LABEL[qt] || qt;
+  }
+
   /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播） */
   function renderSongsTable(c) {
     var tb = el('table', 'am-table');
-    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:110px">音质</th><th style="width:44px"></th></tr></thead>';
+    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:72px">音质</th><th style="width:44px"></th></tr></thead>';
     var body = el('tbody');
     S.stResults.forEach(function (song, i) {
       var tr = el('tr', 'am-tr' + (i === S.stIndex ? ' cur' : ''));
@@ -288,10 +306,10 @@
       var tdDur = el('td', 'am-c-dim', dur); tdDur.style.textAlign = 'right';
       tr.appendChild(tdDur);
       var tdQ = el('td');
-      (song.types || []).forEach(function (t) {
-        var hq = t.type === 'flac' || t.type === 'flac24bit';
-        tdQ.appendChild(el('span', 'am-qbadge' + (hq ? ' hq' : ''), TYPE_LABEL[t.type] || t.type));
-      });
+      var bq = el('span', 'am-qbadge');
+      bq.dataset.stq = i;
+      fillQualityBadge(bq, song);
+      tdQ.appendChild(bq);
       tr.appendChild(tdQ);
       // V3.5.8：单曲下载按钮（含进度百分比，完成后写入标签/封面/歌词）
       var tdDl = el('td');
@@ -408,7 +426,14 @@
       var o = document.createElement('option'); o.value = q[0]; o.textContent = q[1]; qSel.appendChild(o);
     });
     qSel.value = S.stQuality;
-    qSel.onchange = function () { S.stQuality = qSel.value; };
+    qSel.onchange = function () {
+      S.stQuality = qSel.value;
+      // 音质档变化 → 实时刷新音质角标为「实际会播的档位」
+      document.querySelectorAll('[data-stq]').forEach(function (b) {
+        var song = S.stResults[+b.dataset.stq];
+        if (song) fillQualityBadge(b, song);
+      });
+    };
     bar.appendChild(qSel);
     c.appendChild(bar);
 

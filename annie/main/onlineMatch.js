@@ -84,15 +84,15 @@ async function applyMatch({ path: filePath, provider, song, saveLrc, saveCover, 
   if (!song || !provider) return { ok: false, reason: '缺少目标曲目' };
   const out = { ok: true, lrc: '', cover: '', embedded: false, notes: [] };
 
-  // 1) 拉歌词（旁挂 / 嵌入都需要时只拉一次）
-  let lrc = '';
+  // 1) 拉歌词（旁挂 / 嵌入都需要时只拉一次）；译文轨一并带回（外文歌词显示翻译行）
+  let lrc = '', tlyric = '';
   if (saveLrc || embed) {
     const lr = await streaming.lyric({ provider, song }).catch(() => null);
-    if (lr && lr.lrc) lrc = lr.lrc;
+    if (lr && lr.lrc) { lrc = lr.lrc; tlyric = lr.tlyric || ''; }
   }
   if (saveLrc) {
     if (lrc && lrc.trim()) {
-      tagWriter.writeLyric({ dest: filePath, lrc, tlyric: '' });
+      tagWriter.writeLyric({ dest: filePath, lrc, tlyric });
       out.lrc = filePath.replace(/\.[^.]+$/, '.lrc');
     } else out.notes.push('该平台未取到歌词');
   }

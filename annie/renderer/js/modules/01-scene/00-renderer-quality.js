@@ -184,6 +184,16 @@ renderer.domElement.style.width = '100%';
 renderer.domElement.style.height = '100%';
 renderer.domElement.tabIndex = 0;
 document.getElementById('canvas-container').appendChild(renderer.domElement);
+// WebGL 上下文丢失自愈：GPU 驱动重置/显存压力下 three r128 持续 render 会抛错乃至拖垮渲染进程；
+// preventDefault 允许恢复，恢复后整页重载重建 GL 资源（引擎在独立进程，播放不中断）
+renderer.domElement.addEventListener('webglcontextlost', function (e) {
+  e.preventDefault();
+  console.warn('[stage] WebGL context lost');
+}, false);
+renderer.domElement.addEventListener('webglcontextrestored', function () {
+  console.warn('[stage] WebGL context restored, reloading renderer');
+  try { location.reload(); } catch (e) { }
+}, false);
 
 // ============================================================
 //  相机系统 v7.1 — 分离 user offset / cinema offset

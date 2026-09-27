@@ -13,16 +13,23 @@ const isDev = !app.isPackaged;
 const ROOT = path.join(__dirname, '..');
 
 // ----- 便携模式 (lx-music 风格) -----
+let portableMode = false;
 if (process.platform === 'win32' && !isDev) {
   try {
     const portablePath = path.join(path.dirname(app.getPath('exe')), 'portable');
     if (fs.existsSync(portablePath)) {
+      portableMode = true;
       app.setPath('appData', portablePath);
       const userData = path.join(portablePath, 'userData');
       if (!fs.existsSync(userData)) fs.mkdirSync(userData, { recursive: true });
       app.setPath('userData', userData);
     }
   } catch { }
+}
+// V4.3：产品名去 V3 后缀（安妮播放器融合版V3 → 安妮播放器融合版）。
+// userData 默认跟随 productName，改名会把老用户数据甩在旧目录——非便携模式钉住历史目录名，数据无缝。
+if (!portableMode) {
+  try { app.setPath('userData', path.join(app.getPath('appData'), '安妮播放器融合版V3')); } catch { }
 }
 
 // ----- 单例锁 -----

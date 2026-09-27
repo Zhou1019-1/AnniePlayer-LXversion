@@ -524,6 +524,271 @@ async function mgAlbumDetail(meta, out) {
   return out;
 }
 
+/* ---------------- 专辑搜索 / 专辑曲目（V4.3 在线音乐「专辑」页签） ----------------
+ * kg/kw/mg 详情复用洛雪 lx-sdk 各源 album 模块（经动态 import）；
+ * 专辑搜索五源均为自写（洛雪 SDK 未导出任何源的专辑搜索）；
+ * tx/wy 的详情为自写（tx 走 musicu.fcg GetAlbumDetail，wy 走 api/album）。 */
+
+/** tx 专辑搜索：musicu.fcg DoSearchForQQMusicDesktop search_type=2
+ * （client_search_cp t=2 已下线只回 zhida；mobile 版被风控 req.code=2001，desktop 版实测可用） */
+async function txAlbumSearch(keywords, page, limit) {
+  const resp = await httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+    method: 'post',
+    headers: { 'Referer': 'https://y.qq.com/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+    body: {
+      comm: { ct: '19', cv: '1859', uin: '0' },
+      req: {
+        module: 'music.search.SearchCgiService', method: 'DoSearchForQQMusicDesktop',
+        param: { query: keywords, search_type: 2, page_num: page, num_per_page: limit },
+      },
+    },
+  }).promise;
+  const body = resp && resp.body;
+  const al = body && body.req && body.req.code === 0 && body.req.data && body.req.data.body && body.req.data.body.album;
+  if (!al) throw new Error('tx 专辑搜索失败: ' + ((body && body.req && body.req.code) || 'no-data'));
+  const list = al.list || [];
+  const albums = list.map(a => ({
+    id: a.albumMID || '',
+    name: a.albumName || '',
+    artist: a.singerName || (a.singer_list || []).map(s => s.name).join('、'),
+    img: httpsCover(a.albumPic || (a.albumMID ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${a.albumMID}.jpg` : '')),
+    date: a.publicTime || '',
+    count: a.song_count || 0,
+  })).filter(a => a.id);
+  const total = al.totalNum || al.totalnum || albums.length;
+  return { albums, total, page, allPage: Math.ceil(total / limit) || 1 };
+}
+
+/** tx 专辑曲目：GetAlbumDetail 取专辑信息（basicInfo）+ AlbumSongList.GetAlbumSongList 取全曲目
+ * （后者 songList[].songInfo 带 mid/singer/album/interval/file.size_*，与免签搜索 meta 同构） */
+async function txAlbumSongs(albumMid, page, limit) {
+  const post = (mod, method, param) => httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+    method: 'post',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+    body: { comm: { ct: '19', cv: '1859', uin: '0' }, req: { module: mod, method, param } },
+  }).promise;
+  const [infoResp, listResp] = await Promise.all([
+    post('music.musichallAlbum.AlbumInfoServer', 'GetAlbumDetail', { albumMid }),
+    post('music.musichallAlbum.AlbumSongList', 'GetAlbumSongList', { albumMid, albumID: 0, begin: 0, num: 500, order: 2 }),
+  ]);
+  const basic = infoResp && infoResp.body && infoResp.body.req && infoResp.body.req.data;
+  const listData = listResp && listResp.body && listResp.body.req && listResp.body.req.data;
+  const info = basic && basic.basicInfo;
+  if (!info || !listData || !Array.isArray(listData.songList)) throw new Error('tx 专辑详情失败');
+  const albumName = info.albumName || '';
+  const pubDate = info.publishDate || '';
+  const metas = listData.songList.map(w => {
+    const item = w.songInfo || {};
+    const f = item.file || {};
+    const types = [], _types = {};
+    if (f.size_128mp3) { types.push({ type: '128k', size: fmtSize(f.size_128mp3) }); _types['128k'] = { size: fmtSize(f.size_128mp3) }; }
+    if (f.size_320mp3) { types.push({ type: '320k', size: fmtSize(f.size_320mp3) }); _types['320k'] = { size: fmtSize(f.size_320mp3) }; }
+    if (f.size_flac) { types.push({ type: 'flac', size: fmtSize(f.size_flac) }); _types.flac = { size: fmtSize(f.size_flac) }; }
+    if (f.size_hires) { types.push({ type: 'flac24bit', size: fmtSize(f.size_hires) }); _types.flac24bit = { size: fmtSize(f.size_hires) }; }
+    return {
+      singer: (item.singer || []).map(s => s.name).filter(Boolean).join(','),
+      name: item.title || item.name || '',
+      albumName,
+      albumId: albumMid,
+      source: 'tx',
+      interval: fmtInterval(item.interval),
+      songId: item.id != null ? String(item.id) : '',
+      albumMid,
+      strMediaMid: f.media_mid || '',
+      songmid: item.mid || '',
+      img: `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`,
+      types, _types, typeUrl: {},
+      belongCD: item.index_cd != null ? String(item.index_cd) : '',
+      cdIdx: item.index_album != null ? String(item.index_album) : '',
+      pubtime: 0,
+    };
+  }).filter(m => m.songmid && m.strMediaMid);
+  // 歌手字段结构随接口版本漂移（singer / singerList / 嵌套对象），取第一个含 name 的数组
+  const singerCands = [basic && basic.singer, basic && basic.singerList, info.singerList, info.singer];
+  const singerArr = singerCands.map(c => Array.isArray(c) ? c : (c && (c.singerList || c.singerlist)))
+    .find(c => Array.isArray(c) && c.length) || [];
+  return {
+    info: {
+      name: albumName,
+      artist: singerArr.map(s => s.name).filter(Boolean).join('、'),
+      img: `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg`,
+      date: pubDate,
+      desc: info.desc || '',
+      count: listData.totalNum || metas.length,
+    },
+    metas, total: listData.totalNum || metas.length,
+  };
+}
+
+/** wy 专辑搜索：eapi cloudsearch type=10（复用洛雪 wy 的 eapiRequest） */
+async function wyAlbumSearch(keywords, page, limit) {
+  await loadSdk(); // 确保 ESM loader（别名/扩展名解析）已注册
+  const { eapiRequest } = (await import(pathToFileURL(path.join(__dirname, 'lx-sdk/wy/utils/index.js')).href));
+  const { body } = await eapiRequest('/api/cloudsearch/pc', {
+    s: keywords, type: 10, limit, offset: limit * (page - 1), total: page == 1,
+  }).promise;
+  const result = body && body.result;
+  if (!result) throw new Error('wy 专辑搜索失败');
+  const albums = (result.albums || []).map(a => ({
+    id: String(a.id),
+    name: a.name || '',
+    artist: (a.artist && a.artist.name) || (a.artists || []).map(s => s.name).join('、'),
+    img: httpsCover(a.picUrl || ''),
+    date: a.publishTime ? new Date(a.publishTime).toISOString().slice(0, 10) : '',
+    count: a.size || 0,
+  }));
+  const total = result.albumCount || albums.length;
+  return { albums, total, page, allPage: Math.ceil(total / limit) || 1 };
+}
+
+/** wy 专辑曲目：eapi /api/v1/album/{id}（公开 /api/album 已被风控 code=-462；eapi 实测 200） */
+async function wyAlbumSongs(albumId, page, limit) {
+  await loadSdk();
+  const { eapiRequest } = (await import(pathToFileURL(path.join(__dirname, 'lx-sdk/wy/utils/index.js')).href));
+  const { body } = await eapiRequest(`/api/v1/album/${albumId}`, {}).promise;
+  if (!body || body.code !== 200 || !body.album) throw new Error('wy 专辑详情失败: ' + ((body && body.code) || 'no-data'));
+  const al = body.album;
+  const metas = (body.songs || []).map(s => ({
+    singer: (s.ar || s.artists || []).map(a => a.name).join('、'),
+    name: s.name || '',
+    albumName: al.name || '',
+    albumId: String(al.id),
+    source: 'wy',
+    interval: fmtInterval((s.dt || 0) / 1000),
+    songmid: s.id,
+    img: httpsCover((s.al && s.al.picUrl) || al.picUrl || ''),
+    types: [], _types: {}, typeUrl: {},
+  }));
+  return {
+    info: {
+      name: al.name || '',
+      artist: (al.artist && al.artist.name) || (al.artists || []).map(a => a.name).join('、'),
+      img: httpsCover(al.picUrl || ''),
+      date: al.publishTime ? new Date(al.publishTime).toISOString().slice(0, 10) : '',
+      desc: al.description || '',
+      count: al.size || metas.length,
+    },
+    metas, total: al.size || metas.length,
+  };
+}
+
+/** kg 专辑搜索：mobilecdnbj v3 search/album */
+async function kgAlbumSearch(keywords, page, limit) {
+  const url = 'http://mobilecdnbj.kugou.com/api/v3/search/album?format=json&showtype=1' +
+    '&keyword=' + encodeURIComponent(keywords) + '&page=' + page + '&pagesize=' + limit;
+  const resp = await httpFetch(url).promise;
+  const body = resp && resp.body;
+  const data = body && body.data;
+  if (!data || !Array.isArray(data.info)) throw new Error('kg 专辑搜索失败');
+  const albums = data.info.map(a => ({
+    id: String(a.albumid || a.album_id || ''),
+    name: a.albumname || a.album_name || '',
+    artist: a.singername || a.singer_name || '',
+    img: httpsCover(String(a.imgurl || a.sizable_cover || '').replace('{size}', '300')),
+    date: String(a.publishtime || a.publish_date || '').slice(0, 10),
+    count: a.songcount || 0,
+  })).filter(a => a.id);
+  const total = data.total || albums.length;
+  return { albums, total, page, allPage: Math.ceil(total / limit) || 1 };
+}
+
+/** kg 专辑曲目：洛雪 kg/album.js（含 getMusicInfosByList 完整 meta） */
+async function kgAlbumSongs(albumId, page, limit) {
+  await loadSdk(); // 确保 ESM loader 已注册
+  const album = (await import(pathToFileURL(path.join(__dirname, 'lx-sdk/kg/album.js')).href)).default;
+  const r = await album.getAlbumDetail(albumId, page, limit || 200);
+  return {
+    info: {
+      name: r.info.name || '', artist: r.info.author || '',
+      img: httpsCover(r.info.img || ''), date: '', desc: r.info.desc || '', count: r.total || 0,
+    },
+    metas: r.list || [], total: r.total || 0,
+  };
+}
+
+/** kw 响应清洗：&nbsp; 等 HTML 实体 + 字面 \uXXXX 转义（r.s ft=album 返回的伪 JSON 常见残留，注意双反斜杠变体） */
+function kwClean(s) {
+  return String(s || '')
+    .replace(/\\+u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .trim();
+}
+
+/** kw 专辑搜索：search.kuwo.cn r.s ft=album */
+async function kwAlbumSearch(keywords, page, limit) {
+  const url = 'http://search.kuwo.cn/r.s?all=' + encodeURIComponent(keywords) +
+    '&pn=' + (page - 1) + '&rn=' + limit + '&ft=album&itemset=web_2013&client=kt&rformat=json&encoding=utf8';
+  const resp = await httpFetch(url).promise;
+  let body = resp && resp.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body.replace(/'/g, '"')); } catch { body = null; } }
+  const list = body && (body.albumlist || []);
+  const albums = list.map(a => {
+    // pic 是相对路径（300/s4s47/...jpg），img/hts_img 才是完整 URL
+    let img = a.img || a.hts_img || '';
+    if (!img && a.pic) img = 'http://img2.sycdn.kuwo.cn/star/albumcover/' + a.pic;
+    return {
+      id: String(a.albumid || ''),
+      name: kwClean(a.name),
+      artist: kwClean(a.artist),
+      img,
+      date: String(a.pub || a.showtime || '').slice(0, 10),
+      count: parseInt(a.musiccnt) || 0,
+    };
+  }).filter(a => a.id);
+  const total = parseInt(body && body.total) || albums.length;
+  return { albums, total, page, allPage: Math.ceil(total / limit) || 1 };
+}
+
+/** kw 专辑曲目：洛雪 kw/album.js getAlbumListDetail（musiclist 带 formats → types） */
+async function kwAlbumSongs(albumId, page, limit) {
+  await loadSdk(); // 确保 ESM loader 已注册
+  const album = (await import(pathToFileURL(path.join(__dirname, 'lx-sdk/kw/album.js')).href)).default;
+  const r = await album.getAlbumListDetail(albumId, page || 1);
+  return {
+    info: {
+      name: r.info.name || '', artist: r.info.author || '',
+      img: httpsCover(r.info.img || ''), date: '', desc: r.info.desc || '', count: r.total || 0,
+    },
+    metas: r.list || [], total: r.total || 0,
+  };
+}
+
+/** 统一专辑搜索：{ provider, albums:[{id,name,artist,img,date,count}], total, page, allPage }
+ *  仅支持 kg/kw/tx/wy 四源（mg 咪咕按需求裁剪） */
+async function albumSearch({ provider, keywords, page = 1, limit = 20 }) {
+  if (!['kg', 'kw', 'tx', 'wy'].includes(provider)) throw new Error('该平台暂不支持专辑搜索');
+  if (!keywords) throw new Error('缺少关键词');
+  let r;
+  switch (provider) {
+    case 'tx': r = await txAlbumSearch(keywords, page, limit); break;
+    case 'wy': r = await wyAlbumSearch(keywords, page, limit); break;
+    case 'kg': r = await kgAlbumSearch(keywords, page, limit); break;
+    case 'kw': r = await kwAlbumSearch(keywords, page, limit); break;
+  }
+  return { provider, albums: r.albums, total: r.total, page: r.page, allPage: r.allPage };
+}
+
+/** 统一专辑曲目：{ provider, info:{name,artist,img,date,desc,count}, songs:[normalize 后], total, page, allPage } */
+async function albumSongs({ provider, id, page = 1, limit = 200 }) {
+  if (!['kg', 'kw', 'tx', 'wy'].includes(provider)) throw new Error('该平台暂不支持专辑');
+  let r;
+  switch (provider) {
+    case 'tx': r = await txAlbumSongs(id, page, limit); break;
+    case 'wy': r = await wyAlbumSongs(id, page, limit); break;
+    case 'kg': r = await kgAlbumSongs(id, page, limit); break;
+    case 'kw': r = await kwAlbumSongs(id, page, limit); break;
+  }
+  const slice = r.metas; // 各源详情接口多为整表返回，直接全量（limit 语义留给未来分页源）
+  return {
+    provider,
+    info: r.info,
+    songs: slice.map(info => normalize(provider, info)),
+    total: r.total || slice.length,
+    page: 1,
+    allPage: 1,
+  };
+}
+
 /* ---------------- 发现音乐：排行榜 / 歌单广场（V3.5.4） ---------------- */
 async function leaderboards({ provider }) {
   const sdk = await loadSdk();
@@ -609,4 +874,4 @@ async function hotComments({ songmid, name, artist, limit = 15 }) {
   };
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, normalize, leaderboards, leaderboardList, songLists, songListDetail, hotComments };
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListDetail, hotComments };

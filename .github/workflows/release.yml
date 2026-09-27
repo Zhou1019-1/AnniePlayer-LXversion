@@ -1,5 +1,5 @@
 # ============================================================================
-# 安妮播放器融合版V3 · 云端构建发布（V3.5.14）
+# 安妮播放器融合版 · 云端构建发布（V3.5.14）
 # 触发：push 一个 v* 标签（如 git tag v3.5.14 && git push origin v3.5.14）
 #       或在 GitHub Actions 页面手动 Run workflow
 # 流程：编译引擎(.NET) → setup:tools 下载 ffmpeg → electron-builder 打包 → 上传 release

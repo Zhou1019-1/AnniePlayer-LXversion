@@ -36,11 +36,14 @@
     // 洛雪在线搜索 / 发现音乐（V3.5.4：排行榜 + 歌单广场）
     stProvider: 'kg', stKw: '', stPage: 0, stAllPage: 1, stResults: [], stIndex: -1,
     stSearching: false, stQuality: 'flac',
-    stTab: 'search',           // search | boards | lists
+    stTab: 'search',           // search | boards | lists | albums
     tabSongs: {},              // 每个页签各自的歌曲列表缓存（切页签恢复）
     boards: [], boardsProvider: '', boardSel: '', boardName: '', bdPage: 0, bdAllPage: 1,
     slLists: [], slProvider: '', slPage: 0, slLimit: 30, slTotal: 0,
-    slDetailId: '', slDetailName: '', slDPage: 0, slDLimit: 100, slDTotal: 0
+    slDetailId: '', slDetailName: '', slDPage: 0, slDLimit: 100, slDTotal: 0,
+    // V4.3：专辑页签（kg/kw/tx/wy 四源；mg 不支持）
+    abKw: '', abResults: [], abPage: 0, abAllPage: 1, abSearching: false,
+    abDetailId: '', abDetailInfo: null
   };
   var R = {};             // DOM 引用表
 

@@ -1044,6 +1044,9 @@ ipcMain.handle('stream:leaderboards', (_e, params) => streaming.leaderboards(par
 ipcMain.handle('stream:leaderboardList', (_e, params) => streaming.leaderboardList(params));
 ipcMain.handle('stream:songLists', (_e, params) => streaming.songLists(params));
 ipcMain.handle('stream:songListDetail', (_e, params) => streaming.songListDetail(params));
+// V4.3：专辑搜索 / 专辑曲目
+ipcMain.handle('stream:albumSearch', (_e, params) => streaming.albumSearch(params));
+ipcMain.handle('stream:albumSongs', (_e, params) => streaming.albumSongs(params));
 
   // —— 洛雪式音源管理（导入/删除/启停）——
   ipcMain.handle('stream:sources:list', () => streaming.sources.list());

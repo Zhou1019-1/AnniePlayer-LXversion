@@ -147,6 +147,10 @@
     S.stProvider = k;
     if (S.stTab === 'search') { if (S.stKw) doStreamSearch(true); else renderView(); }
     else if (S.stTab === 'boards') { renderView(); loadBoards(); }
+    else if (S.stTab === 'albums') { // V4.3：切平台清专辑详情，有关键词则重搜（mg 不支持→主进程报错提示）
+      S.abDetailId = ''; S.abDetailInfo = null;
+      if (S.abKw && !S.abSearching) doAlbumSearch(true); else renderView();
+    }
     else { S.slDetailId = ''; S.slDetailName = ''; renderView(); loadSongLists(1); }
   }
   function loadBoards() {
@@ -216,6 +220,52 @@
       renderView();
       renderStreamStatus('「' + name + '」共 ' + (r.total || S.stResults.length) + ' 首 · 已加载 ' + S.stResults.length + ' 首');
     }).catch(function (e) { renderStreamStatus('歌单详情加载失败：' + (e.message || e), true); });
+  }
+
+  /* ---------------- V4.3：专辑搜索 / 专辑曲目（kg/kw/tx/wy 四源） ---------------- */
+  function doAlbumSearch(fresh) {
+    var kw = S.abKw;
+    if (!kw || S.abSearching) return;
+    if (S.stProvider === 'mg') { renderStreamStatus('咪咕暂不支持专辑搜索，请切换到酷狗/酷我/QQ/网易', true); return; }
+    S.abSearching = true;
+    S.abDetailId = ''; S.abDetailInfo = null;
+    var provider = S.stProvider;
+    var page = fresh ? 1 : S.abPage + 1;
+    renderStreamStatus(fresh ? PLATFORMS[provider] + ' 搜索专辑中…' : '加载第 ' + page + ' 页…');
+    window.mine.streamAlbumSearch({ provider: provider, keywords: kw, page: page, limit: 20 }).then(function (r) {
+      if (provider !== S.stProvider && fresh) return;
+      S.abResults = fresh ? (r.albums || []) : S.abResults.concat(r.albums || []);
+      S.abPage = r.page || page;
+      S.abAllPage = r.allPage || 1;
+      S.abSearching = false;
+      renderView();
+      renderStreamStatus(PLATFORMS[provider] + '：共 ' + (r.total != null ? r.total : S.abResults.length) +
+        ' 张专辑 · 已加载 ' + S.abResults.length + ' 张（第 ' + S.abPage + '/' + S.abAllPage + ' 页）');
+    }).catch(function (e) {
+      S.abSearching = false;
+      renderStreamStatus('专辑搜索失败：' + (e.message || e), true);
+    });
+  }
+  function loadAlbumDetail(id) {
+    var provider = S.stProvider;
+    renderStreamStatus('加载专辑曲目…');
+    window.mine.streamAlbumSongs({ provider: provider, id: id, page: 1 }).then(function (r) {
+      S.stResults = r.songs || [];
+      S.stIndex = -1;
+      S.abDetailId = id; S.abDetailInfo = r.info || null;
+      renderView();
+      renderStreamStatus('「' + (S.abDetailInfo && S.abDetailInfo.name || '') + '」共 ' + (r.total || S.stResults.length) + ' 首 · 已加载 ' + S.stResults.length + ' 首');
+    }).catch(function (e) { renderStreamStatus('专辑曲目加载失败：' + (e.message || e), true); });
+  }
+  /* 专辑封面：http 图（酷我等）CSP 拦截 → 主进程代理转 dataURL；https 直载 */
+  function setAlbumCover(img, url) {
+    if (!url) { img.style.visibility = 'hidden'; return; }
+    if (/^https:/i.test(url)) { img.src = url; img.onerror = function () { img.style.visibility = 'hidden'; }; return; }
+    if (window.mine.streamCoverProxy) {
+      window.mine.streamCoverProxy(url).then(function (r) {
+        if (r && r.url) img.src = r.url; else img.style.visibility = 'hidden';
+      }).catch(function () { img.style.visibility = 'hidden'; });
+    } else img.style.visibility = 'hidden';
   }
 
   /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播） */
@@ -346,7 +396,7 @@
     // 页签 + 音质
     var bar = el('div', 'am-st-bar');
     var tabBox = el('div', 'am-st-pfs');
-    [['search', '搜索'], ['boards', '排行榜'], ['lists', '歌单广场']].forEach(function (t) {
+    [['search', '搜索'], ['boards', '排行榜'], ['lists', '歌单广场'], ['albums', '专辑']].forEach(function (t) {
       var chip = el('button', 'am-chip' + (S.stTab === t[0] ? ' cur' : ''), t[1]);
       chip.onclick = function () { switchStreamTab(t[0]); };
       tabBox.appendChild(chip);
@@ -492,6 +542,72 @@
       renderSongsTable(c);
       renderBatchDlBtn(c);
       if (S.slDPage * S.slDLimit < S.slDTotal) renderMoreBtn(c, '加载更多（已加载 ' + S.stResults.length + '/' + S.slDTotal + '）', function () { loadSongListDetail(S.slDetailId, S.slDetailName, S.slDPage + 1); });
+      return;
+    }
+
+    /* ---------------- V4.3：专辑页签 ---------------- */
+    if (S.stTab === 'albums') {
+      // 专辑详情（返回 + 专辑信息头 + 曲目表）
+      if (S.abDetailId) {
+        var barA = el('div'); barA.style.cssText = 'display:flex;gap:10px;margin-bottom:10px';
+        var backA = el('button', 'am-btn', '‹ 返回专辑列表');
+        backA.onclick = function () { S.abDetailId = ''; S.abDetailInfo = null; S.stResults = S.tabSongs.albums = []; renderView(); };
+        barA.appendChild(backA);
+        c.appendChild(barA);
+        var ai = S.abDetailInfo;
+        if (ai) {
+          var head = el('div'); head.style.cssText = 'display:flex;gap:14px;margin-bottom:12px;align-items:flex-start';
+          var aimg = el('img', 'am-sl-cover'); aimg.alt = ''; aimg.style.cssText = 'width:96px;height:96px;border-radius:8px;flex:none';
+          setAlbumCover(aimg, ai.img);
+          head.appendChild(aimg);
+          var aiBox = el('div');
+          aiBox.appendChild(el('div', 'am-view-h', esc(ai.name || '')));
+          aiBox.appendChild(el('div', 'am-c-dim', esc((ai.artist || '') + (ai.date ? ' · ' + ai.date : '') + (ai.count ? ' · ' + ai.count + ' 首' : ''))));
+          if (ai.desc) {
+            var dsc = el('div', 'am-c-dim', esc(ai.desc));
+            dsc.style.cssText = 'margin-top:6px;font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden';
+            aiBox.appendChild(dsc);
+          }
+          head.appendChild(aiBox);
+          c.appendChild(head);
+        }
+        if (!S.stResults.length) { c.appendChild(el('div', 'am-empty', '正在加载专辑曲目…')); return; }
+        renderSongsTable(c);
+        renderBatchDlBtn(c);
+        return;
+      }
+      // 专辑搜索行
+      var abRow = el('div', 'am-st-inputrow');
+      var abInp = document.createElement('input');
+      abInp.className = 'am-st-input'; abInp.placeholder = '搜索专辑名，如「范特西」「魔杰座」…'; abInp.value = S.abKw;
+      abInp.onkeydown = function (e) { if (e.key === 'Enter') { S.abKw = abInp.value.trim(); doAlbumSearch(true); } };
+      var bAb = el('button', 'am-btn am-btn-accent', '搜索专辑');
+      bAb.onclick = function () { S.abKw = abInp.value.trim(); doAlbumSearch(true); };
+      abRow.appendChild(abInp); abRow.appendChild(bAb);
+      c.appendChild(abRow);
+      if (S.stProvider === 'mg') {
+        c.appendChild(el('div', 'am-empty', '咪咕暂不支持专辑搜索——切到酷狗 / 酷我 / QQ / 网易试试'));
+        return;
+      }
+      if (!S.abResults.length) {
+        c.appendChild(el('div', 'am-empty', S.abKw ? '无匹配专辑' : '输入专辑名，搜索当前平台的专辑'));
+        return;
+      }
+      var aGrid = el('div', 'am-sl-grid');
+      S.abResults.forEach(function (a) {
+        var card = el('div', 'am-sl-card');
+        var img = el('img', 'am-sl-cover'); img.alt = ''; img.loading = 'lazy';
+        setAlbumCover(img, a.img);
+        card.appendChild(img);
+        card.appendChild(el('div', 'am-sl-name', esc(a.name)));
+        card.appendChild(el('div', 'am-sl-meta', esc(a.artist || '') + (a.date ? ' · ' + a.date : '') + (a.count ? ' · ' + a.count + ' 首' : '')));
+        card.onclick = function () { loadAlbumDetail(a.id); };
+        aGrid.appendChild(card);
+      });
+      c.appendChild(aGrid);
+      if (S.abPage < S.abAllPage && !S.abSearching) {
+        renderMoreBtn(c, '加载更多专辑（' + S.abPage + '/' + S.abAllPage + '）', function () { doAlbumSearch(false); });
+      }
       return;
     }
 

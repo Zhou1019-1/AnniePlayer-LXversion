@@ -84,6 +84,9 @@ contextBridge.exposeInMainWorld('mine', {
   streamLeaderboardList: (params) => ipcRenderer.invoke('stream:leaderboardList', params),
   streamSongLists: (params) => ipcRenderer.invoke('stream:songLists', params),
   streamSongListDetail: (params) => ipcRenderer.invoke('stream:songListDetail', params),
+  // V4.3：专辑搜索 / 专辑曲目
+  streamAlbumSearch: (params) => ipcRenderer.invoke('stream:albumSearch', params),
+  streamAlbumSongs: (params) => ipcRenderer.invoke('stream:albumSongs', params),
 
   // 设置中心：版本 / 手动检查更新 / 外链 / 更新状态订阅
   appVersion: () => ipcRenderer.invoke('app:getVersion'),

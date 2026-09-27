@@ -143,10 +143,6 @@
     btnDlyr.onclick = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
     document.addEventListener('annie-dlyrics-changed', function (e) { btnDlyr.classList.toggle('on', !!(e.detail && e.detail.on)); });
     right.appendChild(btnDlyr);
-    // 均衡器快捷入口（打开设置中心并定位到播放页）
-    var btnEq = el('button', 'am-tbtn', '≣'); btnEq.title = '均衡器';
-    btnEq.onclick = function () { if (window.annieSettings) window.annieSettings.openPage('playback'); };
-    right.appendChild(btnEq);
     // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
     var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
     btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };

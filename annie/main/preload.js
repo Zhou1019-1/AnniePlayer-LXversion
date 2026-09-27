@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('mine', {
   // 洛雪式音源管理
   streamSourcesList: () => ipcRenderer.invoke('stream:sources:list'),
   streamSourcesImport: () => ipcRenderer.invoke('stream:sources:import'),
+  streamSourcesImportUrl: (params) => ipcRenderer.invoke('stream:sources:importUrl', params),
   streamSourcesRemove: (params) => ipcRenderer.invoke('stream:sources:remove', params),
   streamSourcesSetEnabled: (params) => ipcRenderer.invoke('stream:sources:setEnabled', params),
 
@@ -177,6 +178,12 @@ contextBridge.exposeInMainWorld('mine', {
     const listener = (_e, action) => cb(action);
     ipcRenderer.on('tray:action', listener);
     return () => ipcRenderer.removeListener('tray:action', listener);
+  },
+  // 关闭行为被系统对话框「以后都这样执行」修改后同步渲染层
+  onCloseBehaviorChanged: (cb) => {
+    const listener = (_e, behavior) => cb(behavior);
+    ipcRenderer.on('annie:closeBehaviorChanged', listener);
+    return () => ipcRenderer.removeListener('annie:closeBehaviorChanged', listener);
   },
 
   // Pro beat0.0.1：诊断包导出（rendererSnapshot 为渲染侧设置/状态快照）

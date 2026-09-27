@@ -850,7 +850,8 @@
 
   function addRipple(x, z, strength, white) {
     var idx = state.rippleIdx;
-    var r = state.ripples[idx];
+    var r = state.ripples && state.ripples[idx];
+    if (!r) return; // 预设切换/卸载竞态：数据未初始化时静默丢弃
     r.x = x;
     r.z = z;
     r.start = state.sonicTime;
@@ -866,7 +867,8 @@
     var idx = state.meteorIdx;
     var angle = Math.random() * Math.PI * 2;
     var dist = Math.random() * 25;
-    var m = state.meteorsData[idx];
+    var m = state.meteorsData && state.meteorsData[idx];
+    if (!m) return; // 预设切换/卸载竞态防护
     m.active = true;
     m.x = Math.cos(angle) * dist;
     m.z = Math.sin(angle) * dist;
@@ -878,7 +880,8 @@
 
   function spawnTrail(x, y, z, speedMul) {
     var idx = state.trailIdx;
-    var p = state.trailsData[idx];
+    var p = state.trailsData && state.trailsData[idx];
+    if (!p) return; // 预设切换/卸载竞态防护
     p.active = true;
     p.x = x + (Math.random() - 0.5) * 1.5;
     p.y = y + (Math.random() - 0.5) * 1.5;

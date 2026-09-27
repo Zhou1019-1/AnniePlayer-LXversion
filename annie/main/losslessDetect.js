@@ -296,13 +296,11 @@ function detectLossless(input, opts) {
       const invScale = intFmt ? 1 / (1 << (intBits - 1)) : 1;
       let pending = Buffer.alloc(0);
 
-      proc.stdout.on('data', (chunk) => {
-        pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
-        const nFrames = Math.floor(pending.length / frameBytes);
-        if (!nFrames) return;
-        const mono = new Float64Array(nFrames);
-        const side = (stereo && sideFeeder) ? new Float64Array(nFrames) : null;
-        for (let f = 0; f < nFrames; f++) {
+      /* 逐帧样本处理（从 pending 头部消费 take 帧） */
+      const processFrames = (take) => {
+        const mono = new Float64Array(take);
+        const side = (stereo && sideFeeder) ? new Float64Array(take) : null;
+        for (let f = 0; f < take; f++) {
           const base = f * frameBytes;
           let sum = 0, c0 = 0, c1 = 0;
           for (let c = 0; c < ch; c++) {
@@ -329,15 +327,43 @@ function detectLossless(input, opts) {
           mono[f] = sum / ch;
           if (side) side[f] = 0.5 * (c0 - c1);
         }
-        pending = pending.slice(nFrames * frameBytes);
+        pending = pending.slice(take * frameBytes);
         cutFeeder.feed(mono);
         if (codecFeeder) codecFeeder.feed(mono);
         if (midFeeder) midFeeder.feed(mono); // mid = 0.5(L+R) 与 mono 同形，能量比例不变
         if (sideFeeder) sideFeeder.feed(side);
         if (upFeeder) upFeeder.feed(mono);
+      };
+
+      /* 时间片排水：分析全在主进程线程上同步计算（多路 STFT + 逐样本统计），
+       * ffmpeg 全速灌数据时若不yield，事件循环会被连续堵死、整个软件卡死。
+       * 每次最多占 12ms 即 setImmediate 让路，期间暂停 ffmpeg 输出防积压。 */
+      let draining = false, streamClosed = false;
+      const drain = () => {
+        if (draining) return;
+        draining = true;
+        const step = () => {
+          const budget = Date.now() + 12;
+          while (Date.now() < budget) {
+            const nFrames = Math.floor(pending.length / frameBytes);
+            if (!nFrames) break;
+            processFrames(Math.min(nFrames, 4096));
+          }
+          if (Math.floor(pending.length / frameBytes) > 0) { setImmediate(step); return; }
+          draining = false;
+          if (!killed && proc && proc.stdout && !streamClosed) proc.stdout.resume();
+          if (streamClosed) { clearTimeout(killer); resolve(); }
+        };
+        setImmediate(step);
+      };
+
+      proc.stdout.on('data', (chunk) => {
+        pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+        proc.stdout.pause();
+        drain();
       });
-      proc.on('error', () => { clearTimeout(killer); resolve(); });
-      proc.on('close', () => { clearTimeout(killer); resolve(); });
+      proc.on('error', () => { streamClosed = true; if (!draining) { clearTimeout(killer); resolve(); } });
+      proc.on('close', () => { streamClosed = true; if (!draining) { clearTimeout(killer); resolve(); } });
     });
     proc = null;
     if (killed) return null;

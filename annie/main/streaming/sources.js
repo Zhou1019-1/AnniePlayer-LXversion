@@ -250,8 +250,56 @@ function list() {
 
 /** 导入音源脚本（从给定路径复制进沙箱目录并验证） */
 async function importFromPath(srcPath) {
-  const script = fs.readFileSync(srcPath, 'utf8');
-  const meta = parseMeta(script, path.basename(srcPath, '.js'));
+  return importScript(fs.readFileSync(srcPath, 'utf8'), path.basename(srcPath, '.js'));
+}
+
+/** 在线导入音源脚本（洛雪同款：粘贴 http/https 链接，拉取 .js 后走同一验证管线）。
+ *  安全约束：仅 http/https、跟随重定向（限 5 次）、体积上限 2MB、总超时 20s。 */
+function importFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(String(url || '').trim()); } catch { reject(new Error('链接格式不正确')); return; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') { reject(new Error('仅支持 http/https 链接')); return; }
+    let redirects = 0;
+    const MAX_BYTES = 2 * 1024 * 1024;
+    const grab = (cur) => {
+      const lib = cur.protocol === 'https:' ? require('https') : require('http');
+      const req = lib.get(cur, { timeout: 20000, headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' } }, (res) => {
+        const loc = res.headers.location;
+        if (loc && res.statusCode >= 300 && res.statusCode < 400) {
+          res.resume();
+          if (++redirects > 5) { reject(new Error('重定向次数过多')); return; }
+          let next;
+          try { next = new URL(loc, cur); } catch { reject(new Error('重定向地址无效')); return; }
+          if (next.protocol !== 'http:' && next.protocol !== 'https:') { reject(new Error('重定向到不支持的协议')); return; }
+          grab(next);
+          return;
+        }
+        if (res.statusCode !== 200) { res.resume(); reject(new Error(`下载失败（HTTP ${res.statusCode}）`)); return; }
+        const chunks = [];
+        let size = 0;
+        res.on('data', (c) => {
+          size += c.length;
+          if (size > MAX_BYTES) { req.destroy(new Error('脚本体积超过 2MB 上限')); return; }
+          chunks.push(c);
+        });
+        res.on('end', () => {
+          const script = Buffer.concat(chunks).toString('utf8');
+          if (!script.trim()) { reject(new Error('下载内容为空')); return; }
+          const baseName = decodeURIComponent((cur.pathname.split('/').pop() || '').replace(/\.js$/i, '')) || '在线音源';
+          importScript(script, baseName).then(resolve, reject);
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('下载超时（20 秒）')));
+      req.on('error', (e) => reject(new Error('下载失败：' + (e.message || e))));
+    };
+    grab(u);
+  });
+}
+
+/** 导入核心：脚本内容写入沙箱目录并验证（文件/在线导入共用） */
+async function importScript(script, fallbackName) {
+  const meta = parseMeta(script, fallbackName);
   const id = 'src_' + md5(meta.name + Date.now()).slice(0, 10);
   const entry = { id, name: meta.name, version: meta.version, description: meta.description, author: meta.author, enabled: true };
   const dest = path.join(_dir, id + '.js');
@@ -342,4 +390,4 @@ async function handleRequestById(id, action, payload, timeoutMs = 15000) {
   return requestInWorker(id, (_registry.find((e) => e.id === id) || {}).name || id, action, payload.source, payload.info, timeoutMs);
 }
 
-module.exports = { init, list, importFromPath, remove, setEnabled, hasActiveSource, handleRequest, handleRequestById };
+module.exports = { init, list, importFromPath, importFromUrl, remove, setEnabled, hasActiveSource, handleRequest, handleRequestById };

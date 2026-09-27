@@ -514,6 +514,15 @@ html[data-theme="am"] #titlebar { display: none !important; }
   border-left: 1px solid rgba(255,255,255,.12);
 }
 #am-root.am-imm-q-on .am-imm-queue { display: flex; }
+/* 收回小标签：抽屉左缘外侧、垂直居中 */
+.am-imm-q-fold {
+  position: absolute; left: -26px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 68px; padding: 0;
+  border: 1px solid rgba(255,255,255,.12); border-right: none; border-radius: 10px 0 0 10px;
+  background: rgba(18,18,22,.66); backdrop-filter: blur(36px); -webkit-backdrop-filter: blur(36px);
+  color: rgba(255,255,255,.65); font-size: 14px; line-height: 1; cursor: pointer;
+}
+.am-imm-q-fold:hover { color: #fff; background: rgba(40,40,48,.8); }
 
 /* ================= V3.2：AM 迷你模式 ================= */
 .am-mini { position: absolute; inset: 0; z-index: 70; display: none; flex-direction: column; background: #1b1b1f; }

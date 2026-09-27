@@ -261,15 +261,48 @@ function createWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  /* V4.3：关闭按钮三选一——每次询问 / 最小化到托盘 / 直接退出。
+   * 拦截 'close'：未记忆选择时弹原生对话框（带「以后都这样执行」勾选），
+   * 记忆后按 store.ui.closeBehavior 直接执行；更新安装/托盘菜单退出等强退路径直接放行。 */
+  mainWindow.on('close', (e) => {
+    if (global.__svlxQuitting || pendingInstall) return;
+    const st0 = loadStore();
+    const ui0 = st0.ui || {};
+    let behavior = ui0.closeBehavior;
+    if (behavior !== 'tray' && behavior !== 'quit') behavior = ui0.closeToTray === true ? 'tray' : ''; // 旧设置迁移
+    if (behavior === 'tray') { e.preventDefault(); mainWindow.hide(); return; }
+    if (behavior === 'quit') return; // 放行，由 'closed' 完成退出
+    e.preventDefault();
+    const { dialog } = require('electron');
+    dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      title: '关闭 安妮播放器',
+      message: '要最小化到系统托盘，还是彻底退出？',
+      detail: '勾选「以后都这样执行」后不再询问，之后可在 设置 → 界面 中修改。',
+      buttons: ['最小化到托盘', '彻底退出', '取消'],
+      defaultId: 0, cancelId: 2, noLink: true,
+      checkboxLabel: '以后都这样执行', checkboxChecked: false,
+    }).then((r) => {
+      if (!mainWindow || r.response === 2) return;
+      const chosen = r.response === 0 ? 'tray' : 'quit';
+      if (r.checkboxChecked) {
+        const st = loadStore(); st.ui = st.ui || {}; st.ui.closeBehavior = chosen; flushStore();
+        try { mainWindow.webContents.send('annie:closeBehaviorChanged', chosen); } catch { }
+      }
+      if (chosen === 'tray') mainWindow.hide();
+      else { global.__svlxQuitting = true; try { mainWindow.close(); } catch { } }
+    }).catch(() => { });
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
     /* V3.5.9：关窗退出逻辑（修复在线更新"无法关闭/装不上"根因）。
      * 旧行为：关窗后进程驻留托盘，__svlxQuitting 只有托盘"退出"菜单才置位 →
      *   ① NSIS 安装器 WM_CLOSE 关窗后进程不死 → "无法关闭"
      *   ② autoInstallOnAppQuit 等不到退出 → 已下载的更新永远装不上
-     * 新行为：有待装更新（pendingInstall）或未开"驻留托盘"设置 → 关窗即完整退出。 */
+     * 新行为：有待装更新（pendingInstall）或未开"驻留托盘"设置 → 关窗即完整退出。
+     * V4.3：显式退出（对话框/托盘菜单）会置 __svlxQuitting，同样强制退出。 */
     const closeToTray = loadStore().ui && loadStore().ui.closeToTray === true;
-    if (pendingInstall || !closeToTray) {
+    if (pendingInstall || !closeToTray || global.__svlxQuitting) {
       global.__svlxQuitting = true;
       try { app.quit(); } catch { }
     }
@@ -1062,6 +1095,13 @@ ipcMain.handle('stream:albumSongs', (_e, params) => streaming.albumSongs(params)
       // 否则返回的是未完成 Promise（UI 显示 undefined），且 refreshSources 抢在
       // 注册表写入前执行，导致"导入成功但列表仍显示未导入"
       return { canceled: false, source: await streaming.sources.importFromPath(r.filePaths[0]) };
+    } catch (e) {
+      return { canceled: false, error: String(e.message || e) };
+    }
+  });
+  ipcMain.handle('stream:sources:importUrl', async (_e, { url }) => {
+    try {
+      return { canceled: false, source: await streaming.sources.importFromUrl(url) };
     } catch (e) {
       return { canceled: false, error: String(e.message || e) };
     }

@@ -132,6 +132,11 @@ public sealed partial class Engine
     private object OpenWithChannels(string path, double offsetSec, string? headers, TrackInfo info, IOutputBackend backend, int gen, int channels, bool quickStart = false)
     {
         int rate = info.SampleRate;
+        // 探测异常兜底：个别文件 ffprobe 返回 0/0 格式（日志可见 "0/0 vs ..."），
+        // channels=0 会让 NAudio WaveFormat 直接抛 ArgumentOutOfRangeException，
+        // 且只被外层重试硬扛。按最常见格式（44.1k/2ch）兜底，解码链会自动重采样。
+        if (channels <= 0) { Console.Error.WriteLine($"[engine] 曲目通道数异常({info.Channels})，按 2ch 兜底"); channels = 2; }
+        if (rate <= 0) { Console.Error.WriteLine($"[engine] 曲目采样率异常({info.SampleRate})，按 44100 兜底"); rate = 44100; }
         bool resampled = false;
 
         for (int attempt = 0; attempt < 2; attempt++)

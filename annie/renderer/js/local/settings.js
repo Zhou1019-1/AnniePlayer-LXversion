@@ -409,8 +409,33 @@
     checkRow(s4, '粒子总开关', 'particlesEnabled', applyInterface, '粒子总开关 舞台粒子 particles');
     checkRow(s4, '封面氛围背景', 'albumBg', applyInterface, '封面氛围背景 模糊 background blur');
     sliderRow(s4, '背景模糊', 'albumBgBlur', 40, 200, 10, fmtPx, applyInterface, '背景模糊 blur');
-    var ctRow = checkRow(s4, '关闭主窗口后驻留系统托盘', 'closeToTray', applyInterface, '关闭 最小化 托盘 驻留 后台 close tray minimize');
-    ctRow.title = '默认关闭（关窗即退出），保证在线更新顺利安装；开启后关窗仅隐藏到托盘';
+    /* V4.3：关闭按钮行为三选一（每次询问 / 最小化到托盘 / 直接退出），取代旧 closeToTray 开关。
+     * 主进程关闭对话框勾选「以后都这样执行」也会写同一键，经 onCloseBehaviorChanged 回同步。 */
+    var cbRow = markItem(el('div', 'set-row'), '关闭按钮 关闭行为 最小化 托盘 退出 驻留 后台 close tray minimize quit');
+    var cbLab = el('div'); cbLab.appendChild(el('div', '', '关闭按钮行为'));
+    cbLab.appendChild(el('div', 'set-hint', '点窗口 ✕ 时的动作；选「每次询问」会弹窗让你选，并可勾选以后都这样执行'));
+    var cbSel = document.createElement('select');
+    [['ask', '每次询问'], ['tray', '最小化到托盘'], ['quit', '直接退出']].forEach(function (kv) {
+      var op = document.createElement('option'); op.value = kv[0]; op.textContent = kv[1];
+      cbSel.appendChild(op);
+    });
+    var curBehavior = (ui.closeBehavior === 'tray' || ui.closeBehavior === 'quit') ? ui.closeBehavior
+      : (ui.closeToTray ? 'tray' : 'ask'); // 旧设置迁移显示
+    cbSel.value = curBehavior;
+    ui.closeBehavior = curBehavior;
+    cbSel.onchange = function () {
+      ui.closeBehavior = cbSel.value;
+      if (ui.closeBehavior === 'ask') delete ui.closeBehavior; // 询问=不记忆，主进程读不到键即弹窗
+      save();
+    };
+    if (window.mine && window.mine.onCloseBehaviorChanged) {
+      window.mine.onCloseBehaviorChanged(function (behavior) {
+        ui.closeBehavior = behavior;
+        cbSel.value = behavior;
+      });
+    }
+    cbRow.appendChild(cbLab); cbRow.appendChild(cbSel);
+    s4.appendChild(cbRow);
 
     // —— V3.5.8：全局快捷键（状态存主进程 store，IPC 开关） ——
     var sHk = section(pgGeneral, '全局快捷键');
@@ -2164,6 +2189,24 @@
       renderExtSources();
     };
     extBtnWrap.appendChild(extImportBtn);
+    /* V4.3：在线导入（洛雪同款）——粘贴音源脚本链接，主进程拉取后走同一沙箱验证管线 */
+    var extUrlBtn = el('button', 'btn-ghost', '在线导入…');
+    extUrlBtn.title = '粘贴洛雪音源脚本的 http/https 链接，在线拉取导入';
+    extUrlBtn.onclick = function () {
+      window.anniePrompt('音源脚本链接（http/https）', 'https://', async function (url) {
+        if (!url || !String(url).trim() || String(url).trim() === 'https://') return;
+        extUrlBtn.disabled = true;
+        extStat.textContent = '正在从链接下载音源…';
+        try {
+          var r = await window.mine.streamSourcesImportUrl({ url: String(url).trim() });
+          if (r && r.error) extStat.textContent = '导入失败：' + r.error;
+          else if (r && r.source) extStat.textContent = '音源「' + r.source.name + '」导入成功并已启用';
+        } catch (e) { extStat.textContent = '导入失败：' + (e.message || e); }
+        extUrlBtn.disabled = false;
+        renderExtSources();
+      });
+    };
+    extBtnWrap.appendChild(extUrlBtn);
     extBtnRow.appendChild(extBtnLab); extBtnRow.appendChild(extBtnWrap);
     sExt.appendChild(extBtnRow);
     function renderExtSources() {

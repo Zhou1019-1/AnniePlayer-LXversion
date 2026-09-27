@@ -133,6 +133,13 @@
   /* ================= 待播清单 / 历史记录（沉浸与迷你共享） ================= */
   function renderQueuePanel(box) {
     box.innerHTML = '';
+    /* V4.3：沉浸队列抽屉收回小标签——贴在抽屉左缘外侧垂直居中（收回指引此前不明确） */
+    if (box === R.immQ) {
+      var fold = el('button', 'am-imm-q-fold', '❯');
+      fold.title = '收回面板';
+      fold.onclick = function () { setImmQueue(false); };
+      box.appendChild(fold);
+    }
     var tabs = el('div', 'am-q-tabs');
     var tQ = el('button', 'am-q-tab' + (S.qTab !== 'hist' && S.qTab !== 'cmt' ? ' cur' : ''), '待播清单');
     var tH = el('button', 'am-q-tab' + (S.qTab === 'hist' ? ' cur' : ''), '历史记录');

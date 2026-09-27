@@ -1273,6 +1273,29 @@
     lsCheckRow(sMatch, '同时嵌入文件标签', 'annieplayer.match.def.embed', false, null, '在线匹配 嵌入标签 embed');
     sMatch.appendChild(matchHint);
 
+    // —— V4.3.4：批量匹配歌词（≥80% 自动存旁挂 .lrc；整个曲库 / 文件夹） ——
+    var sBm = section(pgLyrics, '批量匹配歌词');
+    var bmRow = markItem(el('div', 'set-row'), '批量匹配歌词 整个曲库 文件夹 自动 lrc batch lyrics');
+    var bmLab = el('div'); bmLab.appendChild(el('div', '', '自动批量匹配（歌词）'));
+    bmLab.appendChild(el('div', 'set-hint', '五平台搜索取最高分，匹配度 ≥80% 自动保存旁挂 .lrc（含翻译行）；已有歌词的默认跳过，未匹配的列清单'));
+    var bmWrap = el('div', 'set-ctrl');
+    var bmBtnAll = el('button', 'btn-ghost', '整个曲库');
+    var bmBtnDir = el('button', 'btn-ghost', '文件夹…');
+    bmBtnAll.onclick = function () {
+      var lib = (typeof state !== 'undefined') ? state.library : null;
+      if (!lib || !lib.tracks.length) return;
+      if (window.annieBatchMatch) window.annieBatchMatch.open(lib.tracks.map(function (t) { return t.path; }));
+    };
+    bmBtnDir.onclick = function () {
+      window.mine.fakeScanPickFolder().then(function (r) { // 复用：选文件夹并递归枚举音频
+        if (!r || !r.ok) return;
+        if (window.annieBatchMatch) window.annieBatchMatch.open(r.paths);
+      }).catch(function () { });
+    };
+    bmWrap.appendChild(bmBtnAll); bmWrap.appendChild(bmBtnDir);
+    bmRow.appendChild(bmLab); bmRow.appendChild(bmWrap);
+    sBm.appendChild(bmRow);
+
     // —— 舞台歌词 ——
     var s3 = section(pgLyrics, '舞台歌词');
     selectRow(s3, '显示模式', 'lyricDisplayMode', [

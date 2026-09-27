@@ -130,4 +130,55 @@ async function applyMatch({ path: filePath, provider, song, saveLrc, saveCover, 
   return out;
 }
 
-module.exports = { searchCandidates, applyMatch };
+// ============================================================================
+// 批量匹配（V4.3.4：整个曲库 / 文件夹 / 多选；只存旁挂 .lrc 歌词，封面仍走单曲手动）
+//   策略：逐首五平台搜索取最高分候选，≥80% 才自动落盘（保守，防张冠李戴）；
+//         已有旁挂 .lrc 的默认跳过（可选覆盖）；CUE/ISO 分轨跳过；全程可取消。
+// ============================================================================
+const batch = { running: false, canceled: false };
+
+function sidecarLrc(p) { return p.replace(/\.[^.]+$/, '.lrc'); }
+
+async function batchStart(win, paths, opts) {
+  if (batch.running) return { ok: false, reason: '批量匹配进行中' };
+  batch.running = true; batch.canceled = false;
+  const overwrite = !!(opts && opts.overwrite);
+  const total = paths.length;
+  let matched = 0, skipped = 0, failed = 0;
+  const send = (ev) => { try { if (win && !win.isDestroyed()) win.webContents.send('match:batch:event', ev); } catch (e) { } };
+  send({ type: 'begin', total });
+  for (let i = 0; i < paths.length; i++) {
+    if (batch.canceled) break;
+    const p = paths[i];
+    let st = 'failed', score = 0, note = '';
+    try {
+      if (p.includes('#')) { st = 'skipped'; note = 'CUE/ISO 分轨'; }
+      else if (!overwrite && fs.existsSync(sidecarLrc(p))) { st = 'skipped'; note = '已有歌词'; }
+      else {
+        const r = await searchCandidates({ path: p });
+        const best = r.ok && r.candidates.length ? r.candidates[0] : null;
+        if (!best) note = '五平台均无结果';
+        else if (best.score < 80) { score = best.score; note = '匹配度不足（' + best.score + '%）'; }
+        else {
+          score = best.score;
+          const lr = await streaming.lyric({ provider: best.provider, song: best.song }).catch(() => null);
+          if (lr && lr.lrc && lr.lrc.trim()) {
+            tagWriter.writeLyric({ dest: p, lrc: lr.lrc, tlyric: lr.tlyric || '' }); // 译文轨一并写入
+            st = 'matched';
+          } else note = '该平台无歌词';
+        }
+      }
+    } catch (e) { note = (e && e.message) || String(e); }
+    if (st === 'matched') matched++; else if (st === 'skipped') skipped++; else failed++;
+    send({ type: 'progress', done: i + 1, total, path: p, result: st, score, note, matched, skipped, failed });
+    await new Promise((r) => setTimeout(r, 150)); // 温和限速，防平台风控
+  }
+  const canceled = batch.canceled;
+  batch.running = false;
+  send({ type: 'end', canceled, done: matched + skipped + failed, total, matched, skipped, failed });
+  return { ok: true };
+}
+
+function batchCancel() { batch.canceled = true; }
+
+module.exports = { searchCandidates, applyMatch, batchStart, batchCancel };

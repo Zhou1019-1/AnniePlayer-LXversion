@@ -991,6 +991,9 @@ function registerIpc() {
   // V3.3.1：在线歌词/封面匹配（一期·单曲手动匹配）
   ipcMain.handle('match:search', (_e, params) => onlineMatch.searchCandidates(params || {}));
   ipcMain.handle('match:apply', (_e, params) => onlineMatch.applyMatch(params || {}));
+  // V4.3.4：批量匹配歌词（≥80% 自动存旁挂 .lrc，进度经 match:batch:event 推送）
+  ipcMain.handle('match:batchStart', (_e, paths, opts) => onlineMatch.batchStart(mainWindow, paths || [], opts || {}));
+  ipcMain.handle('match:batchCancel', () => { onlineMatch.batchCancel(); return { ok: true }; });
 
   // V3.5.9：曲库标签编辑——选封面图 / 写回标签（ffmpeg 流复制，不重编码）
   ipcMain.handle('tag:pickCover', async () => {

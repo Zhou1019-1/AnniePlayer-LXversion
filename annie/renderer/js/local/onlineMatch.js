@@ -162,5 +162,100 @@
 
   function toast(msg) { try { if (typeof proToast === 'function') proToast(msg); } catch (e) { } }
 
+  /* ==========================================================================
+   * 批量匹配歌词（V4.3.4）：整个曲库 / 文件夹 / FB2K 多选 → window.annieBatchMatch.open(paths)
+   *   ≥80% 自动落盘旁挂 .lrc（含翻译行）；失败/跳过原因列在弹窗底部；可取消。
+   * ======================================================================== */
+  var bmOverlay = null, bmOff = null, bmRunning = false;
+
+  function bmClose() {
+    if (bmRunning) { try { window.mine.matchBatchCancel(); } catch (e) { } }
+    if (bmOff) { bmOff(); bmOff = null; }
+    if (bmOverlay) { bmOverlay.remove(); bmOverlay = null; }
+    bmRunning = false;
+  }
+
+  function bmOpen(paths) {
+    paths = (paths || []).filter(function (p) { return p && p.indexOf('#') < 0; });
+    if (!paths.length) { toast('没有可匹配的曲目'); return; }
+    bmClose();
+    bmOverlay = el('div', 'match-overlay');
+    var dlg = el('div', 'match-dialog');
+
+    var head = el('div', 'match-head');
+    head.appendChild(el('div', 'match-title', '批量匹配歌词'));
+    var bX = el('button', 'match-x', '✕');
+    bX.onclick = bmClose;
+    head.appendChild(bX);
+    dlg.appendChild(head);
+
+    dlg.appendChild(el('div', 'match-local-s',
+      '共 ' + paths.length + ' 首 · 五平台搜索取最高分，匹配度 ≥80% 自动保存旁挂 .lrc（含翻译行）；不足的列入下方清单'));
+
+    var oRow = el('div', 'match-opts');
+    var ckOver = (function () {
+      var lb = el('label', 'match-ck');
+      var c = document.createElement('input'); c.type = 'checkbox';
+      lb.appendChild(c); lb.appendChild(document.createTextNode('覆盖已有歌词（.lrc）'));
+      oRow.appendChild(lb); return c;
+    })();
+    dlg.appendChild(oRow);
+
+    var bar = el('div', 'bm-bar'); var barI = el('div', 'bm-bar-i'); bar.appendChild(barI);
+    dlg.appendChild(bar);
+    var status = el('div', 'match-status', '就绪');
+    dlg.appendChild(status);
+    var failList = el('div', 'bm-fail-list');
+    dlg.appendChild(failList);
+
+    var btnRow = el('div', 'match-searchrow');
+    var bGo = el('button', 'match-btn match-apply', '开始匹配');
+    btnRow.appendChild(bGo);
+    dlg.appendChild(btnRow);
+
+    bmOverlay.appendChild(dlg);
+    document.body.appendChild(bmOverlay);
+
+    function addFail(p, note) {
+      var row = el('div', 'bm-fail-row');
+      row.appendChild(el('div', 'bm-fail-p', p));
+      row.appendChild(el('div', 'bm-fail-n', note || ''));
+      failList.appendChild(row);
+      failList.scrollTop = failList.scrollHeight;
+    }
+
+    bGo.onclick = function () {
+      if (bmRunning) { window.mine.matchBatchCancel(); bGo.disabled = true; bGo.textContent = '取消中…'; return; }
+      bmRunning = true;
+      ckOver.disabled = true;
+      bGo.textContent = '取消';
+      failList.innerHTML = '';
+      window.mine.matchBatchStart(paths, { overwrite: ckOver.checked }).then(function (r) {
+        if (r && !r.ok) { status.textContent = r.reason || '启动失败'; bmRunning = false; bGo.textContent = '开始匹配'; ckOver.disabled = false; }
+      }).catch(function () { });
+      bmOff = window.mine.onMatchBatchEvent(function (ev) {
+        if (!bmOverlay) { if (bmOff) { bmOff(); bmOff = null; } return; }
+        if (ev.type === 'progress') {
+          barI.style.width = Math.round(ev.done / ev.total * 100) + '%';
+          status.textContent = '匹配中 ' + ev.done + '/' + ev.total + ' · 成功 ' + ev.matched + ' · 跳过 ' + ev.skipped + ' · 未匹配 ' + ev.failed;
+          if (ev.result === 'failed') addFail(ev.path, ev.note);
+          else if (ev.result === 'matched') {
+            // 正在播放该文件时重载歌词（与单曲匹配同一通知）
+            try { document.dispatchEvent(new CustomEvent('annie-local-media-updated', { detail: { path: ev.path } })); } catch (e) { }
+          }
+        } else if (ev.type === 'end') {
+          bmRunning = false;
+          if (bmOff) { bmOff(); bmOff = null; }
+          barI.style.width = Math.round(ev.done / ev.total * 100) + '%';
+          bGo.textContent = '完成'; bGo.disabled = true;
+          ckOver.disabled = false;
+          status.textContent = (ev.canceled ? '已取消：' : '完成：') + '成功 ' + ev.matched + ' 首 · 跳过 ' + ev.skipped + ' · 未匹配 ' + ev.failed + '（共 ' + ev.total + ' 首）';
+          toast(status.textContent);
+        }
+      });
+    };
+  }
+
   window.annieMatch = { open: open, close: close };
+  window.annieBatchMatch = { open: bmOpen, close: bmClose };
 })();

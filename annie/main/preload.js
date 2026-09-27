@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('mine', {
   metaFullBatch: (paths) => ipcRenderer.invoke('lib:metaFullBatch', paths), // V3.1：批量完整 meta（含封面）
   matchSearch: (params) => ipcRenderer.invoke('match:search', params), // V3.3.1：在线歌词/封面匹配
   matchApply: (params) => ipcRenderer.invoke('match:apply', params),
+  matchBatchStart: (paths, opts) => ipcRenderer.invoke('match:batchStart', paths, opts), // V4.3.4：批量匹配歌词
+  matchBatchCancel: () => ipcRenderer.invoke('match:batchCancel'),
+  onMatchBatchEvent: (cb) => { const h = (_e, ev) => cb(ev); ipcRenderer.on('match:batch:event', h); return () => ipcRenderer.removeListener('match:batch:event', h); },
   tagPickCover: () => ipcRenderer.invoke('tag:pickCover'),            // V3.5.9：标签编辑选封面
   tagEdit: (params) => ipcRenderer.invoke('tag:edit', params),        // V3.5.9：写回标签
   tagEditBatch: (params) => ipcRenderer.invoke('tag:editBatch', params), // Track B：批量写回标签

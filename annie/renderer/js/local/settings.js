@@ -1154,7 +1154,7 @@
     };
     renderPeqBands();
 
-    // —— AutoEq 耳机校正导入（V4.2）：精选子集内置（autoeq-subset.json，scripts/autoeq-build.js 生成） ——
+    // —— AutoEq 耳机校正导入（V4.2）：官方全量库内置（autoeq-subset.json，scripts/autoeq-build.js 生成） ——
     var aeWrap = markItem(el('div', 'set-row'), 'autoeq 耳机校正 headphone calibration 导入 型号');
     var aeLab = el('div'); aeLab.appendChild(el('div', '', 'AutoEq 耳机校正'));
     aeLab.appendChild(el('div', 'set-hint', '按耳机型号套用 AutoEq 实测校正曲线（oratory1990 / crinacle / Rtings 等来源）；低架/高架滤波以峰值滤波近似，前级增益由自动前级补偿接管'));
@@ -1182,7 +1182,7 @@
       var q = aeIn.value.trim().toLowerCase();
       if (!q || !aeData) { if (q && !aeData) aeLoad(); return; }
       var hits = aeData.models.filter(function (m) { return m.n.toLowerCase().includes(q); }).slice(0, 8);
-      if (!hits.length) { aeList.appendChild(el('div', 'set-hint', '子集内无匹配型号（共 ' + aeData.count + ' 款精选，冷门型号可手动按 AutoEq 网页结果加频段）')); return; }
+      if (!hits.length) { aeList.appendChild(el('div', 'set-hint', '库内无匹配型号（共 ' + aeData.count + ' 款，可手动按 AutoEq 网页结果加频段）')); return; }
       hits.forEach(function (m) {
         var it = el('div', 'autoeq-item' + (aeSel === m ? ' sel' : ''));
         it.appendChild(el('span', 'autoeq-name', m.n));

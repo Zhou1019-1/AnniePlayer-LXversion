@@ -1,8 +1,9 @@
-/* AutoEq 精选子集构建脚本（V4.2 规划功能）
- * 从 jaakkopasanen/AutoEq 仓库拉取热门耳机型号的 ParametricEQ 实测校正结果，
+/* AutoEq 全量库构建脚本（V4.2 起）
+ * 从 jaakkopasanen/AutoEq 仓库拉取全部耳机型号的 ParametricEQ 实测校正结果，
  * 转换为本机 PEQ 可用格式（仅 peaking 滤波、最多 8 段），输出 annie/renderer/autoeq-subset.json。
  *
- * 用法：node scripts/autoeq-build.js
+ * 用法：node scripts/autoeq-build.js            # 全量（7000+ 型号，并发拉取，几分钟）
+ *      node scripts/autoeq-build.js --curated  # 仅精选子集（CURATED 正则列表）
  * 输出：annie/renderer/autoeq-subset.json（提交入仓；重新生成才需要联网）
  *
  * 转换规则（与引擎 PeqChain 对齐）：
@@ -21,6 +22,8 @@ const path = require('path');
 const INDEX_URL = 'https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/INDEX.md';
 const RAW_BASE = 'https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/';
 const OUT = path.join(__dirname, '..', 'annie', 'renderer', 'autoeq-subset.json');
+const CURATED_ONLY = process.argv.includes('--curated');
+const CONCURRENCY = 16;
 
 /* 测量来源优先级（同型号多来源时取靠前） */
 const SRC_PRIORITY = ['oratory1990', 'crinacle', 'Rtings', 'Innerfidelity', 'Super Review',
@@ -149,41 +152,60 @@ function reduceTo8(filters) {
   return kept.map(b => [b.f, +b.g.toFixed(1), +b.q.toFixed(2)]);
 }
 
+async function buildModel(e) {
+  const seg = decodeURIComponent(e.path.split('/').pop());
+  const url = RAW_BASE + e.path + '/' + encodeURIComponent(seg + ' ParametricEQ.txt');
+  const txt = await fetchText(url);
+  const { preamp, filters } = parsePeq(txt);
+  if (!filters.length) throw new Error('无滤波解析结果');
+  return { n: e.name, src: e.source, type: formFactor(e.path), pre: preamp, b: reduceTo8(filters) };
+}
+
 (async () => {
-  console.log('拉取 INDEX.md …');
+  console.log('拉取 INDEX.md …（模式：' + (CURATED_ONLY ? '精选子集' : '全量') + '）');
   const md = await fetchText(INDEX_URL);
   const entries = parseIndex(md);
   console.log('索引条目：' + entries.length);
 
-  const used = new Set();
   const models = [];
   const missed = [];
   const failed = [];
 
-  for (const re of CURATED) {
-    const e = pickEntry(re, entries, used);
-    if (!e) { missed.push(String(re)); continue; }
-    used.add(e.path);
-    const seg = decodeURIComponent(e.path.split('/').pop());
-    const url = RAW_BASE + e.path + '/' + encodeURIComponent(seg + ' ParametricEQ.txt');
-    try {
-      const txt = await fetchText(url);
-      const { preamp, filters } = parsePeq(txt);
-      if (!filters.length) { failed.push(e.name + '（无滤波解析结果）'); continue; }
-      models.push({
-        n: e.name, src: e.source, type: formFactor(e.path),
-        pre: preamp, b: reduceTo8(filters),
-      });
-      console.log('✓ ' + e.name + '  [' + e.source + ']  ' + filters.length + ' 段 → 8 段');
-    } catch (err) {
-      failed.push(e.name + '（' + err.message + '）');
+  if (CURATED_ONLY) {
+    const used = new Set();
+    for (const re of CURATED) {
+      const e = pickEntry(re, entries, used);
+      if (!e) { missed.push(String(re)); continue; }
+      used.add(e.path);
+      try {
+        models.push(await buildModel(e));
+        console.log('✓ ' + e.name + '  [' + e.source + ']');
+      } catch (err) {
+        failed.push(e.name + '（' + err.message + '）');
+      }
     }
+  } else {
+    // 全量：并发池拉取，按 200 条打印进度
+    let done = 0;
+    const queue = entries.slice();
+    const workers = Array.from({ length: CONCURRENCY }, async () => {
+      while (queue.length) {
+        const e = queue.shift();
+        try {
+          models.push(await buildModel(e));
+        } catch (err) {
+          failed.push(e.name + '（' + err.message + '）');
+        }
+        if (++done % 200 === 0) console.log('进度 ' + done + '/' + entries.length + '（失败 ' + failed.length + '）');
+      }
+    });
+    await Promise.all(workers);
   }
 
   models.sort((a, b) => a.n.localeCompare(b.n, 'en'));
   const out = {
     version: 1,
-    desc: 'AutoEq 精选耳机校正子集（jaakkopasanen/AutoEq 实测数据，峰化近似，最多 8 段）',
+    desc: 'AutoEq 耳机校正库（jaakkopasanen/AutoEq 实测数据，峰化近似，最多 8 段）',
     generated: new Date().toISOString().slice(0, 10),
     count: models.length,
     models,
@@ -192,5 +214,5 @@ function reduceTo8(filters) {
   const kb = (fs.statSync(OUT).size / 1024).toFixed(1);
   console.log('\n完成：' + models.length + ' 个型号 → ' + OUT + '（' + kb + ' KB）');
   if (missed.length) console.log('未匹配（' + missed.length + '）：\n  ' + missed.join('\n  '));
-  if (failed.length) console.log('拉取/解析失败（' + failed.length + '）：\n  ' + failed.join('\n  '));
+  if (failed.length) console.log('拉取/解析失败（' + failed.length + '）：\n  ' + failed.slice(0, 50).join('\n  ') + (failed.length > 50 ? '\n  …' : ''));
 })().catch(e => { console.error(e); process.exit(1); });

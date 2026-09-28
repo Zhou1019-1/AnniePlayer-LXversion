@@ -2184,7 +2184,10 @@
     var btnLx = el('button', 'btn-ghost', '洛雪音乐 LX Music');
     btnLx.title = 'musicSdk 音源';
     btnLx.onclick = function () { window.mine.openExternal('https://github.com/lyswhut/lx-music-desktop'); };
-    thWrap.appendChild(btnDog); thWrap.appendChild(btnLx);
+    var btnQb = el('button', 'btn-ghost', 'QobuzDownloaderX @ImAiiR');
+    btnQb.title = 'Qobuz 下载器先驱 · V4.3.6 Qobuz 功能的设计参考';
+    btnQb.onclick = function () { window.mine.openExternal('https://github.com/ImAiiR/QobuzDownloaderX'); };
+    thWrap.appendChild(btnDog); thWrap.appendChild(btnLx); thWrap.appendChild(btnQb);
     thRow.appendChild(thLab); thRow.appendChild(thWrap);
     sThanks.appendChild(thRow);
 

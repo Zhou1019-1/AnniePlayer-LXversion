@@ -87,6 +87,7 @@
       for (var p in out) S.meta[p] = out[p];
       // 解析失败的曲目主进程不入缓存——打失败标记，防止每次渲染都重复请求
       missing.forEach(function (t) { if (!S.meta[t.path]) S.meta[t.path] = { fail: true }; });
+      S._metaTick = (S._metaTick || 0) + 1; // V4.3.8：首字母排序缓存失效
       if (!(window.annieTheme && annieTheme.current === 'am')) return;
       // 专辑网格的分组依赖标签，需整视图重排；曲目表只补丁可见行文本，避免整视图重建
       if (S.view === 'albums' && !S.albumKey) renderView();
@@ -124,8 +125,9 @@
       window.mine.metaBatch(missing).then(function (out) {
         for (var p in out) S.meta[p] = out[p];
         missing.forEach(function (p) { if (!S.meta[p]) S.meta[p] = { fail: true }; });
-        // 新标签可能让新曲目命中搜索，需重绘；但按块到达，200ms 合并避免每块整表重建
-        if (S.search && window.annieTheme && annieTheme.current === 'am') {
+        S._metaTick = (S._metaTick || 0) + 1; // V4.3.8：首字母排序缓存失效
+        // 新标签可能让新曲目命中搜索/改变歌曲视图排序，需重绘；但按块到达，200ms 合并避免每块整表重建
+        if ((S.search || S.view === 'songs') && window.annieTheme && annieTheme.current === 'am') {
           clearTimeout(S._deepRT);
           S._deepRT = setTimeout(renderView, 200);
         }
@@ -213,8 +215,46 @@
     return Object.keys(map).sort().map(function (k) { return map[k]; });
   }
 
+  /* V4.3.8：全曲库「歌曲」视图按标题首字母排序（中文按拼音首字母，查 pyinitial.js 字表）。
+   * 排序结果按（列表引用+搜索词+标签版本）记忆，标签深加载到一块就失效重排；
+   * S._azCache.firstIdx 供 am-dom.js 的 A–Z 索引栏跳转。 */
+  var _azCollator = null;
+  function azCollator() {
+    if (!_azCollator) {
+      try { _azCollator = new Intl.Collator(['zh-Hans-u-co-pinyin', 'en'], { sensitivity: 'base', numeric: true }); }
+      catch (e) { _azCollator = { compare: function (a, b) { return a < b ? -1 : a > b ? 1 : 0; } }; }
+    }
+    return _azCollator;
+  }
+  function azLetterOf(title) {
+    if (window.annieInitialOf) return window.annieInitialOf(title);
+    var ch = String(title || '').replace(/^\s+/, '').charAt(0);
+    return /[a-z]/i.test(ch) ? ch.toUpperCase() : '#';
+  }
+  function sortByInitial(list) {
+    var tick = S._metaTick || 0, search = S.search || '';
+    var cache = S._azCache;
+    if (cache && cache.list === list && cache.search === search && cache.tick === tick) return cache.out;
+    var col = azCollator();
+    var keys = list.map(function (t) {
+      var title = trackMeta(t).title || '';
+      return { t: t, letter: azLetterOf(title), title: title };
+    });
+    keys.sort(function (a, b) {
+      // '#'（数字/符号/生僻字）排最后，其余按字母；同字母内按拼音/字母序
+      var la = a.letter === '#' ? '\uffff' : a.letter, lb = b.letter === '#' ? '\uffff' : b.letter;
+      if (la !== lb) return la < lb ? -1 : 1;
+      return col.compare(a.title, b.title);
+    });
+    var firstIdx = {};
+    var out = keys.map(function (k, i) { if (firstIdx[k.letter] === undefined) firstIdx[k.letter] = i; return k.t; });
+    S._azCache = { list: list, search: search, tick: tick, out: out, firstIdx: firstIdx };
+    return out;
+  }
+
   function currentTracks() {
     var list = allTracks();
+    var isSongs = S.view === 'songs';
     if (S.view === 'favorites') {
       list = list.filter(function (t) { return state.favorites && state.favorites.has(t.path); });
     } else if (S.view.indexOf('pl:') === 0) {
@@ -239,6 +279,7 @@
         return (m.title + ' ' + m.artist + ' ' + m.album).toLowerCase().indexOf(q) >= 0;
       });
     }
+    if (isSongs) list = sortByInitial(list); // V4.3.8：歌曲视图（含搜索结果）按首字母排序
     return list;
   }
   function refreshPlaylists() {

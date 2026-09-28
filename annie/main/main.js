@@ -1216,18 +1216,8 @@ function setupAutoUpdate() {
   try { autoUpdater.logger = require('electron-log'); } catch (e) { }
   const ulog = autoUpdater.logger || console;
   autoUpdater.autoInstallOnAppQuit = true;
-  // V4.3.7：双更新源——自建源优先（国内直连快），检查/下载失败回落 GitHub。
-  // 自建源 = generic 静态目录（Nginx 托管 latest.yml + 安装包 + blockmap，CI 发版时 SCP 同步）
-  const FEED_SELF = { provider: 'generic', url: 'http://192.140.166.57:8463' };
-  const FEED_GITHUB = { provider: 'github', owner: 'Zhou1019-1', repo: 'AnniePlayer-LXversion' };
-  let feedFallbackDone = false;
-  try { autoUpdater.setFeedURL(FEED_SELF); } catch { }
-  function fallbackToGithub() {
-    if (feedFallbackDone) return;
-    feedFallbackDone = true;
-    ulog.info('[updater] 自建源不可用，回落 GitHub');
-    try { autoUpdater.setFeedURL(FEED_GITHUB); autoUpdater.checkForUpdates().catch(() => { }); } catch { }
-  }
+  // V4.3.8：自建更新源方案已废弃（用户拍板回纯 GitHub），V4.3.7 曾短暂使用双源。
+  // 服务器 latest.yml 已删除 → V4.3.7 客户端检查 404 → error 分支回落 GitHub，不会卡死。
   // 设置中心「更新」页状态推送（checking/available/latest/downloading/ready/error）
   const sendUpd = (status, data) => {
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:updateStatus', { status, data }); } catch { }
@@ -1263,11 +1253,7 @@ function setupAutoUpdate() {
       }
     } catch { }
   });
-  autoUpdater.on('error', (e) => {
-    console.warn('[update] 更新检查失败(不打扰用户):', e && e.message);
-    if (!feedFallbackDone) { fallbackToGithub(); return; } // 自建源失败先回落，GitHub 也失败才报用户
-    sendUpd('error', String(e && e.message || e));
-  });
+  autoUpdater.on('error', (e) => { console.warn('[update] 更新检查失败(不打扰用户):', e && e.message); sendUpd('error', String(e && e.message || e)); });
 
   /* V3.5.9：更新安装前的彻底退出（托盘/引擎/Worker 全清理，进程必死） */
   async function forceQuitForInstall() {

@@ -16,12 +16,14 @@
 
   var S = {
     mounted: false,
-    view: 'songs',        // songs | albums | folders | favorites | stream | pl:<id>
+    view: 'songs',        // songs | albums | folders | favorites | stream | pl:<id> | spl:<id>
     albumKey: null,       // 专辑详情（albums 视图点入）
     folderKey: null,      // 文件夹详情：{root, seg}（folders 视图点入）
     libFolders: [],       // 媒体库根文件夹（lib:get 缓存）
     search: '',
     playlists: [],
+    streamPlaylists: [],  // V4.3.5：在线歌单 [{id,name,items:[{provider,song,addedAt}]}]
+    _playList: null,      // 当前流媒体播放队列（=stResults 或在线歌单曲目数组）
     meta: {},             // path -> {title,artist,album,...}（metaBatch 缓存）
     metaDeep: false,      // 搜索时是否已发起全库标签加载
     cover: {},            // 实际文件 path -> dataURL | null（lazy + 并发限流）
@@ -240,6 +242,11 @@
     return list;
   }
   function refreshPlaylists() {
+    window.mine.splList().then(function (pls) {
+      S.streamPlaylists = Array.isArray(pls) ? pls : [];
+      renderSidebar();
+      if (S.view.indexOf('spl:') === 0) renderView();
+    }).catch(function () { });
     return window.mine.playlists().then(function (pls) {
       S.playlists = Array.isArray(pls) ? pls : [];
       renderSidebar();

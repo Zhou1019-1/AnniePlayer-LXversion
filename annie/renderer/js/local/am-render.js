@@ -54,7 +54,7 @@
     if (!R.btnMode || !window.anniePlayMode) return;
     var inf = window.anniePlayMode.info();
     R.btnMode.textContent = inf.icon;
-    R.btnMode.title = '播放模式：' + inf.label + (inf.hint ? '\n' + inf.hint : '') + '\n（仅本地播放生效，点击切换）';
+    R.btnMode.title = '播放模式：' + inf.label + (inf.hint ? '\n' + inf.hint : '') + '\n（本地全量生效；在线播放支持顺序/随机/单曲循环，点击切换）';
   }
   function syncTimerBtn() {
     if (!R.btnTimer) return;

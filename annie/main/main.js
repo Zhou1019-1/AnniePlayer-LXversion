@@ -205,11 +205,12 @@ function loadStore() {
     const s = JSON.parse(fs.readFileSync(storePath(), 'utf8'));
     if (!Array.isArray(s.favorites)) s.favorites = [];
     if (!Array.isArray(s.playlists)) s.playlists = []; // SVLX 1.3.0：自建播放列表 [{id,name,paths,created}]
+    if (!Array.isArray(s.streamPlaylists)) s.streamPlaylists = []; // V4.3.5：在线歌单 [{id,name,items:[{provider,song,addedAt}],created}]
     if (!s.metaCache || typeof s.metaCache !== 'object') s.metaCache = {};
     if (!s.stats || typeof s.stats !== 'object') s.stats = {}; // Pro beat0.0.1：播放统计
     _storeMem = s;
   }
-  catch { _storeMem = { folders: [], tracks: [], volume: 1, backend: null, favorites: [], playlists: [], metaCache: {}, stats: {} }; }
+  catch { _storeMem = { folders: [], tracks: [], volume: 1, backend: null, favorites: [], playlists: [], streamPlaylists: [], metaCache: {}, stats: {} }; }
   return _storeMem;
 }
 
@@ -619,6 +620,69 @@ function registerIpc() {
     const pl = store.playlists.find(p => p.id === id);
     if (pl) { pl.paths = pl.paths.filter(p => p !== trackPath); saveStore({ playlists: store.playlists }); }
     return store.playlists;
+  });
+
+  // V4.3.5：在线歌单（流媒体收藏）——items 存 {provider, song, addedAt}；
+  // song 为洛雪 lx-sdk 原始曲目对象（含平台 ID/meta），播放地址每次现解析，不落盘 URL
+  const splItemKey = (it) => {
+    const s = (it && it.song) || {};
+    return (it && it.provider || '') + '|' + String(s.songmid || s.id || s.hash || s.rid ||
+      ((s.name || '') + '|' + (s.artist || '') + '|' + (s.duration || '')));
+  };
+  const splNormalize = (song) => {
+    if (!song || typeof song !== 'object' || !song.provider) return null;
+    return { provider: String(song.provider), song, addedAt: Date.now() };
+  };
+  ipcMain.handle('spl:list', () => loadStore().streamPlaylists);
+  ipcMain.handle('spl:create', (_e, name) => {
+    const store = loadStore();
+    const pl = {
+      id: 'spl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+      name: String(name || '').trim() || '新建在线歌单',
+      items: [],
+      created: Date.now()
+    };
+    store.streamPlaylists.push(pl);
+    saveStore({ streamPlaylists: store.streamPlaylists });
+    return store.streamPlaylists;
+  });
+  ipcMain.handle('spl:rename', (_e, id, name) => {
+    const store = loadStore();
+    const pl = store.streamPlaylists.find(p => p.id === id);
+    if (pl) { const n = String(name || '').trim(); if (n) { pl.name = n; saveStore({ streamPlaylists: store.streamPlaylists }); } }
+    return store.streamPlaylists;
+  });
+  ipcMain.handle('spl:delete', (_e, id) => {
+    const store = loadStore();
+    saveStore({ streamPlaylists: store.streamPlaylists.filter(p => p.id !== id) });
+    return loadStore().streamPlaylists;
+  });
+  ipcMain.handle('spl:add', (_e, id, songs) => {
+    const store = loadStore();
+    const pl = store.streamPlaylists.find(p => p.id === id);
+    let added = 0;
+    if (pl && Array.isArray(songs)) {
+      const keys = new Set(pl.items.map(splItemKey));
+      for (const raw of songs) {
+        const it = splNormalize(raw);
+        if (!it) continue;
+        const k = splItemKey(it);
+        if (keys.has(k)) continue; // 同平台同曲去重
+        keys.add(k); pl.items.push(it); added++;
+      }
+      if (added) saveStore({ streamPlaylists: store.streamPlaylists });
+    }
+    return { playlists: store.streamPlaylists, added };
+  });
+  ipcMain.handle('spl:remove', (_e, id, indexes) => {
+    const store = loadStore();
+    const pl = store.streamPlaylists.find(p => p.id === id);
+    if (pl && Array.isArray(indexes)) {
+      const del = new Set(indexes.filter(i => Number.isInteger(i)));
+      pl.items = pl.items.filter((_, i) => !del.has(i));
+      saveStore({ streamPlaylists: store.streamPlaylists });
+    }
+    return store.streamPlaylists;
   });
 
   // 批量读取标签（排序用），结果写入 metaCache 持久化，避免重复解析

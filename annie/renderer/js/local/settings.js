@@ -962,7 +962,7 @@
     var sPm = section(pgPlayback, '播放模式');
     var pmRow = markItem(el('div', 'set-row'), '播放模式 顺序播放 随机播放 单曲循环 shuffle repeat');
     var pmLab = el('div'); pmLab.appendChild(el('div', '', '默认播放模式'));
-    pmLab.appendChild(el('div', 'set-hint', '与播放栏的模式按钮同步，仅本地播放生效'));
+    pmLab.appendChild(el('div', 'set-hint', '与播放栏的模式按钮同步；本地全量生效，在线播放支持顺序/随机/单曲循环'));
     var pmSel = document.createElement('select');
     if (window.anniePlayMode) {
       window.anniePlayMode.list.forEach(function (m) {

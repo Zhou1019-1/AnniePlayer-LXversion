@@ -25,6 +25,7 @@
   var prev = AM.prev;
   var seek = AM.seek;
   var renderStreamView = AM.renderStreamView;
+  var renderSplView = AM.renderSplView; // V4.3.5：在线歌单视图（am-stream 片先加载，引用有效）
   var applyLyrStyle = AM.applyLyrStyle;
   var toggleLyrSetPop = AM.toggleLyrSetPop;
   // 前向引用：目标函数由后加载分片注册到桥，调用时才取值（加载期取不到）
@@ -115,7 +116,7 @@
     R.btnLocate = el('button', 'am-tbtn', '🎯'); R.btnLocate.title = '定位当前播放文件';
     R.btnLocate.onclick = locatePlaying;
     right.appendChild(R.btnExcl); right.appendChild(R.btnLocate);
-    // 播放模式循环切换（仅本地播放生效）
+    // 播放模式循环切换（本地全量；在线支持顺序/随机/单曲循环）
     R.btnMode = el('button', 'am-tbtn', '→');
     syncModeBtn();
     R.btnMode.onclick = function () {
@@ -143,6 +144,14 @@
     btnDlyr.onclick = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
     document.addEventListener('annie-dlyrics-changed', function (e) { btnDlyr.classList.toggle('on', !!(e.detail && e.detail.on)); });
     right.appendChild(btnDlyr);
+    // V4.3.5：播放中一键收藏（仅在线歌曲；本地歌曲走行内 ♥）
+    var btnNpFav = el('button', 'am-tbtn', '♥');
+    btnNpFav.title = '收藏正在播放的在线歌曲到在线歌单';
+    btnNpFav.onclick = function () {
+      var r = btnNpFav.getBoundingClientRect();
+      if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
+    };
+    right.appendChild(btnNpFav);
     // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
     var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
     btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };
@@ -283,6 +292,38 @@
     };
     sb.appendChild(add);
 
+    // V4.3.5：在线歌单（流媒体收藏；与本地播放列表并列但互不相混）
+    sb.appendChild(el('div', 'am-side-h', '在线歌单'));
+    (S.streamPlaylists || []).forEach(function (pl) {
+      var b = nav('☁️', pl.name, 'spl:' + pl.id);
+      var del = el('button', 'am-nav-del', '✕');
+      del.title = '删除在线歌单';
+      del.onclick = function (e) {
+        e.stopPropagation();
+        if (!confirm('删除在线歌单「' + pl.name + '」？（不影响任何本地文件）')) return;
+        window.mine.splDelete(pl.id).then(function (pls) {
+          S.streamPlaylists = pls;
+          if (S.view === 'spl:' + pl.id) S.view = 'stream';
+          renderSidebar(); renderView();
+        });
+      };
+      b.appendChild(del);
+      sb.appendChild(b);
+    });
+    var addSpl = el('button', 'am-nav am-new');
+    addSpl.appendChild(el('span', 'am-nav-ico', '＋'));
+    addSpl.appendChild(el('span', 'am-nav-name', '新建在线歌单'));
+    addSpl.onclick = function () {
+      amPrompt('在线歌单名称', '新建在线歌单', function (name) {
+        window.mine.splCreate(name).then(function (pls) {
+          S.streamPlaylists = pls;
+          S.view = 'spl:' + pls[pls.length - 1].id;
+          renderSidebar(); renderView();
+        });
+      });
+    };
+    sb.appendChild(addSpl);
+
     // 本地搜索（AM 语义：全库搜索；输入即切回歌曲视图并深加载全库标签）
     var sch = el('div', 'am-search');
     sch.appendChild(el('span', null, '⌕'));
@@ -320,6 +361,7 @@
     }
 
     if (S.view === 'stream') { renderStreamView(c); return; }
+    if (S.view.indexOf('spl:') === 0) { renderSplView(c); return; } // V4.3.5：在线歌单
 
     var tracks = currentTracks();
 

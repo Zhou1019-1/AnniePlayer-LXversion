@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('mine', {
   playlistRename: (id, name) => ipcRenderer.invoke('lib:playlist:rename', id, name),
   playlistDelete: (id) => ipcRenderer.invoke('lib:playlist:delete', id),
   playlistAdd: (id, paths) => ipcRenderer.invoke('lib:playlist:add', id, paths),
+  // V4.3.5：在线歌单（流媒体收藏）
+  splList: () => ipcRenderer.invoke('spl:list'),
+  splCreate: (name) => ipcRenderer.invoke('spl:create', name),
+  splRename: (id, name) => ipcRenderer.invoke('spl:rename', id, name),
+  splDelete: (id) => ipcRenderer.invoke('spl:delete', id),
+  splAdd: (id, songs) => ipcRenderer.invoke('spl:add', id, songs),
+  splRemove: (id, indexes) => ipcRenderer.invoke('spl:remove', id, indexes),
   playlistRemove: (id, p) => ipcRenderer.invoke('lib:playlist:remove', id, p),
 
   // EXP 7.28：Worker 曲库扫描（批量/进度/取消）

@@ -86,3 +86,29 @@ jobs:
             setupEXE/annie-player-svlx-setup-*.exe
             setupEXE/annie-player-svlx-setup-*.exe.blockmap
             setupEXE/V*-setup.exe
+
+      # V4.3.7：同步自建更新源（客户端优先走它，失败回落 GitHub）。
+      # 私钥在仓库 Secrets 的 ANNIE_UPD_SSH_KEY；服务器账号 upd 仅有写更新目录权限。
+      - name: 同步到自建更新源（SCP）
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 192.140.166.57
+          port: 22
+          username: upd
+          key: ${{ secrets.ANNIE_UPD_SSH_KEY }}
+          source: "setupEXE/latest.yml,setupEXE/annie-player-svlx-setup-*.exe,setupEXE/annie-player-svlx-setup-*.exe.blockmap"
+          target: /www/wwwroot/annie-updates/
+          strip_components: 1
+
+      # 防堆积：只保留最新 2 个版本的安装包/blockmap（latest.yml 永远指向最新）
+      - name: 服务器清理旧版本
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: 192.140.166.57
+          port: 22
+          username: upd
+          key: ${{ secrets.ANNIE_UPD_SSH_KEY }}
+          script: |
+            cd /www/wwwroot/annie-updates
+            ls -t annie-player-svlx-setup-*.exe 2>/dev/null | tail -n +3 | xargs -r rm -f
+            ls -t annie-player-svlx-setup-*.exe.blockmap 2>/dev/null | tail -n +3 | xargs -r rm -f

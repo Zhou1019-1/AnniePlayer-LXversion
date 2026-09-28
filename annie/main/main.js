@@ -12,6 +12,7 @@ const streaming = require('./streaming');
 const onlineMatch = require('./onlineMatch');
 const analyzer = require('./analyzer');
 const tagWriter = require('./tagWriter'); // V3.5.9：曲库标签编辑（与下载写标签同一实现）
+const qobuz = require('./qobuz'); // V4.3.6：Qobuz 在线播放/下载（用户登录自己的付费账号）
 
 const engine = new EngineClient();
 let mainWindow = null;
@@ -1307,6 +1308,7 @@ if (global.__svlxBoot) {
   registerIpc();
   setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
+  qobuz.init({ loadStore, flushStore });
   setupImageReferer();
   engine.start();
   // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
@@ -1341,6 +1343,7 @@ if (!gotLock) {
     registerIpc();
     setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
+    qobuz.init({ loadStore, flushStore });
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入
     engine.start(); // 引擎拉起失败不阻塞 UI，调用时再报错
     // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时

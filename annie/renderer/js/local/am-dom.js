@@ -147,7 +147,8 @@
     // V4.3.5：播放中一键收藏（仅在线歌曲；本地歌曲走行内 ♥）
     var btnNpFav = el('button', 'am-tbtn', '♥');
     btnNpFav.title = '收藏正在播放的在线歌曲到在线歌单';
-    btnNpFav.onclick = function () {
+    btnNpFav.onclick = function (e) {
+      e.stopPropagation(); // 防 document 点击代理把刚打开的收藏弹层立刻关掉
       var r = btnNpFav.getBoundingClientRect();
       if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
     };
@@ -242,6 +243,7 @@
 
     sb.appendChild(el('div', 'am-side-h', '媒体库'));
     sb.appendChild(nav('🔍', '在线音乐', 'stream'));
+    sb.appendChild(nav('🔷', 'Qobuz', 'qobuz')); // V4.3.6：Qobuz 在线播放/下载（登录自己的付费账号）
     // 添加文件夹：只作入口，文件夹列表不外显在 AM 界面（与粒子舞台/FB2K 不同）
     var addFolder = el('button', 'am-nav am-new');
     addFolder.appendChild(el('span', 'am-nav-ico', '＋'));
@@ -296,6 +298,15 @@
     sb.appendChild(el('div', 'am-side-h', '在线歌单'));
     (S.streamPlaylists || []).forEach(function (pl) {
       var b = nav('☁️', pl.name, 'spl:' + pl.id);
+      // 图标位换成第一首曲目的封面缩略图（整专收藏即专辑封面），无封面保留 ☁️
+      var fc = pl.items && pl.items.length && pl.items[0].song && pl.items[0].song.cover;
+      if (fc) {
+        var ico = b.querySelector('.am-nav-ico');
+        var cv = el('img'); cv.alt = ''; cv.loading = 'lazy';
+        cv.style.cssText = 'width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none';
+        cv.src = fc; cv.onerror = function () { cv.style.visibility = 'hidden'; };
+        ico.textContent = ''; ico.appendChild(cv);
+      }
       var del = el('button', 'am-nav-del', '✕');
       del.title = '删除在线歌单';
       del.onclick = function (e) {
@@ -323,6 +334,29 @@
       });
     };
     sb.appendChild(addSpl);
+
+    // 收藏的平台歌单（歌单广场 ☆ 收藏歌单 的来源；localStorage，am-stream 片提供存取与跳转）
+    var slFavs = AM.slFavs ? AM.slFavs() : [];
+    if (slFavs.length) {
+      sb.appendChild(el('div', 'am-side-h', '收藏的歌单'));
+      slFavs.forEach(function (f) {
+        var b = el('button', 'am-nav');
+        b.appendChild(el('span', 'am-nav-ico', '🎵'));
+        var pf = (AM.PLATFORMS && AM.PLATFORMS[f.provider]) ? AM.PLATFORMS[f.provider].replace('音乐', '') : f.provider;
+        b.appendChild(el('span', 'am-nav-name', pf + ' · ' + f.name));
+        b.onclick = function () { if (AM.openFavSongList) AM.openFavSongList(f); };
+        var del = el('button', 'am-nav-del', '✕');
+        del.title = '取消收藏';
+        del.onclick = function (e) {
+          e.stopPropagation();
+          if (!AM.slFavSave) return;
+          AM.slFavSave(AM.slFavs().filter(function (v) { return !(v.id === f.id && v.provider === f.provider); }));
+          renderSidebar(); renderView();
+        };
+        b.appendChild(del);
+        sb.appendChild(b);
+      });
+    }
 
     // 本地搜索（AM 语义：全库搜索；输入即切回歌曲视图并深加载全库标签）
     var sch = el('div', 'am-search');
@@ -361,6 +395,7 @@
     }
 
     if (S.view === 'stream') { renderStreamView(c); return; }
+    if (S.view === 'qobuz') { if (AM.renderQobuzView) AM.renderQobuzView(c); return; } // V4.3.6：Qobuz 视图
     if (S.view.indexOf('spl:') === 0) { renderSplView(c); return; } // V4.3.5：在线歌单
 
     var tracks = currentTracks();

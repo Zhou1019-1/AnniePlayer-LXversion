@@ -89,26 +89,19 @@ jobs:
 
       # V4.3.7：同步自建更新源（客户端优先走它，失败回落 GitHub）。
       # 私钥在仓库 Secrets 的 ANNIE_UPD_SSH_KEY；服务器账号 upd 仅有写更新目录权限。
-      - name: 同步到自建更新源（SCP）
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: 192.140.166.57
-          port: 22
-          username: upd
-          key: ${{ secrets.ANNIE_UPD_SSH_KEY }}
-          source: "setupEXE/latest.yml,setupEXE/annie-player-svlx-setup-*.exe,setupEXE/annie-player-svlx-setup-*.exe.blockmap"
-          target: /www/wwwroot/annie-updates/
-          strip_components: 1
-
-      # 防堆积：只保留最新 2 个版本的安装包/blockmap（latest.yml 永远指向最新）
-      - name: 服务器清理旧版本
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: 192.140.166.57
-          port: 22
-          username: upd
-          key: ${{ secrets.ANNIE_UPD_SSH_KEY }}
-          script: |
-            cd /www/wwwroot/annie-updates
-            ls -t annie-player-svlx-setup-*.exe 2>/dev/null | tail -n +3 | xargs -r rm -f
-            ls -t annie-player-svlx-setup-*.exe.blockmap 2>/dev/null | tail -n +3 | xargs -r rm -f
+      # 注意：appleboy/* 是容器 Action 仅支持 Linux runner，本 job 在 Windows 上，故用自带 OpenSSH。
+      - name: 同步到自建更新源（SCP + 清理旧版本防堆积）
+        shell: pwsh
+        env:
+          ANNIE_UPD_SSH_KEY: ${{ secrets.ANNIE_UPD_SSH_KEY }}
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'annie_upd_key'
+          Set-Content -Path $key -Value $env:ANNIE_UPD_SSH_KEY -Encoding ascii
+          # Windows OpenSSH 要求私钥文件权限严格（仅当前用户可读）
+          icacls $key /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+          $files = @('setupEXE\latest.yml') + (Get-ChildItem 'setupEXE\annie-player-svlx-setup-*.exe','setupEXE\annie-player-svlx-setup-*.exe.blockmap' | ForEach-Object { $_.FullName })
+          scp -i $key -o StrictHostKeyChecking=accept-new $files upd@192.140.166.57:/www/wwwroot/annie-updates/
+          if ($LASTEXITCODE -ne 0) { throw "scp 失败 exit=$LASTEXITCODE" }
+          # 防堆积：只保留最新 2 个版本的安装包/blockmap（latest.yml 永远指向最新）
+          ssh -i $key -o StrictHostKeyChecking=accept-new upd@192.140.166.57 "cd /www/wwwroot/annie-updates && ls -t annie-player-svlx-setup-*.exe 2>/dev/null | tail -n +3 | xargs -r rm -f && ls -t annie-player-svlx-setup-*.exe.blockmap 2>/dev/null | tail -n +3 | xargs -r rm -f && echo cleaned"
+          if ($LASTEXITCODE -ne 0) { throw "ssh 清理失败 exit=$LASTEXITCODE" }

@@ -656,7 +656,17 @@
       c.scrollTo({ top: base + idx * win.rowH - headH - win.rowH - 6, behavior: 'smooth' });
     } else {
       var rows = c.querySelectorAll('tr.am-tr');
-      if (rows[idx]) rows[idx].scrollIntoView({ block: 'start', behavior: 'smooth' });
+      var row = rows[idx];
+      if (row) {
+        // V4.3.11 修复：不能用 scrollIntoView——它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
+        //（用户实锤：点字母索引后顶部播放栏消失）。与窗口化路径同算法手动滚容器，
+        // 并回退「表头 + 一行 + 6px」防 sticky 表头遮挡。
+        var thead = c.querySelector('thead');
+        var headH2 = thead ? thead.offsetHeight : 0;
+        var cRect = c.getBoundingClientRect();
+        var top = row.getBoundingClientRect().top - cRect.top + c.scrollTop - headH2 - row.offsetHeight - 6;
+        c.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      }
     }
   }
   /* 滚动时按首个可见行反推当前字母并高亮（仅窗口化路径调用，小列表无感） */

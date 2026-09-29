@@ -148,13 +148,22 @@
   function lyrLoad(path) {
     lyrFor = path || null;
     lyrLines = [];
-    if (!path || path.startsWith('http')) return;
+    if (!path) return;
+    // 流媒体（洛雪/AM在线/Qobuz）：歌词由各来源注入 __annieStreamLrcByPath 并广播 annie-stream-lyric
+    const sc = window.__annieStreamLrcByPath && window.__annieStreamLrcByPath[path];
+    if (sc) { lyrLines = parseLrc(sc); return; }
+    if (path.startsWith('http')) return; // 未到时等 annie-stream-lyric 事件触发重载
     const real = path.includes('#cue') ? path.slice(0, path.indexOf('#cue')) : path;
     window.mine.lyrics(real).then(r => {
       if (lyrFor !== path) return;
       if (r && r.ok && r.text) lyrLines = parseLrc(r.text);
     }).catch(() => { });
   }
+  // 流媒体歌词到达：命中桌面歌词当前曲目则重载（否则 http 路径永远无词）
+  document.addEventListener('annie-stream-lyric', (e) => {
+    if (!e.detail || e.detail.path !== lyrFor) return;
+    lyrLoad(lyrFor);
+  });
   function getLyric() {
     if (!lyrLines.length) return { cur: '', next: '' };
     // V3.5.15：歌词偏移（按曲记忆，与 AM/FB2K 同一 Store）

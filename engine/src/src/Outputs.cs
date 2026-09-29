@@ -685,6 +685,8 @@ public sealed class AsioBackend : IOutputBackend
 {
     private AsioOut? _asio;
     private readonly string _driverName;
+    // 驱动拒绝源采样率时的回退表（高→低，PCM/DSD 两族都覆盖）
+    private static readonly int[] AsioFallbackRates = { 768000, 705600, 384000, 352800, 192000, 176400, 96000, 88200, 48000, 44100 };
 
     public string Kind => "asio";
     public string DeviceName => _driverName;
@@ -787,13 +789,26 @@ public sealed class AsioBackend : IOutputBackend
                 $"ASIO 驱动 [{_driverName}] 初始化失败: {ex.Message}。请确认驱动已正确安装且未被其他程序独占占用。");
         }
 
-        // 验证采样率支持
+        // 验证采样率支持；驱动拒绝时按回退率表逐一对齐驱动（对齐成功 → 返回该率，引擎重采样重开）
+        // V4.3.12：DSD 转 PCM 会产生 705.6k/1411.2k 等超高率，驱动必拒——没有回退就是"播放失败 17 秒无声"
         if (!_asio.IsSampleRateSupported(requestedRate))
         {
-            _asio.Dispose(); _asio = null;
+            try { _asio.Dispose(); } catch { }
+            _asio = null;
+            foreach (var r in AsioFallbackRates)
+            {
+                if (r == requestedRate) continue;
+                Console.Error.WriteLine($"[asio] {requestedRate}Hz 被拒，尝试对齐驱动到 {r}Hz…");
+                if (ProbeAndAlignRateCore(r) == r)
+                {
+                    Console.Error.WriteLine($"[asio] 驱动已对齐 {r}Hz，交由引擎重采样");
+                    Resampled = true;
+                    return r;
+                }
+            }
             throw new InvalidOperationException(
-                $"ASIO 驱动 [{_driverName}] 不支持 {requestedRate}Hz 采样率。" +
-                (aligned > 0 ? $" 驱动当前为 {aligned}Hz，请打开驱动控制面板手动切换或调整源文件。" : " 请打开驱动控制面板手动设置采样率。"));
+                $"ASIO 驱动 [{_driverName}] 不支持 {requestedRate}Hz 采样率，回退采样率也全部被拒。" +
+                " 若驱动面板显示未连接/未就绪，请重新插拔 DAC 后再试。");
         }
 
         // ASIO 驱动位深各异：优先 float32（直通无损），失败回退 int16
@@ -846,4 +861,41 @@ public sealed class AsioBackend : IOutputBackend
         _asio = null;
     });
     public void Dispose() => Stop();
+}
+
+/// <summary>
+/// V4.3.12：系统音频设备变更监听（插拔耳机/USB DAC/蓝牙）。
+/// NAudio 3.x 把 IMMNotificationClient 收为 internal，无法注册系统回调；
+/// 改为每 2s 轮询设备 ID+状态快照，变了才通知（纯枚举毫秒级——devices.list 慢是逐台 DoP 探测，这里不做）。
+/// 只通知不切换输出；DeviceState.All 含 NotPresent→Active，耳机插孔插拔也能捕获。
+/// </summary>
+public sealed class DeviceChangeWatcher
+{
+    private readonly Action _notify;
+    private Timer? _timer;
+    private string _snapshot = "";
+
+    public DeviceChangeWatcher(Action notify) { _notify = notify; }
+
+    public void Start()
+    {
+        _timer = new Timer(_ => Tick(), null, 2000, 2000);
+        Console.Error.WriteLine("[wasapi] 设备热插拔轮询已启动（2s）");
+    }
+
+    private void Tick()
+    {
+        string snap;
+        try
+        {
+            using var en = new MMDeviceEnumerator();
+            snap = string.Join("|", en.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.All)
+                .Select(d => d.ID + ":" + (int)d.State).OrderBy(s => s, StringComparer.Ordinal));
+        }
+        catch { return; } // 枚举瞬态失败（服务重启等）：保持旧快照，下轮再试
+        if (snap == _snapshot) return;
+        var first = _snapshot.Length == 0; // 首张快照只是建档，不算变更
+        _snapshot = snap;
+        if (!first) { try { _notify(); } catch { } }
+    }
 }

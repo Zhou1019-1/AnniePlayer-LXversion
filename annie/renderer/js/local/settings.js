@@ -453,6 +453,52 @@
       };
     } else hkInput.disabled = true;
 
+    // —— V4.3.12：局域网手机遥控（脑暴 9.1） ——
+    var sRm = section(pgGeneral, '手机遥控');
+    var rmRow = markItem(el('label', 'set-check'), '手机遥控 局域网 遥控 配对 remote phone lan pair');
+    var rmInput = document.createElement('input');
+    rmInput.type = 'checkbox';
+    rmRow.appendChild(rmInput);
+    rmRow.appendChild(el('span', '', '启用局域网手机遥控（手机浏览器直接控制播放）'));
+    sRm.appendChild(rmRow);
+    var rmInfo = el('div', 'set-hint', '加载中…');
+    sRm.appendChild(rmInfo);
+    var rmCodeRow = markItem(el('div', 'set-row'), '配对码 重置配对 pair code reset');
+    var rmCodeLab = el('div'); rmCodeLab.appendChild(el('div', '', '配对码'));
+    rmCodeLab.appendChild(el('div', 'set-hint', '手机首次访问时输入；重置后所有已配对设备需重新配对'));
+    var rmCodeBox = el('div');
+    var rmCodeSpan = el('span', '', '————');
+    rmCodeSpan.style.cssText = 'font-size:18px;letter-spacing:6px;font-weight:600;margin-right:10px;';
+    var rmRegen = el('button', '', '重置');
+    rmCodeBox.appendChild(rmCodeSpan); rmCodeBox.appendChild(rmRegen);
+    rmCodeRow.appendChild(rmCodeLab); rmCodeRow.appendChild(rmCodeBox);
+    sRm.appendChild(rmCodeRow);
+    function rmRender(inf) {
+      if (!inf) { rmInfo.textContent = '遥控服务不可用'; return; }
+      rmCodeSpan.textContent = inf.code ? String(inf.code).split('').join(' ') : '————';
+      if (inf.enabled && inf.addrs && inf.addrs.length) {
+        rmInfo.textContent = '手机与电脑连同一 Wi-Fi，浏览器打开：' + inf.addrs.join(' 或 ');
+      } else if (inf.enabled) {
+        rmInfo.textContent = '服务启动中/启动失败（端口被占？）';
+      } else {
+        rmInfo.textContent = '开启后这里会显示手机访问地址；封面/进度/歌词实时同步，可控制播放/切歌/音量/播放模式';
+      }
+    }
+    if (window.mine.remoteGetInfo) {
+      window.mine.remoteGetInfo().then(function (inf) {
+        rmInput.checked = !!(inf && inf.enabled);
+        rmRender(inf);
+      }).catch(function () { rmRender(null); });
+      rmInput.onchange = function () {
+        window.mine.remoteSetEnabled(rmInput.checked).then(rmRender).catch(function () { rmRender(null); });
+      };
+      rmRegen.onclick = function () {
+        window.mine.remoteRegenCode().then(function (r) {
+          if (r && r.code) rmCodeSpan.textContent = String(r.code).split('').join(' ');
+        }).catch(function () { });
+      };
+    } else { rmInput.disabled = true; rmRegen.disabled = true; rmRender(null); }
+
     // —— 外观：界面主题（一键切换，无需重启） ——
     var s5 = section(pgGeneral, '外观 · 界面主题');
     var themeGrid = markItem(el('div', 'theme-grid'), '界面主题 粒子舞台 fb2k apple music 换肤 theme');
@@ -637,6 +683,17 @@
     }
     kindSel.onchange = function () { fillDevSel(kindSel.value, null); commitDevice(); };
     devSel.onchange = commitDevice;
+    // V4.3.12：设备热插拔——插拔耳机/DAC 后实时重填设备下拉（保持当前选中，不切换输出）
+    if (!window.__devChangeBound) {
+      window.__devChangeBound = true;
+      document.addEventListener('annie-devices-changed', function () {
+        window.mine.engine('devices.list').then(function (d) {
+          devListCache = d || {};
+          var keep = devSel.value || null;
+          fillDevSel(kindSel.value, keep);
+        }).catch(function () { });
+      });
+    }
     window.mine.engine('devices.list').then(function (d) {
       devListCache = d || {};
       var cur = devListCache.current || {};
@@ -673,9 +730,9 @@
     // —— DSD 输出方式 ——
     var dsdRow = markItem(el('div', 'set-row'), 'dsd dop native asio pcm 输出方式 176.4kHz');
     var dsdLab = el('div'); dsdLab.appendChild(el('div', '', 'DSD 输出方式'));
-    dsdLab.appendChild(el('div', 'set-hint', 'DoP 需要设备支持 176.4kHz/24bit 独占；播放中切换将于下一曲生效（断流重建）'));
+    dsdLab.appendChild(el('div', 'set-hint', 'DoP 需要设备支持 176.4kHz/24bit 独占；Native 需要 ASIO 驱动支持 DSD 直推；播放中切换将于下一曲生效（断流重建）'));
     var dsdSel = document.createElement('select');
-    [['pcm', '转 PCM（默认）'], ['dop', 'DoP（DSD over PCM）'], ['native', 'Native（ASIO DSD）']].forEach(function (o) {
+    [['pcm', '转 PCM（默认）'], ['dop', 'DoP（DSD over PCM）'], ['native', 'Native（ASIO DSD·实验）']].forEach(function (o) {
       var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1];
       if (o[0] === 'dop') op.id = 'opt-dop';
       dsdSel.appendChild(op);
@@ -1254,6 +1311,70 @@
     document.addEventListener('annie-dlyrics-changed', function (e) { dlChk.checked = !!(e.detail && e.detail.on); });
     dlRow.appendChild(dlLab); dlRow.appendChild(dlChk);
     sLg.appendChild(dlRow);
+
+    // —— 桌面歌词外观（与歌词条 ⚙ 面板同一份 LS 配置，歌词条经 storage 事件实时套用；
+    //    部分机器透明窗不响应悬停/鼠标，这里是兜底入口） ——
+    var DL_LS = 'annieplayer.pro.dlyrics';
+    var DL_DEF = { scale: 1, opacity: 1, locked: false, color: '#ffd23f', nextColor: 'rgba(232,234,240,.65)', align: 'center', single: false, bg: 55 };
+    function dlCfgGet() {
+      var c = {}; try { c = JSON.parse(localStorage.getItem(DL_LS) || '{}') || {}; } catch (e) { }
+      for (var k in DL_DEF) if (c[k] === undefined) c[k] = DL_DEF[k];
+      return c;
+    }
+    function dlCfgSet(k, v) { var c = dlCfgGet(); c[k] = v; try { localStorage.setItem(DL_LS, JSON.stringify(c)); } catch (e) { } }
+    var dlG = section(pgLyrics, '桌面歌词外观');
+    function dlSwatchRow(label, key, colors, kw) {
+      var r = markItem(el('div', 'set-row'), kw);
+      var head = el('div', 'set-row-head');
+      head.appendChild(el('span', 'set-label', label));
+      var sw = el('div'); sw.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+      var cur = dlCfgGet()[key];
+      colors.forEach(function (c) {
+        var dot = el('i');
+        dot.style.cssText = 'width:18px;height:18px;border-radius:50%;cursor:pointer;background:' + c +
+          ';border:2px solid ' + (c === cur ? '#fff' : 'transparent');
+        dot.onclick = function () {
+          dlCfgSet(key, c);
+          sw.querySelectorAll('i').forEach(function (x) { x.style.borderColor = 'transparent'; });
+          dot.style.borderColor = '#fff';
+        };
+        sw.appendChild(dot);
+      });
+      head.appendChild(sw); r.appendChild(head); dlG.appendChild(r);
+    }
+    dlSwatchRow('当前行颜色', 'color', ['#ffd23f', '#ff5f7e', '#4fc3f7', '#7ee787', '#c792ea', '#ffffff'], '桌面歌词 当前行 颜色 color');
+    dlSwatchRow('未唱/下一行颜色', 'nextColor', ['rgba(232,234,240,.65)', 'rgba(255,255,255,.9)', 'rgba(255,210,63,.6)', 'rgba(138,144,165,.8)'], '桌面歌词 下一行 未唱 颜色 next color');
+    var dlAlRow = markItem(el('div', 'set-row'), '桌面歌词 对齐 左 中 右 align');
+    var dlAlHead = el('div', 'set-row-head');
+    dlAlHead.appendChild(el('span', 'set-label', '对齐'));
+    var dlAlSel = document.createElement('select');
+    [['left', '左对齐'], ['center', '居中'], ['right', '右对齐']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; dlAlSel.appendChild(op);
+    });
+    dlAlSel.value = dlCfgGet().align;
+    dlAlSel.onchange = function () { dlCfgSet('align', dlAlSel.value); };
+    dlAlHead.appendChild(dlAlSel); dlAlRow.appendChild(dlAlHead); dlG.appendChild(dlAlRow);
+    var dlSgRow = markItem(el('label', 'set-check'), '桌面歌词 单行模式 只显示当前行 single line');
+    var dlSgChk = document.createElement('input'); dlSgChk.type = 'checkbox';
+    dlSgChk.checked = !!dlCfgGet().single;
+    dlSgChk.onchange = function () { dlCfgSet('single', dlSgChk.checked); };
+    dlSgRow.appendChild(dlSgChk); dlSgRow.appendChild(el('span', '', '单行模式（只显示当前行）'));
+    dlG.appendChild(dlSgRow);
+    function dlSliderRow(label, key, min, max, step, fmt, kw) {
+      var row = markItem(el('div', 'set-row'), kw);
+      var head = el('div', 'set-row-head');
+      head.appendChild(el('span', 'set-label', label));
+      var cur = Number(dlCfgGet()[key]); if (!isFinite(cur)) cur = DL_DEF[key];
+      var val = el('span', 'set-val', fmt(cur));
+      head.appendChild(val); row.appendChild(head);
+      var input = document.createElement('input');
+      input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = cur;
+      input.oninput = function () { var v = Number(input.value); val.textContent = fmt(v); dlCfgSet(key, v); };
+      row.appendChild(input); dlG.appendChild(row);
+    }
+    dlSliderRow('字号', 'scale', 0.6, 2.2, 0.05, function (v) { return Math.round(v * 100) + '%'; }, '桌面歌词 字号 大小 font size');
+    dlSliderRow('背景深浅', 'bg', 0, 85, 5, function (v) { return Math.round(v) + '%'; }, '桌面歌词 背景 深浅 background');
+    dlSliderRow('窗口不透明度', 'opacity', 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + '%'; }, '桌面歌词 不透明度 opacity');
     lsSliderRow(sLg, 'AM 歌词字号', 'annieplayer.am.lyrscale', 0.7, 1.6, 0.05, 1, fmt2, function () {
       if (window.amLyrStyle) window.amLyrStyle();
     }, 'am 歌词字号 字体大小 apple music font size');

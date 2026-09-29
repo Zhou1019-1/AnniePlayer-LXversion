@@ -1248,6 +1248,11 @@ window.mine.onEngineEvent((event, d) => {
     case 'notify': // Pro：引擎通知（DoP 回退 / Native 不支持等）
       proToast(d.text || '');
       break;
+    case 'devices.changed': // V4.3.12：设备热插拔——实时刷新下拉列表（不自动切换输出）
+      refreshDevices();
+      proToast('检测到音频设备变更，设备列表已更新');
+      try { document.dispatchEvent(new CustomEvent('annie-devices-changed')); } catch { }
+      break;
   }
 });
 

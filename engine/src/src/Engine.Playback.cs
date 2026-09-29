@@ -252,11 +252,7 @@ public sealed partial class Engine
     /// <summary>尝试以 DoP 播放 DSF；返回 null 表示已发 notify 并应回退普通 PCM 路径。</summary>
     private object? TryPlayDop(string path, double offsetSec, IOutputBackend backend, int gen)
     {
-        if (_dsdMode == "native")
-        {
-            _rpc.Emit("notify", new { text = "Native ASIO DSD 需要驱动支持 DSD 样本格式，当前链路暂不支持，已回退转 PCM" });
-            return null;
-        }
+        if (_dsdMode == "native") return TryPlayNativeDsd(path, offsetSec, backend, gen);
         if (backend is not WasapiExclusiveBackend wb)
         {
             _rpc.Emit("notify", new { text = "DoP 仅支持 WASAPI 独占输出，已回退转 PCM" });
@@ -315,6 +311,74 @@ public sealed partial class Engine
         _rpc.Emit("state", new { state = "playing", path });
         _positionTimer.Change(0, 100);
         return new { ok = true, dop = true };
+    }
+
+    /// <summary>
+    /// V4.3.12：ASIO 原生 DSD（真 Native，不经 DoP 封装）。要求后端为 ASIO。
+    /// 返回 null = 已发 notify 并回退普通 PCM 路径。
+    /// 注意：不占 _backend 槽位（PCM 后端保留原实例），Native 输出走独立字段 _asioDsd，
+    /// StopAll/Pause/Resume/TickPosition 对其特判。
+    /// </summary>
+    private object? TryPlayNativeDsd(string path, double offsetSec, IOutputBackend backend, int gen)
+    {
+        if (backend.Kind != "asio")
+        {
+            _rpc.Emit("notify", new { text = "Native DSD 需要选择 ASIO 输出（设置 → 音频设备 → 输出后端），已回退转 PCM" });
+            return null;
+        }
+        DsfReader? dsf = null;
+        AsioNativeDsdOutput? outp = null;
+        try { dsf = new DsfReader(path); }
+        catch { _rpc.Emit("notify", new { text = "DSF 解析失败，已回退转 PCM" }); return null; }
+
+        try
+        {
+            if (offsetSec > 0.001) dsf.SeekSeconds(offsetSec);
+            outp = new AsioNativeDsdOutput(backend.DeviceName, dsf);
+            outp.Open(); // 探测/切格式/建缓冲，失败抛异常
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[dsd] Native DSD 打开失败: {ex.Message}");
+            _rpc.Emit("notify", new { text = $"Native DSD 打开失败：{ex.Message}。已回退转 PCM" });
+            try { outp?.Dispose(); } catch { }
+            try { dsf.Dispose(); } catch { }
+            return null;
+        }
+
+        lock (_gate)
+        {
+            if (gen != _playGeneration)
+            {
+                try { outp.Dispose(); } catch { }
+                try { dsf.Dispose(); } catch { }
+                return new { ok = false, reason = "superseded" };
+            }
+            _dsf = dsf; _dopSource = null; _dopActive = true; _asioDsd = outp;
+            _track = new TrackInfo(path, dsf.DurationSec, dsf.DsdRate, dsf.Channels, "dsd", 1);
+            _offsetSec = offsetSec; _playing = true; _ended = false;
+            _streamPaused = false;
+        }
+        outp.Play();
+        _rpc.Emit("format", new
+        {
+            sampleRate = dsf.DsdRate,
+            channels = dsf.Channels,
+            requestedRate = dsf.DsdRate,
+            resampled = false,
+            codec = "dsd",
+            bitDepth = 1,
+            backend = backend.Kind,
+            device = backend.DeviceName,
+            outFormat = $"Native DSD {dsf.DsdRate / 44100} (ASIO)",
+            bitPerfect = true,
+            reason = "",
+            dsdMode = "native",
+            dop = false
+        });
+        _rpc.Emit("state", new { state = "playing", path });
+        _positionTimer.Change(0, 100);
+        return new { ok = true, nativeDsd = true };
     }
 
     /* ---------------- Pro beat0.0.1：交叉淡入（同流混音过渡） ---------------- */
@@ -434,7 +498,11 @@ public sealed partial class Engine
             lock (_gate)
             {
                 _pausing = false;
-                if (_playing) { _backend.Pause(); _playing = false; _streamPaused = true; }
+                if (_playing)
+                {
+                    if (_asioDsd is not null) _asioDsd.Pause(); else _backend.Pause();
+                    _playing = false; _streamPaused = true;
+                }
             }
             _rpc.Emit("state", new { state = "paused" });
         }
@@ -446,19 +514,21 @@ public sealed partial class Engine
         lock (_gate)
         {
             if (_pausing) return new { ok = true }; // 淡出未完成时忽略恢复（防连点竞争）
-            if (!_playing && _backend is not null && _source is not null)
+            // V4.3.12：恢复条件补 _dopActive——DoP/Native DSD 模式下 _source 为空，
+            // 旧条件让 DSD 播放"暂停后恢复无效"（用户反馈的 DoP bug 根源）
+            if (!_playing && _backend is not null && (_source is not null || _dopActive))
             {
                 // V1.1.9：恢复节流——高频连点暂停/恢复时，两次恢复间至少隔 120ms，
                 // 避免反复 Start/Stop 音频线程导致 WASAPI 事件驱动状态竞争（引擎卡死）
                 var now = Environment.TickCount64;
                 if (_lastResumeAt != 0 && now - _lastResumeAt < 120)
                     return new { ok = true, throttled = true };
-                _backend.Play();
+                if (_asioDsd is not null) _asioDsd.Play(); else _backend.Play();
                 _playing = true;
                 _lastResumeAt = now;
                 _streamPaused = false;
                 // V1.1.7：恢复后淡入（从 0 渐到全增益），避免瞬间音量跳变
-                _source.BeginFade(1f, FadeMs);
+                _source?.BeginFade(1f, FadeMs);
                 _rpc.Emit("state", new { state = "playing" });
             }
         }
@@ -576,11 +646,12 @@ public sealed partial class Engine
             // 先标记源为不活跃，让音频线程中的 Read() 感知到结束并平稳退出
             try { _source?.Deactivate(); } catch { }
             try { _dopSource?.Deactivate(); } catch { }
+            try { _asioDsd?.Dispose(); } catch { }
             try { _backend?.Stop(); } catch { }
             try { _pcm?.Dispose(); } catch { }
             try { _dsf?.Dispose(); } catch { }
             _pcm = null; _source = null; _track = null; _headers = null;
-            _dsf = null; _dopSource = null; _dopActive = false; _mixer = null;
+            _dsf = null; _dopSource = null; _dopActive = false; _asioDsd = null; _mixer = null;
         }
         if (emitState) _rpc.Emit("state", new { state = "stopped" });
         return new { ok = true };
@@ -601,7 +672,14 @@ public sealed partial class Engine
                         ? $"VST 插件「{s.Name}」处理耗时过高，已自动旁通（重新启用可复活）"
                         : $"VST 插件「{s.Name}」处理异常，已自动旁通（重新启用可复活）" });
             if (_track is null) return;
-            if (_dopActive && _dopSource is not null)
+            if (_dopActive && _asioDsd is not null)
+            {
+                // V4.3.12：Native DSD 位置按已消费的 DSD 样本推算（同样无电平计量）
+                pos = _offsetSec + _asioDsd.PositionSec;
+                dur = _track.DurationSec;
+                if (_playing && !_ended && pos >= dur - 0.05) { _ended = true; shouldEnd = true; }
+            }
+            else if (_dopActive && _dopSource is not null)
             {
                 // Pro：DoP 位置按封装帧推算（DSD 位流无电平计量）
                 pos = _offsetSec + _dopSource.FramesProduced / (double)_dopSource.WaveFormat.SampleRate;

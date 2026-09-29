@@ -577,6 +577,9 @@
     _txT = setTimeout(function () {
       R.npTitle.textContent = title;
       R.npSub.textContent = sub;
+      // 迷你/沉浸直接写入新文本：syncAuxViews 读 npTitle 时本动画尚未落地，会拿到上一首（慢一拍）
+      if (R.miniTitle) { R.miniTitle.textContent = title; R.miniSub.textContent = sub; }
+      if (R.immTitle) { R.immTitle.textContent = title; R.immSub.textContent = sub; }
       R.npText.classList.remove('am-tx-out');
       R.npText.classList.add('am-tx-in');
     }, 140);
@@ -687,6 +690,9 @@
         if (data.requestedRate) parts.push((data.requestedRate / 1000) + 'kHz');
         S.fmt = parts.join(' · ');
         refreshBadge();
+        // 迷你/沉浸的参数行不走 syncAuxViews（它只在切歌/封面回调时跑），这里直接同步
+        if (R.miniFmt) R.miniFmt.textContent = S.fmt;
+        if (R.immFmt) R.immFmt.textContent = S.fmt;
       }
     });
     // state.currentPath 变化（playAt 触发后无专用事件）——轮询兜底 + 主题切换时刷新

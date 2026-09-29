@@ -214,6 +214,16 @@ contextBridge.exposeInMainWorld('mine', {
     ipcRenderer.on('annie:closeBehaviorChanged', listener);
     return () => ipcRenderer.removeListener('annie:closeBehaviorChanged', listener);
   },
+  // V4.3.12：局域网手机遥控
+  remoteGetInfo: () => ipcRenderer.invoke('remote:getInfo'),
+  remoteSetEnabled: (enabled) => ipcRenderer.invoke('remote:setEnabled', { enabled: !!enabled }),
+  remoteRegenCode: () => ipcRenderer.invoke('remote:regenCode'),
+  remotePushState: (state) => ipcRenderer.send('remote:push', state),
+  onRemoteCmd: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('remote:cmd', listener);
+    return () => ipcRenderer.removeListener('remote:cmd', listener);
+  },
 
   // Pro beat0.0.1：诊断包导出（rendererSnapshot 为渲染侧设置/状态快照）
   diagExport: (rendererSnapshot) => ipcRenderer.invoke('diag:export', rendererSnapshot),

@@ -12,11 +12,14 @@
     gap: 6px; padding: 10px 24px; border-radius: 14px; background: rgba(8, 10, 16, .55);
     -webkit-app-region: drag; position: relative; }
   #bar:hover { background: rgba(8, 10, 16, .75); }
+  #bar.align-left { align-items: flex-start; }
+  #bar.align-right { align-items: flex-end; }
   #cur { font-size: 26px; font-weight: 700; color: #ffd23f; text-align: center; line-height: 1.3;
     text-shadow: 0 2px 10px rgba(0,0,0,.8); }
-  /* 逐字 karaoke：每个词独立填充，未唱部分半透明白 */
-  #cur .w { background-image: linear-gradient(90deg, #ffd23f 0%, rgba(255,255,255,.5) 0%);
-    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  #bar.align-left #cur, #bar.align-left #next { text-align: left; }
+  #bar.align-right #cur, #bar.align-right #next { text-align: right; }
+  /* 逐字 karaoke：每个词独立填充，未唱部分半透明（颜色由 JS 按配置生成渐变） */
+  #cur .w { -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
   #next { font-size: 15px; color: rgba(232, 234, 240, .65); text-align: center; }
   #idle { font-size: 14px; color: rgba(232, 234, 240, .5); }
   #tools { position: absolute; top: 6px; right: 10px; display: none; gap: 6px; -webkit-app-region: no-drag; }
@@ -24,6 +27,25 @@
   #tools button { width: 26px; height: 26px; border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
     background: rgba(20,23,34,.9); color: #e8eaf0; font-size: 13px; cursor: pointer; }
   #tools button:hover { border-color: #ffd23f; color: #ffd23f; }
+  /* 自定义面板（悬停 ⚙ 弹出） */
+  #panel { position: absolute; top: 38px; right: 10px; width: 220px; padding: 12px;
+    border: 1px solid rgba(255,255,255,.18); border-radius: 10px; background: rgba(16,19,29,.96);
+    display: none; flex-direction: column; gap: 10px; -webkit-app-region: no-drag; z-index: 9;
+    font-size: 12px; color: #e8eaf0; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+  #panel.on { display: flex; }
+  #panel .p-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #panel .p-label { color: rgba(232,234,240,.75); flex: none; }
+  .swatches { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .swatches i { width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; }
+  .swatches i.on { border-color: #fff; }
+  #panel input[type=range] { width: 110px; accent-color: #ffd23f; }
+  .seg { display: flex; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; overflow: hidden; }
+  .seg b { padding: 2px 10px; cursor: pointer; font-weight: 400; color: rgba(232,234,240,.7); }
+  .seg b.on { background: rgba(255,210,63,.25); color: #ffd23f; }
+  #p-reset { align-self: center; padding: 3px 14px; border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px; background: none; color: rgba(232,234,240,.8); cursor: pointer; font-size: 12px; }
+  #p-reset:hover { border-color: #ffd23f; color: #ffd23f; }
 </style>
 </head>
 <body>
@@ -33,7 +55,18 @@
     <button id="t-minus" title="缩小字号">A-</button>
     <button id="t-plus" title="放大字号">A+</button>
     <button id="t-op" title="透明度">◐</button>
+    <button id="t-cfg" title="自定义">⚙</button>
     <button id="t-close" title="关闭">✕</button>
+  </div>
+  <div id="panel">
+    <div class="p-row"><span class="p-label">当前行颜色</span><span class="swatches" id="p-color"></span></div>
+    <div class="p-row"><span class="p-label">未唱/下一行</span><span class="swatches" id="p-next"></span></div>
+    <div class="p-row"><span class="p-label">对齐</span>
+      <span class="seg" id="p-align"><b data-v="left">左</b><b data-v="center">中</b><b data-v="right">右</b></span></div>
+    <div class="p-row"><span class="p-label">行数</span>
+      <span class="seg" id="p-single"><b data-v="0">双行</b><b data-v="1">单行</b></span></div>
+    <div class="p-row"><span class="p-label">背景深浅</span><input type="range" id="p-bg" min="0" max="85" step="5"></div>
+    <button id="p-reset">恢复默认</button>
   </div>
   <div id="cur"></div>
   <div id="next"></div>
@@ -43,15 +76,68 @@
 'use strict';
 const $ = (s) => document.querySelector(s);
 const LS = 'annieplayer.pro.dlyrics';
-let cfg = { scale: 1, opacity: 1, locked: false };
+const DEFAULTS = { scale: 1, opacity: 1, locked: false,
+  color: '#ffd23f', nextColor: 'rgba(232,234,240,.65)',
+  align: 'center', single: false, bg: 55 };
+let cfg = Object.assign({}, DEFAULTS);
 try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS) || '{}')); } catch { }
 
+const COLORS = ['#ffd23f', '#ff5f7e', '#4fc3f7', '#7ee787', '#c792ea', '#ffffff'];
+const NEXTCOLORS = ['rgba(232,234,240,.65)', 'rgba(255,255,255,.9)', 'rgba(255,210,63,.6)', 'rgba(138,144,165,.8)'];
+
+/* 颜色转 rgba（hex / rgba 字符串都接受），供 karaoke 渐变未唱部分使用 */
+function withAlpha(c, a) {
+  const m = /^#([0-9a-f]{6})$/i.exec(c);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  const r = /^rgba?\(([^)]+)\)$/.exec(c);
+  if (r) { const p = r[1].split(',').map(s => s.trim()); return `rgba(${p[0]},${p[1]},${p[2]},${a})`; }
+  return c;
+}
+
 function apply() {
+  const bar = $('#bar');
   $('#cur').style.fontSize = Math.round(26 * cfg.scale) + 'px';
   $('#next').style.fontSize = Math.round(15 * cfg.scale) + 'px';
+  $('#cur').style.color = cfg.color;
+  $('#next').style.color = cfg.nextColor;
+  $('#next').style.display = cfg.single ? 'none' : '';
+  bar.classList.toggle('align-left', cfg.align === 'left');
+  bar.classList.toggle('align-right', cfg.align === 'right');
+  bar.style.background = `rgba(8,10,16,${cfg.bg / 100})`;
   window.mine.dlyricsCtl({ opacity: cfg.opacity });
   localStorage.setItem(LS, JSON.stringify(cfg));
+  karaLineKey = ''; // 换色/换行模式后强制重建词片，渐变立刻用新色
+  syncPanel();
 }
+
+/* ---------- 自定义面板 ---------- */
+function buildSwatches(el, list, key) {
+  el.innerHTML = '';
+  list.forEach((c) => {
+    const i = document.createElement('i');
+    i.style.background = c;
+    i.dataset.v = c;
+    i.onclick = () => { cfg[key] = c; apply(); };
+    el.appendChild(i);
+  });
+}
+function syncPanel() {
+  document.querySelectorAll('#p-color i').forEach(i => i.classList.toggle('on', i.dataset.v === cfg.color));
+  document.querySelectorAll('#p-next i').forEach(i => i.classList.toggle('on', i.dataset.v === cfg.nextColor));
+  document.querySelectorAll('#p-align b').forEach(b => b.classList.toggle('on', b.dataset.v === cfg.align));
+  document.querySelectorAll('#p-single b').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!cfg.single));
+  $('#p-bg').value = cfg.bg;
+}
+buildSwatches($('#p-color'), COLORS, 'color');
+buildSwatches($('#p-next'), NEXTCOLORS, 'nextColor');
+document.querySelectorAll('#p-align b').forEach(b => b.onclick = () => { cfg.align = b.dataset.v; apply(); });
+document.querySelectorAll('#p-single b').forEach(b => b.onclick = () => { cfg.single = b.dataset.v === '1'; apply(); });
+$('#p-bg').oninput = () => { cfg.bg = +$('#p-bg').value; apply(); };
+$('#p-reset').onclick = () => { cfg = Object.assign({}, DEFAULTS, { locked: cfg.locked }); apply(); };
+$('#t-cfg').onclick = () => $('#panel').classList.toggle('on');
 
 /* ---------- 逐字 karaoke（V3.5.5+） ---------- */
 // 全局逐字开关与主窗口同源（localStorage 同分区共享）；words 为空时退回整行显示
@@ -61,7 +147,7 @@ function karaOn() {
 }
 function renderKaraoke(d) {
   const cur = $('#cur');
-  const key = d.cur + '|' + (d.lineT || 0);
+  const key = d.cur + '|' + (d.lineT || 0) + '|' + cfg.color + '|' + cfg.nextColor;
   if (key !== karaLineKey) { // 换行才重建词片，避免每 350ms 重排
     karaLineKey = key;
     karaWords = d.words;
@@ -76,12 +162,13 @@ function renderKaraoke(d) {
   // 按位置逐词填充：词内线性进度 → 渐变百分比
   const spans = cur.querySelectorAll('.w');
   const pos = d.pos || 0;
+  const unsung = withAlpha(cfg.nextColor, 0.55);
   d.words.forEach((wd, i) => {
     const end = (i + 1 < d.words.length) ? d.words[i + 1].t : (d.nextT || wd.t + 2);
     const p = Math.max(0, Math.min(1, (pos - wd.t) / Math.max(0.05, end - wd.t)));
     const pct = Math.round(p * 100);
     spans[i].style.backgroundImage =
-      `linear-gradient(90deg, #ffd23f ${pct}%, rgba(255,255,255,.5) ${pct}%)`;
+      `linear-gradient(90deg, ${cfg.color} ${pct}%, ${unsung} ${pct}%)`;
   });
 }
 
@@ -107,6 +194,16 @@ $('#t-plus').onclick = () => { cfg.scale = Math.min(2.2, cfg.scale + 0.15); appl
 $('#t-op').onclick = () => { cfg.opacity = cfg.opacity > 0.55 ? cfg.opacity - 0.25 : 1; apply(); };
 $('#t-close').onclick = () => window.mine.dlyricsToggle();
 
+// 设置中心「桌面歌词外观」与 ⚙ 面板共用同一 LS key；跨窗口 storage 事件实时套用
+// （部分机器透明窗不响应悬停/鼠标，设置页是唯一可达入口，必须即时生效）
+window.addEventListener('storage', (e) => {
+  if (e.key !== LS || !e.newValue) return;
+  try { Object.assign(cfg, JSON.parse(e.newValue)); } catch { }
+  $('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
+  apply();
+});
+
+$('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
 apply();
 </script>
 </body>

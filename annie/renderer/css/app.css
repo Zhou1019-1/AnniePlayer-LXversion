@@ -2,6 +2,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
 .hidden { display: none !important; }
 :root {
+  color-scheme: dark; /* 原生控件（下拉弹层/滚动条）按暗色渲染，否则 select 弹层白底浅字看不清 */
   --bg: #07080c;
   --bg2: #0d0f16;
   --bg3: #141722;
@@ -11,6 +12,8 @@
   --accent: #fac900;
   --glow: #008aff;
 }
+/* 下拉弹层显式配色兜底（color-scheme 之外的保险）：暗底亮字，高亮对比清晰 */
+html:not([data-theme="fb2k"]) select option { background: #181c2a; color: #e8eaf0; }
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
   font: 13px/1.6 "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }

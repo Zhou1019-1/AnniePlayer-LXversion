@@ -3,6 +3,9 @@
  * 布局：标题栏+菜单栏（固定高）→ CSS Grid 三栏 → 底部控制栏（64px），无绝对定位。 */
 
 /* ---------- 主题显隐总开关 ---------- */
+/* app.css :root 全局 color-scheme:dark；FB2K 亮色主题要改回 light，暗色变体保持 dark */
+html[data-theme="fb2k"] { color-scheme: light; }
+html[data-theme="fb2k"] #fb2k-root.f2-dark { color-scheme: dark; }
 #fb2k-root { display: none; }
 html[data-theme="fb2k"] #fb2k-root {
   display: flex; flex-direction: column;

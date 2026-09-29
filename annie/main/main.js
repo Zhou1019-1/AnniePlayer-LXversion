@@ -13,6 +13,7 @@ const onlineMatch = require('./onlineMatch');
 const analyzer = require('./analyzer');
 const tagWriter = require('./tagWriter'); // V3.5.9：曲库标签编辑（与下载写标签同一实现）
 const qobuz = require('./qobuz'); // V4.3.6：Qobuz 在线播放/下载（用户登录自己的付费账号）
+const remote = require('./remote'); // V4.3.12：局域网手机遥控（脑暴 9.1）
 
 const engine = new EngineClient();
 let mainWindow = null;
@@ -1240,6 +1241,31 @@ ipcMain.handle('stream:albumSongs', (_e, params) => streaming.albumSongs(params)
       return { canceled: false, error: String(e.message || e) };
     }
   });
+  // V4.3.12：局域网手机遥控 IPC
+  function ensureRemoteCode(st) {
+    st.remote = st.remote || {};
+    if (!st.remote.code) { st.remote.code = String(Math.floor(1000 + Math.random() * 9000)); touchStore(); flushStore(); }
+    return st.remote;
+  }
+  ipcMain.handle('remote:getInfo', async () => {
+    const r = ensureRemoteCode(loadStore());
+    const base = { enabled: !!r.enabled, code: r.code };
+    return r.enabled ? Object.assign(base, remote.info()) : Object.assign(base, { ok: false, port: 0, addrs: [] });
+  });
+  ipcMain.handle('remote:setEnabled', async (_e, { enabled }) => {
+    const r = ensureRemoteCode(loadStore());
+    r.enabled = !!enabled; touchStore(); flushStore();
+    if (enabled) await remote.start(); else remote.stop();
+    return Object.assign({ enabled: !!enabled, code: r.code }, remote.info());
+  });
+  ipcMain.handle('remote:regenCode', async () => {
+    const st = loadStore(); st.remote = st.remote || {};
+    st.remote.code = String(Math.floor(1000 + Math.random() * 9000));
+    st.remote.tokens = []; // 重置配对码同时踢掉所有已配对设备
+    touchStore(); flushStore();
+    return { code: st.remote.code };
+  });
+  ipcMain.on('remote:push', (_e, state) => { remote.pushState(state); });
   ipcMain.handle('stream:sources:importUrl', async (_e, { url }) => {
     try {
       return { canceled: false, source: await streaming.sources.importFromUrl(url) };
@@ -1378,12 +1404,26 @@ async function fetchReleaseNotes(ver) {
 ipcMain.handle('app:getReleaseNotes', (_e, ver) => fetchReleaseNotes(ver));
 
 // ---------- 生命周期 ----------
+// V4.3.12：局域网手机遥控初始化——SVLX/非 SVLX 两分支共用（配对码懒生成；指令转发渲染层；开启状态随启动恢复）
+function initRemote() {
+  remote.init({
+    getRemoteConf: () => {
+      const st = loadStore(); st.remote = st.remote || {};
+      if (!st.remote.code) { st.remote.code = String(Math.floor(1000 + Math.random() * 9000)); touchStore(); flushStore(); }
+      return st.remote;
+    },
+    saveTokens: (tokens) => { const st = loadStore(); st.remote = st.remote || {}; st.remote.tokens = tokens; touchStore(); flushStore(); },
+    forwardCmd: (cmd, value) => { try { if (mainWindow) mainWindow.webContents.send('remote:cmd', { cmd, value }); } catch { } },
+  });
+  if ((loadStore().remote || {}).enabled) remote.start();
+}
 // SVLX 模式下跳过锁 + whenReady（已由 src/main.js 接管）
 if (global.__svlxBoot) {
   registerIpc();
   setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
   qobuz.init({ loadStore, flushStore, touchStore });
+  initRemote(); // V4.3.12：手机遥控（两分支共用，勿漏——漏了就是"配对码显示正常但永远不对"）
   setupImageReferer();
   engine.start();
   // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
@@ -1419,6 +1459,7 @@ if (!gotLock) {
     setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
     qobuz.init({ loadStore, flushStore, touchStore });
+    initRemote(); // V4.3.12：手机遥控
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入
     engine.start(); // 引擎拉起失败不阻塞 UI，调用时再报错
     // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时

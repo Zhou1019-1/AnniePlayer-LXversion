@@ -60,6 +60,7 @@ public sealed partial class Engine
     private DsfReader? _dsf;
     private DopSource? _dopSource;
     private bool _dopActive;
+    private AsioNativeDsdOutput? _asioDsd; // V4.3.12：ASIO 原生 DSD（非 DoP）；非空 = 当前走 Native 路径
     private string? _headers;          // 当前网络流的 HTTP 头（seek 重放时复用）
     private int _playGeneration;       // 播放代际：递增以识别新播放请求，防止竞态
     private readonly object _playGate = new(); // 播放互斥锁：串行化设备关键区（StopAll→打开→预缓冲→启动）
@@ -68,6 +69,7 @@ public sealed partial class Engine
     private bool _streamPaused;
 
     private readonly Timer _positionTimer;
+    private readonly DeviceChangeWatcher _devWatcher; // 常驻字段：防 GC 回收导致回调注销
 
     // 电平数据：音频回调线程只写以下字段（零 I/O/零 JSON/零锁），
     // 由 position 定时器（10Hz）读取后 Emit level。float 读写原子，volatile 脏标记保证有序。
@@ -85,6 +87,9 @@ public sealed partial class Engine
         _rpc = rpc;
         rpc.OnRequest += HandleAsync;
         _positionTimer = new Timer(_ => TickPosition(), null, Timeout.Infinite, Timeout.Infinite);
+        // V4.3.12：设备热插拔——系统设备变更时推 devices.changed，渲染层实时刷新设备列表（不自动切换输出）
+        _devWatcher = new DeviceChangeWatcher(() => _rpc.Emit("devices.changed", new { }));
+        _devWatcher.Start();
     }
 
     private async Task<object?> HandleAsync(string method, JsonObject p)
@@ -286,15 +291,28 @@ public sealed partial class Engine
         return _backend!;
     }
 
-    /// <summary>Pro：DoP 能力安全探测（设备属性缺失/消失时返回 false 而不是让整个 devices.list 失败）。</summary>
+    /// <summary>Pro：DoP 能力安全探测（设备属性缺失/消失时返回 false 而不是让整个 devices.list 失败）。
+    /// V4.3.12：失败原因留日志——设备忙/句柄陈旧也会表现为"不支持"，诊断时需要区分。</summary>
     private static bool ProbeDopSafe(string id)
     {
+        NAudio.CoreAudioApi.MMDevice? dev = null;
         try
         {
-            return WasapiExclusiveBackend.FindById(id) is { } dev
-                && new WasapiExclusiveBackend(dev).SupportsDop(2822400);
+            dev = WasapiExclusiveBackend.FindById(id);
+            if (dev is null) { Console.Error.WriteLine($"[dop] 探测跳过：设备 {id} 枚举不到"); return false; }
+            bool ok = dev.AudioClient.IsFormatSupported(
+                NAudio.CoreAudioApi.AudioClientShareMode.Exclusive,
+                new NAudio.Wave.WaveFormat(176400, 24, 2), out _);
+            if (!ok) Console.Error.WriteLine($"[dop] {dev.FriendlyName}：不支持 176.4kHz/24bit 独占（DoP DSD64 封装率）");
+            return ok;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            // 设备被占用/句柄陈旧也会探测异常——此时"不支持"不可信，日志留证供诊断
+            Console.Error.WriteLine($"[dop] 探测异常（设备可能忙/句柄陈旧）{id}: {ex.Message}");
+            return false;
+        }
+        finally { try { dev?.Dispose(); } catch { } }
     }
 
     private object ShowAsioPanel()

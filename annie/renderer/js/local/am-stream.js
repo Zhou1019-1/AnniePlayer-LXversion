@@ -79,7 +79,7 @@
           cover: song.cover || '', duration: song.duration ? song.duration / 1000 : 0,
           provider: song.provider, quality: r.quality || '', song: song
         })).then(function (ok) {
-          if (ok === false) { renderStreamStatus(song.name + '：播放失败，引擎未接受流地址', true); return; }
+          if (ok === false) { renderStreamStatus(song.name + '：播放失败，' + (window.__annieLastStreamError || '引擎未接受流地址'), true); return; }
           // 播放确认后取歌词：注入缓存 + 广播给 AM 歌词面板 + 同步粒子舞台
           if (window.mine.streamLyric) {
             window.mine.streamLyric({ provider: song.provider, song: song }).then(function (ly) {

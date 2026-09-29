@@ -1075,6 +1075,7 @@ window.annieStreamPlay = async function (track) {
     const method = (cf > 0 || gaplessOn()) ? 'play.crossfade' : 'play';
     await enginePlayRecover(method, { path: track.url, offsetSec: 0, headers: track.headers });
   } catch (e) {
+    window.__annieLastStreamError = String(e && e.message || e); // V4.3.10：AM 错误提示带出引擎具体原因
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);
     return false; // SVLX：返回值供 AM 主题弹出错误提示
   }

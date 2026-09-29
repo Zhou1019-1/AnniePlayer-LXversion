@@ -8,7 +8,7 @@ const api = require('./api');
 const dl = require('./download');
 const streaming = require('../streaming'); // Qobuz 无歌词 API：借 LX 五源按标题+艺人兜底匹配；下载目录复用其 downloadDir
 
-let loadStore = null, flushStore = null;
+let loadStore = null, flushStore = null, touchStore = null;
 let client = null;          // QobuzClient 登录态
 let reloginInFlight = null; // 防并发重登
 
@@ -34,14 +34,14 @@ function saveCreds(creds, opts) {
     st.qobuzExp.encSecret = opts.secret ? enc(opts.secret) : '';
   }
   if (dlDir) st.qobuzExp.dlDir = dlDir;
-  flushStore();
+  touchStore(); flushStore(); // 直接改对象必须先置脏，否则不落盘（V4.3.10 教训）
 }
 function clearCreds() {
   const st = loadStore();
   const dlDir = (st.qobuzExp && st.qobuzExp.dlDir) || '';
   delete st.qobuzExp;
   if (dlDir) st.qobuzExp = { dlDir }; // 登出只清凭据，保留下载目录
-  flushStore();
+  touchStore(); flushStore();
 }
 
 /* 下载目录：用户自选优先，默认回落到洛雪流媒体下载目录 */
@@ -151,7 +151,7 @@ async function resolveToTracks(c, kind, id) {
 const dlState = { running: false, canceled: false };
 
 function init(ctx) {
-  loadStore = ctx.loadStore; flushStore = ctx.flushStore;
+  loadStore = ctx.loadStore; flushStore = ctx.flushStore; touchStore = ctx.touchStore;
 
   ipcMain.handle('qobuz:status', () => {
     const inf = info();

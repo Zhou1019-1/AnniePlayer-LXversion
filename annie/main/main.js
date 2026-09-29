@@ -54,6 +54,7 @@ function setupImageReferer() {
 let scanWorker = null;
 let scanJobId = 0;
 let scannedTracks = [];
+let watchScanPending = false; // V4.3.10：当前 Worker 扫描任务来自文件监听（中间过程不广播进度）
 const metaPending = new Map(); // jobId -> { out, resolve }
 let metaJobSeq = 0;
 
@@ -69,7 +70,13 @@ function finishScanIfReady() {
   if (!pendingScanDone || isoProbeJobs > 0) return;
   const m = pendingScanDone; pendingScanDone = null;
   try { saveStore({ tracks: scannedTracks }); } catch { }
-  broadcastScan({ type: 'done', found: m.found });
+  if (watchScanPending) {
+    // V4.3.10：监听触发的扫描——不打扰进度 UI，只在完成后让渲染层全量刷新
+    watchScanPending = false; libWatchRunning = false;
+    broadcastScan({ type: 'done', found: m.found, fallback: true, watch: true });
+  } else {
+    broadcastScan({ type: 'done', found: m.found });
+  }
 }
 async function probeIsos(isos) {
   isoProbeJobs++;
@@ -121,7 +128,7 @@ function ensureScanWorker() {
     if (!m || !m.kind) return;
     if (m.kind === 'scan') {
       if (m.jobId !== scanJobId) return; // 过期任务结果丢弃
-      if (m.type === 'batch') { scannedTracks.push(...m.tracks); broadcastScan({ type: 'batch', tracks: m.tracks, found: m.found }); }
+      if (m.type === 'batch') { scannedTracks.push(...m.tracks); if (!watchScanPending) broadcastScan({ type: 'batch', tracks: m.tracks, found: m.found }); }
       else if (m.type === 'cue') {
         // Pro beat0.0.1：CUE 分轨——隐藏整轨、追加虚拟分轨、写入分轨标签
         const hide = new Set(m.hidden || []);
@@ -137,7 +144,7 @@ function ensureScanWorker() {
           }
           if (dirty) saveStore({ metaCache: store.metaCache });
         } catch { }
-        broadcastScan({ type: 'cue', hidden: m.hidden, tracks: m.tracks });
+        if (!watchScanPending) broadcastScan({ type: 'cue', hidden: m.hidden, tracks: m.tracks }); // V4.3.10：监听扫描的中间过程不打扰渲染层，收尾 done(fallback) 统一刷新
       }
       else if (m.type === 'done') {
         pendingScanDone = m; // SVLX 1.2.0：等待进行中的 ISO 探测完成后再收尾
@@ -149,6 +156,7 @@ function ensureScanWorker() {
       }
       else if (m.type === 'cancelled') {
         try { saveStore({ tracks: scannedTracks }); } catch { } // 保留已扫到的部分
+        watchScanPending = false; libWatchRunning = false; // V4.3.10
         broadcastScan({ type: 'cancelled', found: m.found });
       }
     } else if (m.kind === 'meta') {
@@ -163,6 +171,7 @@ function ensureScanWorker() {
   });
   scanWorker.on('error', (e) => {
     console.error('[scan] Worker 异常:', e);
+    watchScanPending = false; libWatchRunning = false; // V4.3.10
     broadcastScan({ type: 'error', message: 'scan-worker-crashed: ' + e.message });
     // 让挂起的 meta 请求走降级路径
     for (const [, p] of metaPending) p.resolve(null);
@@ -227,6 +236,11 @@ function flushStore() {
   } catch { }
 }
 
+/* V4.3.10：直接改 store 对象后的落盘必须走 saveStore（置脏+防抖），
+ * 否则 flushStore 见 _storeDirty=false 直接返回，改动只活在内存里、重启即丢。
+ * （实锤 bug：关闭弹窗「以后都这样执行」重启后失效） */
+function touchStore() { _storeDirty = true; }
+
 function saveStore(patch) {
   const cur = loadStore();
   Object.assign(cur, patch); // 保持原语义：浅合并顶层键
@@ -263,6 +277,25 @@ function createWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  // V4.3.10：存量用户媒体库含盘符根目录 → 一次性提醒（整盘扫描+监听是卡死实锤来源）
+  mainWindow.webContents.once('did-finish-load', () => {
+    try {
+      const st = loadStore();
+      const roots = (st.folders || []).filter(isDriveRoot);
+      if (!roots.length || (st.ui && st.ui.rootFolderWarned)) return;
+      st.ui = st.ui || {}; st.ui.rootFolderWarned = true; touchStore(); flushStore();
+      setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        dialog.showMessageBox(mainWindow, {
+          type: 'warning', title: '媒体库包含整个盘符',
+          message: '你的媒体库添加了整个盘符：' + roots.join('、'),
+          detail: '整盘扫描和文件监听会覆盖盘上所有文件，曲库大时会明显卡顿甚至失去响应。' +
+            '建议到 设置 → 媒体库 中移除它，改为添加盘上具体的音乐文件夹。（此提醒只出现一次）',
+          buttons: ['知道了'], noLink: true,
+        }).catch(() => { });
+      }, 3000);
+    } catch { }
+  });
   /* V4.3：关闭按钮三选一——每次询问 / 最小化到托盘 / 直接退出。
    * 拦截 'close'：未记忆选择时弹原生对话框（带「以后都这样执行」勾选），
    * 记忆后按 store.ui.closeBehavior 直接执行；更新安装/托盘菜单退出等强退路径直接放行。 */
@@ -288,7 +321,7 @@ function createWindow() {
       if (!mainWindow || r.response === 2) return;
       const chosen = r.response === 0 ? 'tray' : 'quit';
       if (r.checkboxChecked) {
-        const st = loadStore(); st.ui = st.ui || {}; st.ui.closeBehavior = chosen; flushStore();
+        const st = loadStore(); st.ui = st.ui || {}; st.ui.closeBehavior = chosen; touchStore(); flushStore();
         try { mainWindow.webContents.send('annie:closeBehaviorChanged', chosen); } catch { }
       }
       if (chosen === 'tray') mainWindow.hide();
@@ -363,10 +396,16 @@ function createTray() {
 
 // ---------- V3.5.8：媒体库文件夹监听（新增/删除音频文件自动增量入库，3s 防抖合并） ----------
 let libWatchers = [], libWatchTimer = 0, libWatchRunning = false;
+let lastWatchScanAt = 0; // V4.3.10：监听触发扫描的最小间隔（30s），防 IO 风暴反复拖库
+// V4.3.10：盘符根目录（F:\ 这类）判定——整盘递归监听会接收全盘所有写事件，卡死主进程
+function isDriveRoot(f) { return /^[a-zA-Z]:[\\/]?$/.test(String(f || '').trim()); }
+
 function setupLibraryWatch() {
   for (const w of libWatchers) { try { w.close(); } catch { } }
   libWatchers = [];
   for (const f of (loadStore().folders || [])) {
+    // V4.3.10：盘符根目录不挂监听（全盘事件洪峰会冲垮主进程），靠手动重扫
+    if (isDriveRoot(f)) { console.warn('[lib] 跳过盘符根目录的文件监听:', f); continue; }
     try {
       const w = fs.watch(f, { recursive: true }, () => {
         clearTimeout(libWatchTimer);
@@ -379,22 +418,42 @@ function setupLibraryWatch() {
   }
 }
 function applyWatchChanges() {
-  if (libWatchRunning) { // 上次 diff 未完成：推迟再试
+  if (libWatchRunning) { // 上次扫描未完成：推迟再试
     clearTimeout(libWatchTimer);
     libWatchTimer = setTimeout(applyWatchChanges, 3000);
     return;
   }
+  // V4.3.10：最小间隔 30s——目录频繁变动（下载中/其他程序写入）不至于连续全量重扫
+  const elapsed = Date.now() - lastWatchScanAt;
+  if (elapsed < 30000) {
+    clearTimeout(libWatchTimer);
+    libWatchTimer = setTimeout(applyWatchChanges, 30000 - elapsed);
+    if (libWatchTimer.unref) libWatchTimer.unref();
+    return;
+  }
   libWatchRunning = true;
+  lastWatchScanAt = Date.now();
+  const store = loadStore();
+  const w = ensureScanWorker();
+  if (w) {
+    // V4.3.10：全量 diff 扫描挪到 Worker（原来在主进程同步遍历整个媒体库，
+    // 2 万首的库直接把主线程堵死 → Windows 判「应用程序挂起」强杀）
+    watchScanPending = true;
+    scanJobId++;
+    scannedTracks = [];
+    w.postMessage({ type: 'cancel' });
+    w.postMessage({ type: 'scan', jobId: scanJobId, folders: store.folders });
+    return; // 收尾在 Worker 'done'/'cancelled'/'error' 消息处（finishScanIfReady 等）
+  }
+  // Worker 不可用的同步兜底（极少见）：保留旧逻辑
   try {
-    const store = loadStore();
-    const fresh = library.scanFolders(store.folders || []); // 纯文件遍历，轻量
+    const fresh = library.scanFolders(store.folders || []);
     const oldPaths = new Set((store.tracks || []).map(t => t.path));
     const newPaths = new Set(fresh.map(t => t.path));
     const added = fresh.filter(t => !oldPaths.has(t.path)).length;
     const removed = (store.tracks || []).filter(t => !newPaths.has(t.path)).length;
     if (!added && !removed) return;
     saveStore({ tracks: fresh });
-    // fallback:true → 渲染侧全量重拉曲库刷新（与手动重扫兜底同路径）
     broadcastScan({ type: 'done', found: fresh.length, fallback: true, watch: true, added, removed });
   } catch { } finally { libWatchRunning = false; }
 }
@@ -435,6 +494,20 @@ function registerIpc() {
   ipcMain.handle('lib:pickFolder', async () => {
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'multiSelections'] });
     if (r.canceled || !r.filePaths.length) return loadStore();
+    // V4.3.10：盘符根目录（F:\ 这类）警告——整盘递归扫描+监听极易卡死（实锤案例：2 万首库挂起强杀）
+    const roots = r.filePaths.filter(isDriveRoot);
+    if (roots.length) {
+      const ans = await dialog.showMessageBox(mainWindow, {
+        type: 'warning', title: '不建议添加盘符根目录',
+        message: '你选择了整个盘符：' + roots.join('、'),
+        detail: '把整个盘作为媒体库会导致扫描和文件监听覆盖全盘所有文件（包括系统和临时文件），' +
+          '曲库很大时会明显卡顿甚至失去响应。\n\n强烈建议改为添加盘上具体的音乐文件夹。' +
+          (r.filePaths.length > roots.length ? '\n其余选中的文件夹会正常添加。' : ''),
+        buttons: ['仍要添加', '取消'], defaultId: 1, cancelId: 1, noLink: true,
+      });
+      if (ans.response === 1) r.filePaths = r.filePaths.filter(f => !isDriveRoot(f));
+      if (!r.filePaths.length) return loadStore();
+    }
     const store = loadStore();
     const folders = Array.from(new Set([...store.folders, ...r.filePaths]));
     const out = saveStore({ folders });
@@ -1310,7 +1383,7 @@ if (global.__svlxBoot) {
   registerIpc();
   setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
-  qobuz.init({ loadStore, flushStore });
+  qobuz.init({ loadStore, flushStore, touchStore });
   setupImageReferer();
   engine.start();
   // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
@@ -1345,7 +1418,7 @@ if (!gotLock) {
     registerIpc();
     setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
-    qobuz.init({ loadStore, flushStore });
+    qobuz.init({ loadStore, flushStore, touchStore });
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入
     engine.start(); // 引擎拉起失败不阻塞 UI，调用时再报错
     // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时

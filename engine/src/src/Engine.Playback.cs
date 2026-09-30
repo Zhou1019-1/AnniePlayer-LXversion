@@ -639,6 +639,16 @@ public sealed partial class Engine
 
     private object StopAll(bool emitState)
     {
+        // V4.3.13：停设备前先 60ms 淡出——正在播放时被硬切（手动切歌/格式回退/停止）
+        // 波形瞬间归零会产生爆音。淡出由音频线程在 Read 中消费，睡 80ms 等它播完；
+        // 暂停态无人读取，多睡 80ms 无害。DSD 路径（_source 为空）由静音花纹兜底，无需淡出。
+        PcmFloatSource? fading = null;
+        lock (_gate) { if (_playing && !_streamPaused && _source is not null) fading = _source; }
+        if (fading is not null)
+        {
+            try { fading.BeginFade(0f, 60); } catch { }
+            Thread.Sleep(80);
+        }
         lock (_gate)
         {
             _playing = false;

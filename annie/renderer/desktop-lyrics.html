@@ -23,10 +23,12 @@
   #next { font-size: 15px; color: rgba(232, 234, 240, .65); text-align: center; }
   #idle { font-size: 14px; color: rgba(232, 234, 240, .5); }
   #tools { position: absolute; top: 6px; right: 10px; display: none; gap: 6px; -webkit-app-region: no-drag; }
-  #bar:hover #tools { display: flex; }
+  /* 透明窗已知问题：DOM 事件正常但 CSS :hover 样式不触发 → 悬停改用 JS 加 .hover 类驱动 */
+  #bar:hover #tools, #bar.hover #tools { display: flex; }
   #tools button { width: 26px; height: 26px; border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
     background: rgba(20,23,34,.9); color: #e8eaf0; font-size: 13px; cursor: pointer; }
   #tools button:hover { border-color: #ffd23f; color: #ffd23f; }
+  #tools .sep { width: 1px; align-self: stretch; margin: 3px 2px; background: rgba(255,255,255,.18); }
   /* 自定义面板（悬停 ⚙ 弹出） */
   #panel { position: absolute; top: 38px; right: 10px; width: 220px; padding: 12px;
     border: 1px solid rgba(255,255,255,.18); border-radius: 10px; background: rgba(16,19,29,.96);
@@ -51,6 +53,10 @@
 <body>
 <div id="bar">
   <div id="tools">
+    <button id="t-prev" title="上一首">⏮</button>
+    <button id="t-play" title="播放 / 暂停">⏯</button>
+    <button id="t-next" title="下一首">⏭</button>
+    <span class="sep"></span>
     <button id="t-lock" title="锁定位置（鼠标穿透）">🔓</button>
     <button id="t-minus" title="缩小字号">A-</button>
     <button id="t-plus" title="放大字号">A+</button>
@@ -193,6 +199,10 @@ $('#t-minus').onclick = () => { cfg.scale = Math.max(0.6, cfg.scale - 0.15); app
 $('#t-plus').onclick = () => { cfg.scale = Math.min(2.2, cfg.scale + 0.15); apply(); };
 $('#t-op').onclick = () => { cfg.opacity = cfg.opacity > 0.55 ? cfg.opacity - 0.25 : 1; apply(); };
 $('#t-close').onclick = () => window.mine.dlyricsToggle();
+// V4.3.13：工具栏播放控制（洛雪同款）——经主进程 remote:cmd 通道转给主窗口执行
+$('#t-prev').onclick = () => window.mine.dlyricsCtl({ cmd: 'prev' });
+$('#t-play').onclick = () => window.mine.dlyricsCtl({ cmd: 'playpause' });
+$('#t-next').onclick = () => window.mine.dlyricsCtl({ cmd: 'next' });
 
 // 设置中心「桌面歌词外观」与 ⚙ 面板共用同一 LS key；跨窗口 storage 事件实时套用
 // （部分机器透明窗不响应悬停/鼠标，设置页是唯一可达入口，必须即时生效）
@@ -201,10 +211,23 @@ window.addEventListener('storage', (e) => {
   try { Object.assign(cfg, JSON.parse(e.newValue)); } catch { }
   $('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
   apply();
+  window.mine.dlyricsCtl({ lock: cfg.locked }); // 设置页可远程解锁/锁定（悬停失灵时的逃生通道）
 });
 
 $('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
 apply();
+// 启动即恢复持久化的锁定状态（图标与实际行为一致；解锁走设置 → 歌词 → 桌面歌词外观）
+if (cfg.locked) window.mine.dlyricsCtl({ lock: true });
+// 悬停显隐工具栏（JS 驱动，不依赖透明窗不可靠的 :hover）；面板打开期间保持显示
+$('#bar').addEventListener('mouseenter', () => $('#bar').classList.add('hover'));
+$('#bar').addEventListener('mouseleave', () => { if (!$('#panel').classList.contains('on')) $('#bar').classList.remove('hover'); });
+// 保险丝：鼠标移动落在 #bar 上也补 hover 类（mouseenter 在某些透明窗状态下不派发）
+document.addEventListener('mousemove', (e) => {
+  const r = $('#bar').getBoundingClientRect();
+  const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  if (inside) $('#bar').classList.add('hover');
+  else if (!$('#panel').classList.contains('on')) $('#bar').classList.remove('hover');
+});
 </script>
 </body>
 </html>

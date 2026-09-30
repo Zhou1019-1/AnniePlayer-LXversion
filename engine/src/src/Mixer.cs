@@ -46,7 +46,10 @@ public sealed class CrossfadeMixer : IWaveProvider
         {
             if (_next is not null) { _next.Deactivate(); _cur = _next; } // 打断上一段淡入：以新源为基准
             _next = s;
-            _fadeTotal = _fadeRemain = Math.Max(1, (int)(WaveFormat.SampleRate * fadeSec));
+            // V4.3.13：保底 30ms 微淡变——fadeSec=0（gapless 硬切）时旧实现 total=1 帧，
+            // 等价于瞬间硬切，波形不连续 = 切歌爆音（流媒体起播前静音期尤其明显）。
+            // 30ms 人耳无感（不产生可闻间隙），但消除了咔哒。
+            _fadeTotal = _fadeRemain = Math.Max((int)(WaveFormat.SampleRate * 0.03), (int)(WaveFormat.SampleRate * fadeSec));
         }
     }
 

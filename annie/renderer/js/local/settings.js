@@ -1360,6 +1360,21 @@
     dlSgChk.onchange = function () { dlCfgSet('single', dlSgChk.checked); };
     dlSgRow.appendChild(dlSgChk); dlSgRow.appendChild(el('span', '', '单行模式（只显示当前行）'));
     dlG.appendChild(dlSgRow);
+    // V4.3.13：锁定也在这里——歌词条悬停/点击失灵的机器上，这是解锁的唯一可达入口
+    var dlLkRow = markItem(el('label', 'set-check'), '桌面歌词 锁定 鼠标穿透 lock mouse-through');
+    var dlLkChk = document.createElement('input'); dlLkChk.type = 'checkbox';
+    dlLkChk.checked = !!dlCfgGet().locked;
+    dlLkChk.onchange = function () { dlCfgSet('locked', dlLkChk.checked); };
+    dlLkRow.appendChild(dlLkChk); dlLkRow.appendChild(el('span', '', '锁定桌面歌词（鼠标穿透，点不到歌词条）'));
+    dlG.appendChild(dlLkRow);
+    // 兼容模式：高 DPI（缩放≠100%）下透明窗鼠标事件会整个丢失（Electron/Windows 已知未解 bug）
+    // → 重建为不透明窗口，牺牲圆角透明换 100% 可点可拖；开关后歌词条自动重建
+    var dlCpRow = markItem(el('label', 'set-check'), '桌面歌词 兼容模式 鼠标失灵 点不到 拖不动 透明窗 compat high dpi');
+    var dlCpChk = document.createElement('input'); dlCpChk.type = 'checkbox';
+    if (window.mine.dlyricsGetCompat) window.mine.dlyricsGetCompat().then(function (v) { dlCpChk.checked = !!v; });
+    dlCpChk.onchange = function () { if (window.mine.dlyricsSetCompat) window.mine.dlyricsSetCompat(dlCpChk.checked); };
+    dlCpRow.appendChild(dlCpChk); dlCpRow.appendChild(el('span', '', '兼容模式（歌词条点不到/拖不动时开启：纯色底，牺牲圆角透明）'));
+    dlG.appendChild(dlCpRow);
     function dlSliderRow(label, key, min, max, step, fmt, kw) {
       var row = markItem(el('div', 'set-row'), kw);
       var head = el('div', 'set-row-head');

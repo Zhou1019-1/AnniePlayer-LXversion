@@ -925,10 +925,21 @@ function registerIpc() {
 
   /* ---------------- Pro beat0.0.1：桌面歌词窗口 ---------------- */
   let dlyrWin = null;
-  ipcMain.handle('dlyrics:toggle', () => {
-    if (dlyrWin) { dlyrWin.close(); return { ok: true, shown: false }; }
+  let dlyrCompatCur = false; // 当前桌面歌词窗是否为兼容模式（不透明）
+  function openDlyrWin() {
+    const lbSt = loadStore();
+    const lb = lbSt.ui && lbSt.ui.dlyrBounds; // V4.3.13：位置/尺寸记忆（洛雪同款）
+    // V4.3.13：兼容模式——transparent:true 在 Windows 高 DPI（scaleFactor≠1）下走 WS_EX_LAYERED，
+    // 命中测试坐标错位，鼠标事件整个进不了窗口（Electron/Chromium 未解 bug，洛雪同病）。
+    // 兼容模式改全不透明窗口（setOpacity 也会加 LAYERED，同样禁用，见 dlyrics:ctl），鼠标 100% 可靠。
+    const dlyrCompat = !!(lbSt.ui && lbSt.ui.dlyrCompat);
+    dlyrCompatCur = dlyrCompat;
     dlyrWin = new BrowserWindow({
-      width: 760, height: 128, frame: false, transparent: true, resizable: true,
+      width: (lb && lb.w) || 760, height: (lb && lb.h) || 128,
+      x: lb && Number.isFinite(lb.x) ? lb.x : undefined,
+      y: lb && Number.isFinite(lb.y) ? lb.y : undefined,
+      frame: false, transparent: !dlyrCompat, resizable: true,
+      backgroundColor: dlyrCompat ? '#0b0e17' : undefined,
       alwaysOnTop: true, skipTaskbar: true, hasShadow: false, minimizable: false, maximizable: false,
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
@@ -937,14 +948,43 @@ function registerIpc() {
     });
     dlyrWin.loadFile(path.join(__dirname, '..', 'renderer', 'desktop-lyrics.html'));
     dlyrWinRef = dlyrWin; // 供引擎事件分流识别
+    // V4.3.13：拖动/缩放后存 bounds（防抖落盘走 store 惯例：touchStore + 防抖 flush）
+    let dlyrBoundsT = null;
+    const saveBounds = () => {
+      if (!dlyrWin || dlyrWin.isDestroyed()) return;
+      const b = dlyrWin.getBounds();
+      const s2 = loadStore();
+      s2.ui = s2.ui || {}; s2.ui.dlyrBounds = { x: b.x, y: b.y, w: b.width, h: b.height };
+      touchStore();
+      clearTimeout(dlyrBoundsT); dlyrBoundsT = setTimeout(() => flushStore(), 800);
+    };
+    dlyrWin.on('moved', saveBounds);
+    dlyrWin.on('resized', saveBounds);
     dlyrWin.on('closed', () => { dlyrWin = null; dlyrWinRef = null; try { mainWindow?.webContents.send('dlyrics:closed'); } catch { } });
+  }
+  ipcMain.handle('dlyrics:toggle', () => {
+    if (dlyrWin) { dlyrWin.close(); return { ok: true, shown: false }; }
+    openDlyrWin();
     return { ok: true, shown: true };
   });
+  // V4.3.13：兼容模式开关（设置页）——transparent 只能创建时定，开关后重建窗口
+  ipcMain.handle('dlyrics:setCompat', (_e, v) => {
+    const s2 = loadStore();
+    s2.ui = s2.ui || {}; s2.ui.dlyrCompat = !!v;
+    touchStore(); flushStore();
+    if (dlyrWin && !dlyrWin.isDestroyed()) { dlyrWin.close(); setTimeout(openDlyrWin, 200); }
+    return { ok: true };
+  });
+  ipcMain.handle('dlyrics:getCompat', () => { const s2 = loadStore(); return !!(s2.ui && s2.ui.dlyrCompat); });
   ipcMain.on('dlyrics:line', (_e, payload) => { try { dlyrWin?.webContents.send('dlyrics:line', payload); } catch { } });
   ipcMain.on('dlyrics:ctl', (_e, payload) => {
     if (!dlyrWin) return;
     if (payload.lock != null) dlyrWin.setIgnoreMouseEvents(!!payload.lock, { forward: true });
-    if (payload.opacity != null) dlyrWin.setOpacity(Math.max(0.2, Math.min(1, payload.opacity)));
+    // V4.3.13：兼容模式下禁用 setOpacity——它在 Windows 上同样通过 WS_EX_LAYERED 实现，
+    // 会重新触发高 DPI 分层窗鼠标事件丢失 bug（实测 exstyle 0x00280108 仍带 LAYERED）
+    if (payload.opacity != null && !dlyrCompatCur) dlyrWin.setOpacity(Math.max(0.2, Math.min(1, payload.opacity)));
+    // V4.3.13：桌面歌词工具栏播放控制 → 转主窗口（复用遥控指令通道 remote:cmd）
+    if (payload.cmd) { try { mainWindow?.webContents.send('remote:cmd', { cmd: payload.cmd }); } catch { } }
   });
 
   /* ---------------- Pro beat0.0.1：拖放展开（递归目录 → 音频文件列表） ---------------- */

@@ -189,6 +189,8 @@ contextBridge.exposeInMainWorld('mine', {
   miniSetSize: (w, h) => ipcRenderer.invoke('mini:setSize', w, h),
   miniPin: (on) => ipcRenderer.invoke('mini:pin', on), // V3.5.15：迷你窗口置顶开关
   dlyricsToggle: () => ipcRenderer.invoke('dlyrics:toggle'),
+  dlyricsSetCompat: (v) => ipcRenderer.invoke('dlyrics:setCompat', v), // V4.3.13：高DPI透明窗鼠标失灵兼容模式
+  dlyricsGetCompat: () => ipcRenderer.invoke('dlyrics:getCompat'),
   dlyricsLine: (payload) => ipcRenderer.send('dlyrics:line', payload),
   dlyricsCtl: (payload) => ipcRenderer.send('dlyrics:ctl', payload),
   onDlyricsLine: (cb) => {

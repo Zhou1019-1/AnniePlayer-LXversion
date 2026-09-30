@@ -804,7 +804,9 @@
   /* 定位当前播放文件：当前视图找不到时切回歌曲全库，滚动到播放行并闪烁高亮 */
   function locatePlaying() {
     var p = state.currentPath;
-    if (!p || state.currentStream) return; // 流媒体不入库，无法定位
+    // V4.3.13：流媒体/在线歌单也能定位——回到来源视图滚动高亮当前行
+    if (state.currentStream) { if (AM.locateStream) AM.locateStream(); return; }
+    if (!p) return;
     var inView = currentTracks().some(function (t) { return t.path === p; });
     if (!inView) {
       S.view = 'songs'; S.albumKey = null; S.folderKey = null; S.search = '';

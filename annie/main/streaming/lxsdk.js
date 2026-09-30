@@ -16,7 +16,13 @@ const PROVIDER_NAMES = { kg: '酷狗音乐', kw: '酷我音乐', mg: '咪咕音�
 const QUALITY_ORDER = ['flac24bit', 'flac', '320k', '128k'];
 const QUALITY_LABEL = { flac24bit: 'Hi-Res 24bit', flac: '无损 FLAC', '320k': '极高 320k', '128k': '标准 128k' };
 // 安妮音质档 → 洛雪 type
-const ANNIE_TO_TYPE = { hires: 'flac24bit', lossless: 'flac', exhigh: '320k', standard: '128k' };
+// V4.3.13 修复：渲染层传的本来就是 LX type 名（flac24bit/flac/320k/128k），
+// 旧表只认 hires/lossless/exhigh/standard，导致 320k/128k/flac24bit 全部兜底成 flac——
+// 选 320K 实际先尝试 FLAC，选 Hi-Res 反而降成普通 FLAC（用户感知"档位差一档"）。
+const ANNIE_TO_TYPE = {
+  flac24bit: 'flac24bit', flac: 'flac', '320k': '320k', '128k': '128k',
+  hires: 'flac24bit', lossless: 'flac', exhigh: '320k', standard: '128k', // 兼容旧调用方
+};
 
 let sdkPromise = null;
 

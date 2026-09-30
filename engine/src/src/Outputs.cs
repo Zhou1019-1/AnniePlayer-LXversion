@@ -74,6 +74,12 @@ public sealed class PcmFloatSource : IWaveProvider
     public float[]? ChMatrix;
     /// <summary>VST实验区：本源私有的 VST3 效果器实例链（EQ 之前处理）；null/空 = 直通。</summary>
     public VstFxInstance[]? VstFx;
+    /// <summary>
+    /// V4.3.13：音频线程 VST 处理区忙计数（进入插件 Process 段 +1，退出 -1）。
+    /// RPC 侧拆链/换链要 Dispose 旧实例前必须先等它归零——否则音频线程正在 Process 的
+    /// 原生插件对象被就地释放 = 用后即焚，堆损坏（0xC0000374）/ fail-fast（0xC0000409）的元凶。
+    /// </summary>
+    public long VstBusy;
     public WaveFormat WaveFormat { get; }
     public event Action<float, float, float, float>? OnLevel; // rmsL, peakL, rmsR, peakR
     public long FramesRead => System.Threading.Interlocked.Read(ref _framesRead);
@@ -112,7 +118,20 @@ public sealed class PcmFloatSource : IWaveProvider
         _active = false;
         // VST实验区：源退役 → 收编插件状态回槽位并释放原生实例（防每换歌泄漏一份原生资源）
         var fx = VstFx; VstFx = null;
-        if (fx is not null) foreach (var inst in fx) { try { inst.Dispose(); } catch { } }
+        if (fx is not null)
+        {
+            // V4.3.13：音频线程可能正持 fx 引用在插件 Process 里——等忙计数归零再释放（护栏见 VstBusy）
+            WaitVstIdle();
+            foreach (var inst in fx) { try { inst.Dispose(); } catch { } }
+        }
+    }
+
+    /// <summary>等音频线程退出 VST 处理段（最多 2s；超时照常释放，避免永久泄漏/卡死 RPC）。</summary>
+    public void WaitVstIdle()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (System.Threading.Interlocked.Read(ref VstBusy) != 0 && sw.ElapsedMilliseconds < 2000)
+            System.Threading.Thread.Sleep(1);
     }
 
     /// <summary>
@@ -205,6 +224,10 @@ public sealed class PcmFloatSource : IWaveProvider
                 var vst = VstFx;
                 if (vst is not null && vst.Length > 0 && frames > 0)
                 {
+                    // V4.3.13：进入处理段前报到——RPC 侧拆链释放旧实例前会等 VstBusy 归零
+                    System.Threading.Interlocked.Increment(ref VstBusy);
+                    try
+                    {
                     var block = new Span<float>(f, frames * chs);
                     float rampFrames = Math.Max(1f, WaveFormat.SampleRate * 0.020f); // 20ms 旁通/生效斜坡
                     long blockUs = Math.Max(1, (long)Math.Round(frames * 1_000_000.0 / WaveFormat.SampleRate));
@@ -256,6 +279,8 @@ public sealed class PcmFloatSource : IWaveProvider
                             slot.AutoBypassed = false; slot.Broken = true; inst.Wet = 0f; // 护栏：异常即旁通，引擎侧稍后发通知
                         }
                     }
+                    }
+                    finally { System.Threading.Interlocked.Decrement(ref VstBusy); }
                 }
                 if (eq is not null)
                     for (int fr = 0; fr < frames; fr++) eq.ProcessFrame(f + fr * chs);

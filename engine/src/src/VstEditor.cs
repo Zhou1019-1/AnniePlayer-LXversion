@@ -163,7 +163,11 @@ public sealed class VstEditorWindow
         }
         catch (Exception ex)
         {
-            _openError = ex; _ready.Set(); return;
+            _openError = ex;
+            // V4.3.13：开窗成功但建视图失败时销毁半开窗口——否则线程退出后消息循环不在，
+            // 留一个永远收不到消息的僵尸窗（且 _hwnd 非零会让 Open() 误判为成功）
+            if (_hwnd != IntPtr.Zero) { try { DestroyWindow(_hwnd); } catch { } _hwnd = IntPtr.Zero; }
+            _ready.Set(); return;
         }
 
         // 消息循环：窗口销毁前一直转

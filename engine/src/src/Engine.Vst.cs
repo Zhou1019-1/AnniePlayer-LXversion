@@ -164,16 +164,22 @@ public sealed partial class Engine
 
     /* ---------- 插件原生界面（FB2K 式独立悬浮窗） ---------- */
 
-    /// <summary>打开插件原生界面。IVGI2 这类分离控制器插件要求模块/插件/视图在同一 UI 线程创建，因此编辑器实例在 VST 编辑器线程内生成。</summary>
+    /// <summary>
+    /// 打开插件原生界面（FB2K 式独立悬浮窗）。
+    /// V4.3.13 起两条路：①首选——视图挂正在处理音频的活实例（分析仪类如 iZotope Insight
+    /// 只有这样才能看到信号；实例留在链上继续发声，视图调用全部走编辑器 UI 线程，符合 VST3 规范）；
+    /// ②兜底——CreateView/Attach 抛错时退回独立孤儿实例（IVGI2 这类要求模块/插件/视图同一线程
+    /// 创建的插件），此时该槽湿声 20ms 淡出后从链上摘除，关界面再接回。
+    /// </summary>
     private async Task<object> VstOpenEditor(string id)
     {
-        VstFxSlot? slot; int rate = 48000, channels = 2;
+        VstFxSlot? slot; VstFxInstance? liveInst; int rate = 48000, channels = 2;
         lock (_gate)
         {
             slot = _vstSlots.FirstOrDefault(s => s.Id == id);
-            var live = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id);
+            liveInst = _source?.VstFx?.FirstOrDefault(i => i.Slot.Id == id);
             if (slot is null) return new { ok = false, error = "槽位不存在" };
-            if (live is null) return new { ok = false, error = "请先播放音乐，再打开插件界面" };
+            if (liveInst is null) return new { ok = false, error = "请先播放音乐，再打开插件界面" };
             if (_vstEditor is not null)
             {
                 if (_vstEditor.SlotId == id) return new { ok = true }; // 已开着
@@ -181,8 +187,30 @@ public sealed partial class Engine
             }
             rate = _source?.WaveFormat.SampleRate ?? 48000;
             channels = _source?.WaveFormat.Channels ?? 2;
-            // 先标记 EditorOpen：音频线程把该槽湿声 20ms 淡出，再摘活实例（IVGI2 活动实例会抢占第二个实例的 UI Attach）。
-            if (_source?.VstFx?.Any(i => i.Slot.Id == id) == true) slot.EditorOpen = true;
+        }
+
+        // —— 路径①：活实例直挂 ——
+        var winLive = new VstEditorWindow { SlotId = id, OnClosed = VstEditorCleanup };
+        try
+        {
+            liveInst.EditorAttached = true; // 先标记：若此刻源退役，实例转 Orphaned 由编辑器路径回收
+            winLive.Open(liveInst.Plugin, slot.Name + " — 安妮播放器");
+            lock (_gate) { _vstEditor = winLive; _editorSlotIdStatic = id; _vstEditorInst = liveInst; }
+            return new { ok = true, attached = "live" };
+        }
+        catch (Exception ex)
+        {
+            liveInst.EditorAttached = false;
+            try { winLive.Close(); } catch { }
+            // 活实例上建不出视图（含 VstNoEditorException）不等于插件没有界面——
+            // 孤儿实例兜底路径很可能建得出来（部分插件的活实例控制器不暴露视图）
+            Console.Error.WriteLine($"[vst] 活实例挂界面失败（{ex.Message}），退回独立编辑器实例");
+        }
+
+        // —— 路径②：孤儿实例兜底（淡出活实例→摘链→UI 线程另建实例挂视图）——
+        lock (_gate)
+        {
+            if (_source?.VstFx?.Any(i => i.Slot.Id == id) == true) slot.EditorOpen = true; // 音频线程湿声 20ms 淡出
         }
         if (slot.EditorOpen) await Task.Delay(35); // 等淡出完成，避免开原生界面瞬间咔哒
         lock (_gate)
@@ -197,6 +225,8 @@ public sealed partial class Engine
                     slot.EditorOpen = true;
                     var remain = fx.Where(i => i.Slot.Id != id).ToArray();
                     src.VstFx = remain.Length > 0 ? remain : null;
+                    // V4.3.13：等音频线程退出 VST 处理段再释放被摘实例，防用后即焚
+                    src.WaitVstIdle();
                     foreach (var inst in removed) { try { inst.Dispose(); } catch { } }
                 }
             }
@@ -213,7 +243,7 @@ public sealed partial class Engine
                 return inst;
             }, slot.Name + " — 安妮播放器");
             lock (_gate) { _vstEditor = win; _editorSlotIdStatic = id; _vstEditorInst = win.Instance; }
-            return new { ok = true };
+            return new { ok = true, attached = "orphan" };
         }
         catch (Exception ex)
         {
@@ -272,7 +302,12 @@ public sealed partial class Engine
     private void AttachVst(PcmFloatSource source)
     {
         var old = source.VstFx; source.VstFx = null;
-        if (old is not null) foreach (var i in old) { try { i.Dispose(); } catch { } }
+        if (old is not null)
+        {
+            // V4.3.13：音频线程可能正持旧链引用在插件 Process 里——先等它退出再 Dispose，防用后即焚
+            source.WaitVstIdle();
+            foreach (var i in old) { try { i.Dispose(); } catch { } }
+        }
         if (_vstSlots.Count == 0) return;
         int rate = source.WaveFormat.SampleRate, ch = source.WaveFormat.Channels;
         var list = new List<VstFxInstance>();

@@ -254,12 +254,14 @@
     if (S.qTab !== 'hist') {
       // 待播清单：流媒体用搜索结果队列，本地用 state.queue（从当前索引起）
       if (state.currentStream) {
-        var rs = S.stResults || [];
+        // V4.3.13：跟随实际播放队列（在线歌单快照 S._playList），不是搜索结果列表
+        var rs = S._playList || S.stResults || [];
         if (!rs.length) { list.appendChild(el('div', 'am-q-empty', '（无待播曲目）')); return; }
         rs.forEach(function (song, i) {
           addRow(song.cover || '', null, song.title || song.name || '', song.artist || '',
-            song.duration ? fmtTime(song.duration) : '', i === S.stIndex,
-            function () { playStreamAt(i); });
+            // V4.3.13 修复：洛雪 SDK 的 duration 是毫秒（其他地方都 /1000，这里漏了）
+            song.duration ? fmtTime(song.duration / 1000) : '', i === S.stIndex,
+            function () { playStreamAt(i, S._playList || S.stResults); });
         });
         return;
       }
@@ -406,11 +408,19 @@
     head.appendChild(info);
     var wb = el('div', 'am-mini-winbtns');
     var bMin = el('button', 'am-tbtn', '—'); bMin.title = '最小化'; bMin.onclick = function () { window.mine.winMin(); };
+    // V4.3.13：在线曲目快捷操作（仅播放流媒体/在线歌单时显示）
+    R.miniBtnFav = el('button', 'am-tbtn', '♥'); R.miniBtnFav.title = '收藏到在线歌单'; R.miniBtnFav.style.display = 'none';
+    R.miniBtnFav.onclick = function (e) { if (AM.favCurrentStream) AM.favCurrentStream(e.clientX, e.clientY); };
+    R.miniBtnDl = el('button', 'am-tbtn', '⬇'); R.miniBtnDl.title = '下载当前在线歌曲'; R.miniBtnDl.style.display = 'none';
+    R.miniBtnDl.onclick = function () {
+      var cs = state.currentStream;
+      if (cs && cs.song && AM.downloadStreamSong) AM.downloadStreamSong(cs.song, R.miniBtnDl);
+    };
     var bPin = el('button', 'am-tbtn mini-pin-btn', '📌'); bPin.title = '窗口置顶（置于所有窗口之上）';
     bPin.onclick = function () { if (window.annieMiniPin) window.annieMiniPin.set(!window.annieMiniPin.get()); };
     var bExit = el('button', 'am-tbtn', '⤢'); bExit.title = '退出迷你模式'; bExit.onclick = function () { exitMini(); };
     var bClose = el('button', 'am-tbtn am-close', '✕'); bClose.title = '关闭'; bClose.onclick = function () { window.mine.winClose(); };
-    wb.appendChild(bMin); wb.appendChild(bPin); wb.appendChild(bExit); wb.appendChild(bClose);
+    wb.appendChild(R.miniBtnFav); wb.appendChild(R.miniBtnDl); wb.appendChild(bMin); wb.appendChild(bPin); wb.appendChild(bExit); wb.appendChild(bClose);
     head.appendChild(wb);
     m.appendChild(head);
 
@@ -467,6 +477,7 @@
       if (S.imm) toggleImmersive(false); // 互斥
       S.mini = true;
       S.miniLyrOn = false; S.miniQOn = false;
+      refreshMiniStreamBtns(); // V4.3.13：进入迷你时同步 ♥/⬇ 可见性（可能正播在线曲目）
       var root = document.getElementById('am-root');
       root.classList.add('am-mini-on');
       root.classList.remove('am-mini-lyr-on', 'am-mini-q-on');
@@ -568,7 +579,16 @@
     img.classList.remove('am-swap'); void img.offsetWidth; img.classList.add('am-swap');
   }
   var _txT = 0;
+  /* V4.3.13：迷你模式 ♥/⬇ 只在播在线曲目时露面；切歌时重置下载按钮状态 */
+  function refreshMiniStreamBtns() {
+    if (!R.miniBtnFav || !R.miniBtnDl) return;
+    var on = !!(state.currentStream && state.currentStream.song);
+    R.miniBtnFav.style.display = on ? '' : 'none';
+    R.miniBtnDl.style.display = on ? '' : 'none';
+    if (on && R.miniBtnDl.disabled) { R.miniBtnDl.disabled = false; R.miniBtnDl.textContent = '⬇'; }
+  }
   function swapNpText(title, sub) {
+    refreshMiniStreamBtns(); // 切歌时机：在线/本地身份在此刻切换
     if (!R.npText) return;
     if (R.npTitle.textContent === title && R.npSub.textContent === sub) return;
     clearTimeout(_txT);

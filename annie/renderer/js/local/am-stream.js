@@ -63,6 +63,7 @@
     S.stIndex = i;
     S._playList = list;
     highlightStreamRow();
+    scrollStreamRowIntoView(true); // V4.3.13：切歌滚动跟随（含随机播放跳到远处）
     renderStreamStatus('正在获取播放地址：' + song.name + '…');
     window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }).then(function (r) {
       if (S.stIndex !== i || S._playList !== list) return;
@@ -129,6 +130,24 @@
     if (!R.content) return;
     var rows = R.content.querySelectorAll('.am-tr[data-st]');
     rows.forEach(function (r) { r.classList.toggle('cur', +r.dataset.st === S.stIndex); });
+  }
+  /* V4.3.13：切歌后滚动跟随当前行（在可视区内则不打扰）。
+   * 注意 #am-root 是滚动祖先，禁用 scrollIntoView——手动滚 R.content。 */
+  function scrollStreamRowIntoView(auto) {
+    setTimeout(function () {
+      if (!R.content) return;
+      var row = R.content.querySelector('.am-tr[data-st="' + S.stIndex + '"]');
+      if (!row) return; // 当前视图不是播放来源列表 → 没有对应行，不动
+      var cRect = R.content.getBoundingClientRect();
+      var rRect = row.getBoundingClientRect();
+      var visible = rRect.top >= cRect.top && rRect.bottom <= cRect.bottom;
+      if (auto && visible) return;
+      if (!visible) {
+        var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
+        if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+        else R.content.scrollTop = Math.max(0, target);
+      }
+    }, 60);
   }
   /* 流媒体自然结束续播：仅当当前流来自 AM 搜索列表时才接管，否则交还 streaming.js 原逻辑 */
   function patchStreamPlayNext() {
@@ -735,6 +754,7 @@
       if (!it.song.provider) it.song.provider = it.provider;
       return it.song;
     });
+    list._splId = pl.id; // V4.3.13：标记来源歌单，定位播放（🎯）时能切回该视图
     playStreamAt(i, list);
   }
 
@@ -776,10 +796,11 @@
     c.appendChild(R.stStatus);
 
     var tb = el('table', 'am-table');
-    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:64px">平台</th><th style="width:44px"></th></tr></thead>';
+    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:64px">平台</th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
     var body = el('tbody');
     pl.items.forEach(function (it, i) {
       var song = it.song;
+      if (!song.provider) song.provider = it.provider; // V4.3.13：下载/再解析依赖 provider（旧收藏可能没存进 song 里）
       var cur = S._playList && S._playList[S.stIndex] === song && i === S.stIndex;
       var tr = el('tr', 'am-tr' + (cur ? ' cur' : ''));
       tr.dataset.st = i;
@@ -797,6 +818,12 @@
       var tdPf = el('td');
       tdPf.appendChild(el('span', 'am-qbadge', PLATFORMS[it.provider] ? PLATFORMS[it.provider].replace('音乐', '') : it.provider));
       tr.appendChild(tdPf);
+      // V4.3.13：在线歌单补齐下载（与搜索结果行同一机制）
+      var tdDl = el('td');
+      var bDl = el('button', 'am-dl-btn', '⬇');
+      bDl.title = '下载到下载目录（音质：' + S.stQuality + '）';
+      bDl.onclick = function (e) { e.stopPropagation(); downloadSong(song, bDl); };
+      tdDl.appendChild(bDl); tr.appendChild(tdDl);
       var tdRm = el('td');
       var bRm = el('button', 'am-dl-btn', '✕');
       bRm.title = '从歌单移除';
@@ -824,6 +851,46 @@
   }
 
 
+  /* V4.3.13：定位当前播放的在线曲目（顶栏 🎯 的流媒体分支）。
+   * 找当前播放队列里的曲目行 → 视图不在来源时切回来源（在线歌单/在线音乐）→ 滚动 + 闪烁。
+   * 注意 #am-root 是滚动祖先，禁用 scrollIntoView——手动滚 R.content。 */
+  function locateStream() {
+    var cs = state.currentStream;
+    if (!cs || !cs.song) return;
+    var list = S._playList || S.stResults;
+    if (!list || !list.length) return;
+    var idx = list.indexOf(cs.song);
+    if (idx < 0) {
+      // 歌单编辑过快照换对象——按身份（平台+歌名+艺人）兜底匹配
+      var norm = function (s) { return (s.provider || '') + '|' + (s.name || '') + '|' + (s.artist || ''); };
+      var key = norm(cs.song);
+      idx = list.findIndex(function (s) { return norm(s) === key; });
+    }
+    if (idx < 0) return;
+    var wantView = list._splId ? 'spl:' + list._splId : 'stream';
+    if (S.view !== wantView) {
+      S.view = wantView; renderSidebar(); renderView();
+    } else renderView(); // 重渲染确保 cur 行/滚动目标存在
+    highlightStreamRow();
+    setTimeout(function () {
+      if (!R.content) return;
+      var row = R.content.querySelector('.am-tr[data-st="' + idx + '"]');
+      if (!row) return;
+      var cRect = R.content.getBoundingClientRect();
+      var rRect = row.getBoundingClientRect();
+      if (rRect.top < cRect.top || rRect.bottom > cRect.bottom) {
+        var target = R.content.scrollTop + (rRect.top - cRect.top) - (cRect.height - rRect.height) / 2;
+        if (R.content.scrollTo) R.content.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+        else R.content.scrollTop = Math.max(0, target);
+      }
+      row.classList.remove('locate-flash');
+      void row.offsetWidth; // 重启动画
+      row.classList.add('locate-flash');
+      setTimeout(function () { row.classList.remove('locate-flash'); }, 2000);
+    }, 60);
+  }
+
+
   AM.renderStreamStatus = renderStreamStatus;
   AM.playStreamAt = playStreamAt;
   AM.nextStream = nextStream;
@@ -833,6 +900,8 @@
   AM.renderSplView = renderSplView;       // V4.3.5：在线歌单视图
   AM.openSplPicker = openSplPicker;       // V4.3.5：收藏到在线歌单选择器
   AM.favCurrentStream = favCurrentStream; // V4.3.5：播放中一键收藏
+  AM.locateStream = locateStream;         // V4.3.13：定位当前播放的在线曲目
+  AM.downloadStreamSong = downloadSong;   // V4.3.13：迷你模式 ⬇ 复用
 
   /* 侧栏「收藏的歌单」直达：切到 在线音乐·歌单广场·对应平台 并加载该歌单详情 */
   function openFavSongList(f) {

@@ -99,6 +99,21 @@ function qualityCandidates(quality, meta) {
   return filtered.length ? filtered : downChain;
 }
 
+/* ---------------- 张冠李戴拦截（tx） ---------------- */
+/** QQ 流地址文件名内嵌曲目身份：M800/M500/F000 等 + strMediaMid，C400 + songmid。
+ * 聚合音源对解析失败的曲目常退化为"按歌名搜索"，返回同名不同歌的地址（实测歌单内部分曲目中招）——
+ * URL 能判定身份时必须与请求曲目一致，否则视为本次解析失败。 */
+function txUrlMid(url) {
+  const m = String(url).match(/\/(?:M800|M500|C400|F000|O600|M600)([0-9A-Za-z]{14})\./i);
+  return m ? m[1] : null;
+}
+function verifyUrlIdentity(provider, meta, url) {
+  if (provider !== 'tx') return true; // 其余平台流地址不含可判定身份，放行
+  const mid = txUrlMid(url);
+  if (!mid) return true; // 转发/代理地址无法判定，放行
+  return mid === meta.strMediaMid || mid === meta.songmid;
+}
+
 /* ---------------- 洛雪测试接口兜底 ---------------- */
 function tempProxyUrl(provider, meta, type) {
   let id;
@@ -265,28 +280,37 @@ async function songUrl({ provider, song, quality = 'hires' }) {
   for (const type of candidates) {
     // 1) 用户音源（洛雪模式：apis() → user_api）
     if (sources.hasActiveSource()) {
-      try {
-        const r = await mod.getMusicUrl(meta, type);
-        const url = typeof r === 'string' ? r : (r && r.url);
-        if (url && /^https?:\/\//.test(url)) {
-          // 格式校验：请求无损却返回 mp3 时视为该档失败，继续向下回退
-          if (!(await verifyUrlFormat(url, type))) {
-            lastErr = new Error(`音源返回的 ${urlExt(url) || '未知格式'} 与请求音质 ${type} 不符`);
-            console.warn('[lxsdk] 格式不符，降级:', type, '→', url.slice(0, 120));
-          } else {
-            return {
-              provider, playable: true, url, headers: '',
-              quality: `${lastSourceName || '音源'}·${QUALITY_LABEL[type] || type}`,
-              format: (urlExt(url) || 'mp3').toLowerCase(),
-              level: type, viaSource: true,
-              requestedType: requested,
-              downgraded: type !== requested, // 实际音质低于所选档位时为 true
-            };
-          }
-        } else {
-          lastErr = new Error('音源未返回有效地址');
+      // 逐音源尝试 + tx 身份校验：聚合音源解析失败会退化为按歌名搜索返回同名不同歌，
+      // 校验不过换下一个音源；全部不过再落测试接口兜底（兜底按 songmid 解析，不会错歌）。
+      for (const entry of sources.list().filter((e) => e.enabled)) {
+        let url = '';
+        try {
+          const r = await sources.handleRequestById(entry.id, 'musicUrl', { source: provider, info: { musicInfo: meta, type } });
+          const res = r && r.result !== undefined ? r.result : r;
+          url = (typeof res === 'string' ? res : (res && res.url)) || '';
+          lastSourceName = entry.name || lastSourceName;
+        } catch (e) { lastErr = e; continue; }
+        if (!/^https?:\/\//.test(url)) { lastErr = new Error('音源未返回有效地址'); continue; }
+        if (!verifyUrlIdentity(provider, meta, url)) {
+          lastErr = new Error('音源返回了其他歌曲的地址（张冠李戴，已拦截）');
+          console.warn('[lxsdk] 张冠李戴拦截:', meta.name, '期望', meta.strMediaMid || meta.songmid, '实得', txUrlMid(url), '音源:', entry.name);
+          continue;
         }
-      } catch (e) { lastErr = e; }
+        // 格式校验：请求无损却返回 mp3 时视为该档失败，继续向下回退
+        if (!(await verifyUrlFormat(url, type))) {
+          lastErr = new Error(`音源返回的 ${urlExt(url) || '未知格式'} 与请求音质 ${type} 不符`);
+          console.warn('[lxsdk] 格式不符，降级:', type, '→', url.slice(0, 120));
+          break; // 地址身份对但格式不对：不再试其他音源，直接落兜底/下一档
+        }
+        return {
+          provider, playable: true, url, headers: '',
+          quality: `${lastSourceName || '音源'}·${QUALITY_LABEL[type] || type}`,
+          format: (urlExt(url) || 'mp3').toLowerCase(),
+          level: type, viaSource: true,
+          requestedType: requested,
+          downgraded: type !== requested, // 实际音质低于所选档位时为 true
+        };
+      }
     }
     // 2) 洛雪测试接口兜底
     const url = await tryTempProxy(provider, meta, type);

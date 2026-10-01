@@ -765,13 +765,14 @@ function registerIpc() {
   ipcMain.handle('lib:metaBatch', async (_e, paths) => {
     const store = loadStore();
     const cache = store.metaCache;
-    const missing = paths.filter(p => !cache[p] && !p.includes('#cue') && !p.includes('#iso')); // Pro：CUE/ISO 虚拟分轨不触碰文件系统
+    // V4.3.15：旧缓存里的 .wav 条目可能是 GBK 乱码（无 wv 标记），强制重解析
+    const missing = paths.filter(p => (!cache[p] || (p.toLowerCase().endsWith('.wav') && cache[p].wv !== 1)) && !p.includes('#cue') && !p.includes('#iso')); // Pro：CUE/ISO 虚拟分轨不触碰文件系统
     if (missing.length) {
       let fresh = await metaViaWorker(missing);
       if (!fresh) fresh = await library.readMetaBatch(missing);
       for (const [p, m] of Object.entries(fresh)) {
         if (m && m.ok) {
-          cache[p] = { title: m.title, artist: m.artist, album: m.album, genre: m.genre || '', year: m.year || 0 };
+          cache[p] = { ...(cache[p] || {}), title: m.title, artist: m.artist, album: m.album, genre: m.genre || '', year: m.year || 0, ...(p.toLowerCase().endsWith('.wav') ? { wv: 1 } : {}) };
         }
       }
       saveStore({ metaCache: cache });
@@ -1080,7 +1081,8 @@ function registerIpc() {
     try { mtimeMs = fs.statSync(p).mtimeMs; } catch { }
     const store = loadStore();
     const c = store.metaCache[p];
-    if (c && mtimeMs && c.mtimeMs === mtimeMs) {
+    // V4.3.15：.wav 旧缓存可能是 GBK 乱码——无 wv 标记视为未命中，重走 readMeta（含 INFO 直读）
+    if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 1)) {
       const cover = library.getCachedCover(p, mtimeMs);
       if (cover !== undefined) {
         return {
@@ -1103,7 +1105,8 @@ function registerIpc() {
         codec: meta.codec || '', sampleRate: meta.sampleRate || 0, bitsPerSample: meta.bitsPerSample || 0,
         bitrate: meta.bitrate || 0, channels: meta.channels || 0,
         fileSize: meta.fileSize || 0, mtimeMs: mt,
-        rg: meta.rg || null // V3.5.15：ReplayGain 标签
+        rg: meta.rg || null, // V3.5.15：ReplayGain 标签
+        ...(p.toLowerCase().endsWith('.wav') ? { wv: 1 } : {}) // V4.3.15：WAV INFO 已直读标记
       };
       saveStore({ metaCache: store.metaCache });
     }
@@ -1125,7 +1128,8 @@ function registerIpc() {
       let mtimeMs = 0;
       try { mtimeMs = fs.statSync(p).mtimeMs; } catch { }
       const c = store.metaCache[p];
-      if (c && mtimeMs && c.mtimeMs === mtimeMs) {
+      // V4.3.15：.wav 旧缓存可能是 GBK 乱码——无 wv 标记视为未命中
+      if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 1)) {
         const cover = library.getCachedCover(p, mtimeMs);
         if (cover !== undefined) {
           out[p] = {
@@ -1153,7 +1157,8 @@ function registerIpc() {
             codec: meta.codec || '', sampleRate: meta.sampleRate || 0, bitsPerSample: meta.bitsPerSample || 0,
             bitrate: meta.bitrate || 0, channels: meta.channels || 0,
             fileSize: meta.fileSize || 0, mtimeMs: mt,
-            rg: meta.rg || null // V3.5.15：ReplayGain 标签
+            rg: meta.rg || null, // V3.5.15：ReplayGain 标签
+            ...(p.toLowerCase().endsWith('.wav') ? { wv: 1 } : {}) // V4.3.15
           };
         }
         out[p] = meta;

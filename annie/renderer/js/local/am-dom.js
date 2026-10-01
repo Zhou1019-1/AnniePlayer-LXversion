@@ -419,13 +419,32 @@
       c.appendChild(el('div', 'am-view-h', S.albumKey));
     } else if (S.view.indexOf('pl:') === 0) {
       renderPlaylistHead(c);
+    } else if (S.view === 'favorites') {
+      c.appendChild(el('div', 'am-view-h', '喜爱歌曲'));
     } else {
-      c.appendChild(el('div', 'am-view-h',
-        S.view === 'favorites' ? '喜爱歌曲' : '歌曲'));
+      // V4.3.15：歌曲视图标题行——右侧排序下拉（首字母/文件名/修改时间/大小）
+      var shead = el('div', 'am-view-head');
+      shead.appendChild(el('div', 'am-view-h', '歌曲'));
+      var ssel = el('select', 'am-sort-sel');
+      ssel.title = '排序方式';
+      [['az', '首字母 A–Z'], ['name', '文件名'], ['mtimeDesc', '修改时间 · 新→旧'],
+       ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']]
+        .forEach(function (o) {
+          var op = document.createElement('option');
+          op.value = o[0]; op.textContent = o[1];
+          ssel.appendChild(op);
+        });
+      ssel.value = AM.songSortMode ? AM.songSortMode() : 'az';
+      ssel.onchange = function () {
+        if (window.annieSettings) { annieSettings.ui.amSongSort = ssel.value; annieSettings.save(); }
+        renderView();
+      };
+      shead.appendChild(ssel);
+      c.appendChild(shead);
     }
 
-    if (S.view === 'songs') {
-      ensureMetaDeep(); // V4.3.8：字母排序依赖全库标题，闲时深加载（按块到达自动重排）
+    if (S.view === 'songs' && (!AM.songSortMode || AM.songSortMode() === 'az')) {
+      ensureMetaDeep(); // 首字母排序依赖全库标题，闲时深加载（按块到达自动重排）；平铺排序不需要
     }
 
     if (!tracks.length) {

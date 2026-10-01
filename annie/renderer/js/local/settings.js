@@ -19,6 +19,7 @@
     // —— 界面 ——
     particlesEnabled: true, albumBg: true, albumBgBlur: 120,
     sortMode: 'name', sidebarCollapsed: false, viewMode: 'tree',
+    amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
     // 侧栏宽度（px）与可视化面板整体关闭状态（持久化，重启后恢复）
     sidebarWidth: 320, vizBarHidden: false,
     // Plus：配色方案（gold 暗夜金 / aurora 靛蓝极光 / jade 翡翠深空 / day 白昼）
@@ -1244,7 +1245,7 @@
     sPeq.appendChild(aeWrap);
     var aeBox = el('div', 'autoeq-box');
     var aeIn = document.createElement('input');
-    aeIn.type = 'text'; aeIn.className = 'autoeq-search'; aeIn.placeholder = '输入耳机型号，如 HD 650 / AirPods / Kato…';
+    aeIn.type = 'text'; aeIn.className = 'autoeq-search'; aeIn.placeholder = '输入耳机型号，如 HD650 / 森海 / AirPods / Kato…';
     aeBox.appendChild(aeIn);
     var aeList = el('div', 'autoeq-list');
     var aePrev = el('div', 'set-hint');
@@ -1252,6 +1253,17 @@
     sPeq.appendChild(aeBox);
     var aeData = null, aeSel = null, aeLoading = false;
     var AE_TYPE = { 'in-ear': '入耳', 'over-ear': '头戴', 'earbud': '平头/耳塞', other: '其他' };
+    /* V4.3.15：型号归一化匹配——忽略空格/连字符（HD650 = HD 650）+ 中文品牌别名（森海=Sennheiser 等）。
+     * 别名键按长度降序排列（"森海塞尔"先于"森海"命中）。 */
+    var AE_ALIAS = {
+      '森海塞尔': 'sennheiser', '拜亚动力': 'beyerdynamic', '铁三角': 'audio-technica',
+      '水月雨': 'moondrop', '天使吉米': 'tangzu', '弱水时砂': 'rose technics', '达音科': 'dunu',
+      '森海': 'sennheiser', '索尼': 'sony', '苹果': 'apple', '拜亚': 'beyerdynamic',
+      '舒尔': 'shure', '爱科技': 'akg', '歌德': 'grado', '飞傲': 'fiio', '兴戈': 'simgot',
+      '博士': 'bose', '音特美': 'etymotic', '漫步者': 'edifier', '宁梵': 'nf audio'
+    };
+    var AE_ALIAS_KEYS = Object.keys(AE_ALIAS);
+    var aeNorm = function (s) { return String(s).toLowerCase().replace(/[\s\-_·]+/g, ''); };
     function aeLoad() { // 首次输入时懒加载子集
       if (aeData || aeLoading) return; aeLoading = true;
       fetch('autoeq-subset.json').then(function (r) { return r.json(); }).then(function (d) {
@@ -1263,8 +1275,14 @@
       aeList.innerHTML = '';
       var q = aeIn.value.trim().toLowerCase();
       if (!q || !aeData) { if (q && !aeData) aeLoad(); return; }
-      var hits = aeData.models.filter(function (m) { return m.n.toLowerCase().includes(q); }).slice(0, 8);
-      if (!hits.length) { aeList.appendChild(el('div', 'set-hint', '库内无匹配型号（共 ' + aeData.count + ' 款，可手动按 AutoEq 网页结果加频段）')); return; }
+      for (var ai = 0; ai < AE_ALIAS_KEYS.length; ai++) q = q.split(AE_ALIAS_KEYS[ai]).join(AE_ALIAS[AE_ALIAS_KEYS[ai]]);
+      var tokens = q.split(/\s+/).filter(Boolean).map(aeNorm);
+      // 每个词元都要求命中（归一化后子串），多词可组合过滤（如「森海 hd650」）
+      var hits = aeData.models.filter(function (m) {
+        var n = aeNorm(m.n);
+        return tokens.every(function (t) { return n.indexOf(t) >= 0; });
+      }).slice(0, 8);
+      if (!hits.length) { aeList.appendChild(el('div', 'set-hint', '库内无匹配型号（共 ' + aeData.count + ' 款，支持中文品牌名如「森海」；可手动按 AutoEq 网页结果加频段）')); return; }
       hits.forEach(function (m) {
         var it = el('div', 'autoeq-item' + (aeSel === m ? ' sel' : ''));
         it.appendChild(el('span', 'autoeq-name', m.n));

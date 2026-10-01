@@ -509,6 +509,7 @@ function sortTracks(tracks) {
   const last = (v) => v ? v : '￿'; // 空标签排最后
   if (mode === 'folder') arr.sort((a, b) => cmpZh(a.dir, b.dir) || cmpName(a, b));
   else if (mode === 'mtime') arr.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  else if (mode === 'mtimeAsc') arr.sort((a, b) => (a.mtime || 0) - (b.mtime || 0)); // V4.3.15
   else if (mode === 'artist') arr.sort((a, b) => cmpZh(last(tagOf(a).artist), last(tagOf(b).artist)) || cmpName(a, b));
   else if (mode === 'album') arr.sort((a, b) => cmpZh(last(tagOf(a).album), last(tagOf(b).album)) || cmpName(a, b));
   else if (mode === 'genre') arr.sort((a, b) => cmpZh(last(tagOf(a).genre), last(tagOf(b).genre)) || cmpName(a, b));

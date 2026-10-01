@@ -134,6 +134,48 @@ function setCachedCover(filePath, mtimeMs, cover) {
   while (coverCache.size > COVER_CACHE_MAX) coverCache.delete(coverCache.keys().next().value);
 }
 
+/** V4.3.15：WAV LIST/INFO 标签直读。music-metadata 对 GBK 编码的 INAM/IART 解码为乱码
+ * （Lavf/中文 Windows 写入惯例），自行扫 RIFF chunk 按 GBK 解码；含 U+FFFD 时回退 UTF-8。 */
+function decodeInfoText(buf) {
+  let s;
+  try { s = new TextDecoder('gbk', { fatal: true }).decode(buf); }
+  catch { try { s = new TextDecoder('utf-8').decode(buf); } catch { s = buf.toString('latin1'); } }
+  return s.replace(/\0+$/, '').trim();
+}
+function readWavInfo(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const head = Buffer.alloc(12);
+    if (fs.readSync(fd, head, 0, 12, 0) < 12) return null;
+    if (head.toString('latin1', 0, 4) !== 'RIFF' || head.toString('latin1', 8, 12) !== 'WAVE') return null;
+    let pos = 12;
+    const chdr = Buffer.alloc(8);
+    while (fs.readSync(fd, chdr, 0, 8, pos) === 8) {
+      const cid = chdr.toString('latin1', 0, 4);
+      const csize = chdr.readUInt32LE(4);
+      if (cid === 'LIST' && csize >= 4 && csize < 16 * 1024 * 1024) {
+        const buf = Buffer.alloc(csize);
+        if (fs.readSync(fd, buf, 0, csize, pos + 8) === csize && buf.toString('latin1', 0, 4) === 'INFO') {
+          const tags = {};
+          let p = 4;
+          while (p + 8 <= buf.length) {
+            const sid = buf.toString('latin1', p, p + 4);
+            const ssize = buf.readUInt32LE(p + 4);
+            if (p + 8 + ssize > buf.length) break;
+            tags[sid] = decodeInfoText(buf.slice(p + 8, p + 8 + ssize));
+            p += 8 + ssize + (ssize % 2); // chunk 数据 WORD 对齐
+          }
+          return tags;
+        }
+      }
+      pos += 8 + csize + (csize % 2);
+    }
+    return null;
+  } catch { return null; }
+  finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { } }
+}
+
 /** 读内嵌标签（标题/艺术家/专辑/时长/码率 + 封面 dataURL）。 */
 async function readMeta(filePath) {
   try {
@@ -179,11 +221,13 @@ async function readMeta(filePath) {
       track: rgTrack, album: rgAlbum,
       peak: rgPeak(c.replaygain_track_gain && c.replaygain_track_gain.peak != null ? c.replaygain_track_gain : c.replaygain_track_peak)
     } : null;
+    // V4.3.15：WAV 的 LIST/INFO 标签（GBK 惯例）优先——music-metadata 对其解码为乱码
+    const wavInfo = path.extname(filePath).toLowerCase() === '.wav' ? readWavInfo(filePath) : null;
     return {
       ok: true,
-      title: c.title || path.basename(filePath, path.extname(filePath)),
-      artist: c.artist || (c.artists && c.artists[0]) || '未知艺术家',
-      album: c.album || '',
+      title: (wavInfo && wavInfo.INAM) || c.title || path.basename(filePath, path.extname(filePath)),
+      artist: (wavInfo && wavInfo.IART) || c.artist || (c.artists && c.artists[0]) || '未知艺术家',
+      album: (wavInfo && wavInfo.IPRD) || c.album || '',
       genre: (Array.isArray(c.genre) && c.genre[0]) || '',
       year: c.year || 0,
       // V3.5.9：标签编辑器扩展字段（专辑艺术家/曲目号/碟号/作曲家/注释/发行方）
@@ -308,4 +352,4 @@ function readFileBuffer(filePath) {
   return fs.readFileSync(filePath);
 }
 
-module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover };
+module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, readWavInfo };

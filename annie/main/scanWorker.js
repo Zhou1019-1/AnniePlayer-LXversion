@@ -127,9 +127,15 @@ async function metaBatch(jobId, paths) {
       try {
         const m = await mm.parseFile(p, { duration: true, skipCovers: true });
         const c = m.common || {};
+        let title = c.title || '', artist = c.artist || '', album = c.album || '';
+        // V4.3.15：WAV 的 GBK LIST/INFO 标签优先（music-metadata 解码为乱码）
+        if (p.toLowerCase().endsWith('.wav')) {
+          const wi = require('./library').readWavInfo(p);
+          if (wi) { title = wi.INAM || title; artist = wi.IART || artist; album = wi.IPRD || album; }
+        }
         batch[p] = {
           ok: true,
-          title: c.title || '', artist: c.artist || '', album: c.album || '',
+          title, artist, album,
           genre: (c.genre && c.genre[0]) || '', year: c.year || 0
         };
       } catch (e) { batch[p] = { ok: false, error: e.message }; }

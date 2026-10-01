@@ -256,11 +256,21 @@
   function loadSongListDetail(id, name, page) {
     renderStreamStatus('加载歌单「' + name + '」…');
     window.mine.streamSongListDetail({ provider: S.stProvider, id: id, page: page || 1 }).then(function (r) {
+      // V4.3.15：详情接口带回歌单真实名称——导入场景占位名（"导入的歌单"）被替换，
+      // 已收藏条目若还是占位名/旧名一并自愈（收藏的是 id，改名不丢收藏）
+      var realName = (r.info && r.info.name) || name;
+      if (r.info && r.info.name && r.info.name !== name) {
+        var favs = slFavs(), healed = false;
+        favs.forEach(function (f) {
+          if (String(f.id) === String(id) && f.provider === S.stProvider && f.name !== r.info.name) { f.name = r.info.name; healed = true; }
+        });
+        if (healed) { slFavSave(favs); renderSidebar(); }
+      }
       S.stResults = page > 1 ? S.stResults.concat(r.songs || []) : (r.songs || []);
-      S.stIndex = -1; S.slDetailId = id; S.slDetailName = name;
+      S.stIndex = -1; S.slDetailId = id; S.slDetailName = realName;
       S.slDPage = r.page || 1; S.slDLimit = r.limit || 100; S.slDTotal = r.total || 0;
       renderView();
-      renderStreamStatus('「' + name + '」共 ' + (r.total || S.stResults.length) + ' 首 · 已加载 ' + S.stResults.length + ' 首');
+      renderStreamStatus('「' + realName + '」共 ' + (r.total || S.stResults.length) + ' 首 · 已加载 ' + S.stResults.length + ' 首');
     }).catch(function (e) { renderStreamStatus('歌单详情加载失败：' + (e.message || e), true); });
   }
 

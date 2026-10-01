@@ -51,6 +51,7 @@ self.onmessage = (e) => {
     const mode = d.mode || 'name';
     if (mode === 'folder') deco.sort((a, b) => cmpZh(a.dir, b.dir) || cmpName(a, b));
     else if (mode === 'mtime') deco.sort((a, b) => (b.mtime - a.mtime));
+    else if (mode === 'mtimeAsc') deco.sort((a, b) => (a.mtime - b.mtime)); // V4.3.15
     else if (mode === 'artist') deco.sort((a, b) => cmpZh(last(a.artist), last(b.artist)) || cmpName(a, b));
     else if (mode === 'album') deco.sort((a, b) => cmpZh(last(a.album), last(b.album)) || cmpName(a, b));
     else if (mode === 'genre') deco.sort((a, b) => cmpZh(last(a.genre), last(b.genre)) || cmpName(a, b));
@@ -66,6 +67,7 @@ self.onmessage = (e) => {
         else if (d.sortKey === 'artist') r = c.compare(a.artist || '￿', b.artist || '￿');
         else if (d.sortKey === 'rating') r = (ratings[a.path] || 0) - (ratings[b.path] || 0);
         else if (d.sortKey === 'time') r = (durs[a.path] || 0) - (durs[b.path] || 0);
+        else if (d.sortKey === 'mtime') r = (a.mtime || 0) - (b.mtime || 0); // V4.3.15
         return r * dir || c.compare(a.name, b.name);
       });
     } else {

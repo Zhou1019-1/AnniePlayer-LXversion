@@ -871,6 +871,7 @@ async function songListDetail({ provider, id, page }) {
     provider,
     songs: (r.list || []).map((info) => normalize(provider, info)),
     total: r.total || 0, page: r.page || page || 1, limit: r.limit || 100,
+    info: r.info || null, // V4.3.15：歌单真实名称等（导入歌单场景替换占位名）
   };
 }
 

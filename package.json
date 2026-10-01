@@ -1,7 +1,11 @@
 {
   "name": "annie-player-svlx",
   "productName": "安妮播放器融合版",
-  "version": "4.3.14",
+  "version": "4.3.15",
+  "changelog": {
+    "4.3.15": "本地曲库排序增强：AM 歌曲视图新增排序下拉（首字母/文件名/修改时间/大小，正倒序），粒子舞台新增「修改时间 旧→新」，FB2K 新增「修改日期」列；修复收藏的导入歌单名统一显示为占位名（自动改回真名，旧条目打开详情自愈）；修复部分 WAV 中文标题乱码（GBK RIFF INFO 直读，旧缓存自动失效）；AutoEq 型号搜索升级：支持中文品牌名（森海/索尼/水月雨等）与无空格写法（HD650=HD 650）",
+    "4.3.14": "修复 tx 在线音源播放错歌：部分聚合音源解析失败时退化为按歌名搜索返回同名不同曲，现对 QQ 流地址做曲目身份校验（strMediaMid/songmid），货不对板即拦截并自动尝试下一个音源，兜底走内置通道解析；搜索与播放均生效"
+  },
   "description": "AnniePlayer SVLX - Annie Player integrated with lx-music-desktop (Apache-2.0). See THIRDPARTY/lx-music-desktop/NOTICE.LICENSE.",
   "main": "src/main.js",
   "author": "Annie Player Project",

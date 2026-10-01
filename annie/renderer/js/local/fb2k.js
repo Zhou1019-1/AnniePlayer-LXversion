@@ -650,7 +650,8 @@
     { k: 'title', name: '标题', flex: 1, sort: 'title' },
     { k: 'artist', name: '艺术家', flex: 1, sort: 'artist' },
     { k: 'rating', name: '等级', w: 80, sort: 'rating' },
-    { k: 'time', name: '时间', w: 60, sort: 'time' }
+    { k: 'time', name: '时间', w: 60, sort: 'time' },
+    { k: 'mtime', name: '修改日期', w: 96, sort: 'mtime' } // V4.3.15
   ];
   function buildCols() {
     R.cols.innerHTML = '';
@@ -713,6 +714,7 @@
         else if (S.sortKey === 'artist') r = coll.compare(a.artist || '￿', b.artist || '￿');
         else if (S.sortKey === 'rating') r = (S.ratings[a.t.path] || 0) - (S.ratings[b.t.path] || 0);
         else if (S.sortKey === 'time') r = (durOf(a.t) - durOf(b.t));
+        else if (S.sortKey === 'mtime') r = ((a.t.mtime || 0) - (b.t.mtime || 0)); // V4.3.15
         return r * dir || coll.compare(a.name, b.name);
       });
     } else { // 默认：专辑 → 曲名
@@ -874,6 +876,8 @@
         cell.appendChild(starCell(t.path));
       } else if (c.k === 'time') {
         cell.textContent = playing && S.dur > 0 ? fmtCountdown(S.dur - S.pos) : durationText(t);
+      } else if (c.k === 'mtime') {
+        cell.textContent = t.mtime ? fmtDate(t.mtime) : ''; // V4.3.15：文件修改日期（扫描入库字段）
       }
       d.appendChild(cell);
     });

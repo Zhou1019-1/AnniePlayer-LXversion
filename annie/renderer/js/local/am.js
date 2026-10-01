@@ -252,6 +252,23 @@
     return out;
   }
 
+  /* V4.3.15：歌曲视图排序方式可选（设置持久化 annieSettings.ui.amSongSort）。
+   * az = 首字母（配 A–Z 索引栏）；其余为平铺排序，索引栏自动隐藏。 */
+  function songSortMode() {
+    return (window.annieSettings && annieSettings.ui.amSongSort) || 'az';
+  }
+  function sortSongs(list) {
+    var mode = songSortMode();
+    if (mode === 'az') return sortByInitial(list);
+    var arr = list.slice();
+    if (mode === 'name') arr.sort(function (a, b) { return azCollator().compare(a.name, b.name); });
+    else if (mode === 'mtimeDesc') arr.sort(function (a, b) { return (b.mtime || 0) - (a.mtime || 0); });
+    else if (mode === 'mtimeAsc') arr.sort(function (a, b) { return (a.mtime || 0) - (b.mtime || 0); });
+    else if (mode === 'sizeDesc') arr.sort(function (a, b) { return (b.size || 0) - (a.size || 0); });
+    else if (mode === 'sizeAsc') arr.sort(function (a, b) { return (a.size || 0) - (b.size || 0); });
+    return arr;
+  }
+
   function currentTracks() {
     var list = allTracks();
     var isSongs = S.view === 'songs';
@@ -279,7 +296,7 @@
         return (m.title + ' ' + m.artist + ' ' + m.album).toLowerCase().indexOf(q) >= 0;
       });
     }
-    if (isSongs) list = sortByInitial(list); // V4.3.8：歌曲视图（含搜索结果）按首字母排序
+    if (isSongs) list = sortSongs(list); // V4.3.15：歌曲视图（含搜索结果）按所选方式排序
     return list;
   }
   function refreshPlaylists() {
@@ -346,6 +363,7 @@
   AM.albumKeyOf = albumKeyOf;
   AM.folderGroups = folderGroups;
   AM.currentTracks = currentTracks;
+  AM.songSortMode = songSortMode;
   AM.refreshPlaylists = refreshPlaylists;
   AM.playList = playList;
   AM.togglePlay = togglePlay;

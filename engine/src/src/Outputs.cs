@@ -149,6 +149,22 @@ public sealed class PcmFloatSource : IWaveProvider
         }
     }
 
+    /// <summary>
+    /// V4.3.16：从零淡入（起播/seek/格式回退重开的初始爆音防护）。与 BeginFade 不同，
+    /// 强制起点为 0——新源 _fadeTo 初值是 1，BeginFade(1) 不会从头渐强。
+    /// 首缓冲直接进入满幅波形是起播咔哒的元凶；80ms 淡入人耳无感。
+    /// </summary>
+    public void BeginFadeIn(int ms = 80)
+    {
+        lock (_fadeLock)
+        {
+            _fadeFrom = 0f;
+            _fadeTo = 1f;
+            _fadeTotalFrames = Math.Max(1, (long)(WaveFormat.SampleRate * ms / 1000.0));
+            _fadeRemainFrames = _fadeTotalFrames;
+        }
+    }
+
     /// <summary>net9 目标要求 IWaveProvider 的 Span 重载：委托给字节数组版本（调用方是 NAudio 内部辅助路径，非音频热路径）。</summary>
     public int Read(Span<byte> buffer)
     {

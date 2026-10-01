@@ -24,6 +24,7 @@
   var next = AM.next;
   var prev = AM.prev;
   var seek = AM.seek;
+  var bindProgDrag = AM.bindProgDrag; // V4.3.16：进度条拖动（顶栏/沉浸/迷你共用）
   var renderStreamView = AM.renderStreamView;
   var renderSplView = AM.renderSplView; // V4.3.5：在线歌单视图（am-stream 片先加载，引用有效）
   var applyLyrStyle = AM.applyLyrStyle;
@@ -69,11 +70,7 @@
     R.npCur = el('span', 'am-np-time', '0:00');
     R.npProg = el('div', 'am-np-prog'); R.npProgFill = el('i');
     R.npProg.appendChild(R.npProgFill);
-    R.npProg.onclick = function (e) {
-      if (!S.dur) return;
-      var r = R.npProg.getBoundingClientRect();
-      seek(S.dur * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)));
-    };
+    bindProgDrag(R.npProg, R.npProgFill, R.npCur); // V4.3.16：可拖动（原仅点击）
     R.npRemain = el('span', 'am-np-time', '0:00');
     progRow.appendChild(R.npCur); progRow.appendChild(R.npProg); progRow.appendChild(R.npRemain);
     np.appendChild(progRow);
@@ -153,6 +150,11 @@
       if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
     };
     right.appendChild(btnNpFav);
+    // V4.3.16：复制播放中在线歌的平台分享链接
+    var btnNpShare = el('button', 'am-tbtn', '🔗');
+    btnNpShare.title = '复制正在播放的在线歌曲的分享链接';
+    btnNpShare.onclick = function () { if (AM.copyCurrentStreamLink) AM.copyCurrentStreamLink(); };
+    right.appendChild(btnNpShare);
     // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
     var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
     btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };
@@ -201,6 +203,15 @@
     R.btnLyrSet.onclick = function (e) { e.stopPropagation(); toggleLyrSetPop(); };
     lyr.appendChild(R.btnLyrSet);
     body.appendChild(R.sidebar); body.appendChild(R.content); body.appendChild(lyr);
+
+    // V4.3.16：悬浮回顶部——滚过约 1.5 屏才浮出，点击平滑回顶（挂 .am-body 不随 content 清空，全视图通用）
+    var backTop = el('button', 'am-backtop', '⤒');
+    backTop.title = '返回顶部';
+    backTop.onclick = function () { R.content.scrollTo({ top: 0, behavior: 'smooth' }); };
+    body.appendChild(backTop);
+    R.content.addEventListener('scroll', function () {
+      backTop.classList.toggle('on', R.content.scrollTop > R.content.clientHeight * 1.5);
+    }, { passive: true });
 
     /* 添加到播放列表弹出菜单 */
     R.pop = el('div', 'am-pop');
@@ -427,7 +438,7 @@
       shead.appendChild(el('div', 'am-view-h', '歌曲'));
       var ssel = el('select', 'am-sort-sel');
       ssel.title = '排序方式';
-      [['az', '首字母 A–Z'], ['name', '文件名'], ['mtimeDesc', '修改时间 · 新→旧'],
+      [['az', '首字母 A–Z（标题）'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'], ['mtimeDesc', '修改时间 · 新→旧'],
        ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']]
         .forEach(function (o) {
           var op = document.createElement('option');
@@ -443,8 +454,8 @@
       c.appendChild(shead);
     }
 
-    if (S.view === 'songs' && (!AM.songSortMode || AM.songSortMode() === 'az')) {
-      ensureMetaDeep(); // 首字母排序依赖全库标题，闲时深加载（按块到达自动重排）；平铺排序不需要
+    if (S.view === 'songs' && (!AM.songSortMode || AM.songSortMode() === 'az' || AM.songSortMode() === 'azArtist')) {
+      ensureMetaDeep(); // 首字母排序依赖全库标签，闲时深加载（按块到达自动重排）；平铺排序不需要
     }
 
     if (!tracks.length) {
@@ -749,6 +760,13 @@
       if (window.annieMatch) window.annieMatch.open({ path: trackPath });
     };
     pop.appendChild(mch);
+    // V4.3.16：相似歌曲推荐（零云端本地打分）
+    var msr = el('button', 'am-pop-item', '✨ 找相似歌曲…');
+    msr.onclick = function () {
+      pop.classList.remove('on');
+      if (window.annieSimilar) window.annieSimilar.open(trackPath);
+    };
+    pop.appendChild(msr);
     pop.appendChild(el('div', 'am-pop-sep'));
     S.playlists.forEach(function (pl) {
       var it = el('button', 'am-pop-item', pl.name);

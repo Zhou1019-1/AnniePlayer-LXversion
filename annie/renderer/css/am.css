@@ -740,7 +740,22 @@ html[data-motion="off"] #am-root::before {
 .am-az-l:hover { color: var(--am-accent); background: var(--am-hover); }
 .am-az-l.cur { color: var(--am-accent); }
 .am-az-l.off { opacity: .28; cursor: default; pointer-events: none; }
+/* V4.3.16：悬浮回顶部（滚过 ~1.5 屏浮出；歌词面板展开时跟随左移） */
+.am-backtop {
+  position: absolute; right: 22px; bottom: 22px; z-index: 9;
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  font-size: 17px; line-height: 1; cursor: pointer;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  opacity: 0; pointer-events: none; transform: translateY(10px);
+  transition: opacity .18s ease, transform .18s ease, right .25s ease, background .12s ease, color .12s ease;
+}
+.am-backtop.on { opacity: 1; pointer-events: auto; transform: none; }
+.am-backtop:hover { background: var(--am-accent); color: var(--am-accent-ink); border-color: transparent; }
+#am-root.am-lyr-on .am-backtop { right: 382px; }
 /* 迷你/沉浸模式下内容区被顶栏取代，索引栏隐藏 */
-#am-root.am-mini-on .am-az, #am-root.am-imm-on .am-az { display: none; }
+#am-root.am-mini-on .am-az, #am-root.am-imm-on .am-az,
+#am-root.am-mini-on .am-backtop, #am-root.am-imm-on .am-backtop { display: none; }
 /* 索引跳转/定位播放时，行顶部预留 sticky 表头 + 一行的高度，避免首行被表头遮挡（非窗口化路径由 scrollIntoView 走这里） */
 .am-table tbody .am-tr { scroll-margin-top: 100px; }

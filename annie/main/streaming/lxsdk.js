@@ -862,6 +862,23 @@ async function songLists({ provider, sortId, tagId, page }) {
   };
 }
 
+/* V4.3.16：歌单关键词搜索（五平台 SDK 均有 songList.search，返回结构与广场一致） */
+async function songListSearch({ provider, text, page }) {
+  const sdk = await loadSdk();
+  const mod = sdk[provider];
+  if (!mod || !mod.songList || !mod.songList.search) throw new Error('该平台不支持歌单搜索');
+  const r = await mod.songList.search(String(text || ''), page || 1);
+  return {
+    provider,
+    list: (r.list || []).map((it) => ({
+      id: String(it.id), name: it.name, author: it.author || '',
+      playCount: String(it.play_count || ''), img: httpsCover(it.img || ''),
+      total: it.total || 0, desc: it.desc || '',
+    })),
+    total: r.total || 0, page: r.page || page || 1, limit: r.limit || 20,
+  };
+}
+
 async function songListDetail({ provider, id, page }) {
   const sdk = await loadSdk();
   const mod = sdk[provider];
@@ -905,4 +922,4 @@ async function hotComments({ songmid, name, artist, limit = 15 }) {
   };
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListDetail, hotComments };
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments };

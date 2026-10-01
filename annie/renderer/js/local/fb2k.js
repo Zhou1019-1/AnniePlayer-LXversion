@@ -947,6 +947,7 @@
       if (window.annieTagEdit) window.annieTagEdit.open(paths.length > 1 ? { paths: paths } : { path: t.path });
     }]);
     items.push(['在线匹配歌词 / 封面…', function () { if (window.annieMatch) window.annieMatch.open({ path: t.path }); }]);
+    items.push(['找相似歌曲…', function () { if (window.annieSimilar) window.annieSimilar.open(t.path); }]); // V4.3.16
     if (S.sel.size > 1) items.push(['批量匹配歌词（' + S.sel.size + ' 首）…', function () {
       var paths = []; forEachSel(function (x) { paths.push(x.path); });
       if (window.annieBatchMatch) window.annieBatchMatch.open(paths);

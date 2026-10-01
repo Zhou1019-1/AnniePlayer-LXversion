@@ -143,6 +143,7 @@ public sealed partial class Engine
         {
             var pcm = FfmpegPcmStream.Start(path, offsetSec, resampled ? rate : 0, rate, channels, headers, CapacityFor(info, rate, channels), _resampleHq);
             var source = new PcmFloatSource(pcm, rate, channels) { Gain = _gain, LoudGain = _loudGain };
+            source.BeginFadeIn(); // V4.3.16：起播/seek 80ms 淡入，防首缓冲满幅入场爆音（ASIO 重开尤其明显）
             if (_eqEnabled) { source.Eq = new EqChain(rate, channels); source.Eq.Update(_eqGains); }
             AttachVst(source); // VST实验区：效果器链（每源私有实例）
             // 双声道电平：rms/peak 保留为两声道较大值（向后兼容），rmsL/peakL/rmsR/peakR 为分声道值
@@ -189,7 +190,7 @@ public sealed partial class Engine
                     _streamPaused = false; // 新开设备流，暂停标志清除
                     ApplyDspLocked(); // Pro：挂载自动前级/限幅器/响度增益
                 }
-                PrebufferAndStart(backend, pcm, rate, channels, gen, quickStart);
+                PrebufferAndStart(backend, pcm, rate, channels, gen, quickStart, FfmpegPcmStream.IsUrl(path));
 
                 // 预缓冲后再次检查代际，防止期间被新请求替代
                 lock (_gate)
@@ -231,13 +232,16 @@ public sealed partial class Engine
         throw new InvalidOperationException("无法以任何采样率打开输出设备。");
     }
 
-    private void PrebufferAndStart(IOutputBackend backend, FfmpegPcmStream pcm, int rate, int channels, int gen, bool quickStart = false)
+    private void PrebufferAndStart(IOutputBackend backend, FfmpegPcmStream pcm, int rate, int channels, int gen, bool quickStart = false, bool isUrl = false)
     {
         // Pro：预缓冲目标跟随缓冲设置（50–500ms ×2，最少 0.3s）
         // V1.1.4：seek 快速起播目标 150ms，边播边缓冲（消除 seek 后的长预缓冲冻结）
+        // V4.3.16：网络流下限抬高——TCP 慢启动/CDN 冷连接的前 1~2 秒吞吐爬坡，
+        // 预缓冲不足会反复欠载，静音↔波形硬切换 = 起播碎裂爆音（诊断包实测现场）。
+        // 普通起播 ≥1.5s、快速起播 ≥0.5s，攒够再发声。
         long target = quickStart
-            ? (long)(rate * channels * 4 * 0.15)
-            : (long)(rate * channels * 4 * Math.Max(0.3, _bufferMs / 1000.0 * 2));
+            ? (long)(rate * channels * 4 * (isUrl ? 0.5 : 0.15))
+            : (long)(rate * channels * 4 * Math.Max(isUrl ? 1.5 : 0.3, _bufferMs / 1000.0 * 2));
         var sw = System.Diagnostics.Stopwatch.StartNew();
         while (!pcm.EndOfStream && !pcm.Failed && pcm.QueuedBytes < target && sw.ElapsedMilliseconds < 8000)
         {

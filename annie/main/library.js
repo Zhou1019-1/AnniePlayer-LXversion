@@ -135,12 +135,38 @@ function setCachedCover(filePath, mtimeMs, cover) {
 }
 
 /** V4.3.15：WAV LIST/INFO 标签直读。music-metadata 对 GBK 编码的 INAM/IART 解码为乱码
- * （Lavf/中文 Windows 写入惯例），自行扫 RIFF chunk 按 GBK 解码；含 U+FFFD 时回退 UTF-8。 */
+ * （Lavf/中文 Windows 写入惯例），自行扫 RIFF chunk 解码。
+ * V4.3.16：UTF-8 优先（fatal 严格校验）——UTF-8 标签被按 GBK 解会得到"伪中文"垃圾；
+ * GBK 字节几乎不可能通过 UTF-8 严格校验，反向则安全。 */
 function decodeInfoText(buf) {
   let s;
-  try { s = new TextDecoder('gbk', { fatal: true }).decode(buf); }
-  catch { try { s = new TextDecoder('utf-8').decode(buf); } catch { s = buf.toString('latin1'); } }
+  try { s = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch { try { s = new TextDecoder('gbk').decode(buf); } catch { s = buf.toString('latin1'); } }
   return s.replace(/\0+$/, '').trim();
+}
+
+/** V4.3.16：WAV 字段仲裁——INFO 直读值 vs mm 综合值（ID3v2 等）谁好用谁。
+ * 三种现场：① GBK INFO 正常 + mm 乱码（泪海案）→ 用 INFO；
+ * ② INFO 中文已毁成全 ?（MP3BST 案）+ ID3v2 完好 → 用 mm；
+ * ③ 两边都正常 → 信 mm（ID3v2 通常更规范）。 */
+const wavHasCJK = (s) => /[\u4e00-\u9fff]/.test(s);
+const wavUsable = (s) => !!s && /[^\s?]/.test(s); // 去掉 ? 与空白后仍有内容
+/* 发布组水印尾巴清洗：标题里 4+ 连续空格后的内容（如「倩女幽魂                         公众号：MP3BST音乐」）。
+ * 真实曲名几乎不会含 4+ 连空格；清洗后为空则保留原值。 */
+function cleanWavTitle(s) {
+  if (!s) return s;
+  const t = s.replace(/\s{4,}[\s\S]*$/, '').trim();
+  return t || s;
+}
+function pickWavField(infoVal, mmVal) {
+  const iOk = wavUsable(infoVal), mOk = wavUsable(mmVal);
+  if (iOk && mOk) {
+    if (wavHasCJK(infoVal) && !wavHasCJK(mmVal)) return infoVal;
+    return mmVal;
+  }
+  if (iOk) return infoVal;
+  if (mOk) return mmVal;
+  return mmVal || infoVal || '';
 }
 function readWavInfo(filePath) {
   let fd;
@@ -221,13 +247,13 @@ async function readMeta(filePath) {
       track: rgTrack, album: rgAlbum,
       peak: rgPeak(c.replaygain_track_gain && c.replaygain_track_gain.peak != null ? c.replaygain_track_gain : c.replaygain_track_peak)
     } : null;
-    // V4.3.15：WAV 的 LIST/INFO 标签（GBK 惯例）优先——music-metadata 对其解码为乱码
+    // V4.3.15/4.3.16：WAV LIST/INFO 直读 + pickWavField 仲裁（GBK 乱码/INFO 全?已毁两种现场）
     const wavInfo = path.extname(filePath).toLowerCase() === '.wav' ? readWavInfo(filePath) : null;
     return {
       ok: true,
-      title: (wavInfo && wavInfo.INAM) || c.title || path.basename(filePath, path.extname(filePath)),
-      artist: (wavInfo && wavInfo.IART) || c.artist || (c.artists && c.artists[0]) || '未知艺术家',
-      album: (wavInfo && wavInfo.IPRD) || c.album || '',
+      title: cleanWavTitle((wavInfo && pickWavField(wavInfo.INAM, c.title)) || c.title || path.basename(filePath, path.extname(filePath))),
+      artist: (wavInfo && pickWavField(wavInfo.IART, c.artist || (c.artists && c.artists[0]))) || c.artist || (c.artists && c.artists[0]) || '未知艺术家',
+      album: (wavInfo && pickWavField(wavInfo.IPRD, c.album)) || c.album || '',
       genre: (Array.isArray(c.genre) && c.genre[0]) || '',
       year: c.year || 0,
       // V3.5.9：标签编辑器扩展字段（专辑艺术家/曲目号/碟号/作曲家/注释/发行方）
@@ -352,4 +378,4 @@ function readFileBuffer(filePath) {
   return fs.readFileSync(filePath);
 }
 
-module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, readWavInfo };
+module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, readWavInfo, pickWavField, cleanWavTitle };

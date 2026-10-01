@@ -765,14 +765,14 @@ function registerIpc() {
   ipcMain.handle('lib:metaBatch', async (_e, paths) => {
     const store = loadStore();
     const cache = store.metaCache;
-    // V4.3.15：旧缓存里的 .wav 条目可能是 GBK 乱码（无 wv 标记），强制重解析
-    const missing = paths.filter(p => (!cache[p] || (p.toLowerCase().endsWith('.wav') && cache[p].wv !== 1)) && !p.includes('#cue') && !p.includes('#iso')); // Pro：CUE/ISO 虚拟分轨不触碰文件系统
+    // V4.3.16：旧缓存里的 .wav 条目可能是乱码（wv 标记 <2 均为旧逻辑产物），强制重解析
+    const missing = paths.filter(p => (!cache[p] || (p.toLowerCase().endsWith('.wav') && cache[p].wv !== 2)) && !p.includes('#cue') && !p.includes('#iso')); // Pro：CUE/ISO 虚拟分轨不触碰文件系统
     if (missing.length) {
       let fresh = await metaViaWorker(missing);
       if (!fresh) fresh = await library.readMetaBatch(missing);
       for (const [p, m] of Object.entries(fresh)) {
         if (m && m.ok) {
-          cache[p] = { ...(cache[p] || {}), title: m.title, artist: m.artist, album: m.album, genre: m.genre || '', year: m.year || 0, ...(p.toLowerCase().endsWith('.wav') ? { wv: 1 } : {}) };
+          cache[p] = { ...(cache[p] || {}), title: m.title, artist: m.artist, album: m.album, genre: m.genre || '', year: m.year || 0, ...(p.toLowerCase().endsWith('.wav') ? { wv: 2 } : {}) };
         }
       }
       saveStore({ metaCache: cache });
@@ -805,6 +805,19 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle('loudness:batchCancel', () => { loudness.batchCancel(); return { ok: true }; });
+
+  /* ---------------- V4.3.16：BPM 落盘（渲染层 music-tempo 分析后回写，供相似推荐） ---------------- */
+  ipcMain.handle('bpm:set', (_e, updates) => {
+    const s = loadStore();
+    let dirty = false;
+    for (const [p, v] of Object.entries(updates || {})) {
+      if (typeof v !== 'number') continue;
+      s.metaCache[p] = { ...(s.metaCache[p] || {}), bpm: v };
+      dirty = true;
+    }
+    if (dirty) saveStore({ metaCache: s.metaCache });
+    return { ok: true };
+  });
 
   /* ---------------- Pro beat0.0.1：播放统计（防抖落盘） ---------------- */
   let statsDirty = false, statsTimer = null;
@@ -1041,7 +1054,7 @@ function registerIpc() {
       trackCount: (store.tracks || []).length, renderer: rendererSnapshot || null
     };
     const info = {
-      app: 'AnniePlayerPlusProVersion beta0.0.2',
+      app: app.getName() + ' V' + app.getVersion(), // V4.3.16：原为 PlusPro 时代硬编码，诊断包无法区分版本
       electron: process.versions.electron, node: process.versions.node,
       platform: process.platform + ' ' + process.arch,
       time: new Date().toISOString(),
@@ -1081,8 +1094,8 @@ function registerIpc() {
     try { mtimeMs = fs.statSync(p).mtimeMs; } catch { }
     const store = loadStore();
     const c = store.metaCache[p];
-    // V4.3.15：.wav 旧缓存可能是 GBK 乱码——无 wv 标记视为未命中，重走 readMeta（含 INFO 直读）
-    if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 1)) {
+    // V4.3.16：.wav 旧缓存可能是乱码——wv 标记 <2 视为未命中，重走 readMeta（含 INFO 直读+仲裁）
+    if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 2)) {
       const cover = library.getCachedCover(p, mtimeMs);
       if (cover !== undefined) {
         return {
@@ -1106,7 +1119,7 @@ function registerIpc() {
         bitrate: meta.bitrate || 0, channels: meta.channels || 0,
         fileSize: meta.fileSize || 0, mtimeMs: mt,
         rg: meta.rg || null, // V3.5.15：ReplayGain 标签
-        ...(p.toLowerCase().endsWith('.wav') ? { wv: 1 } : {}) // V4.3.15：WAV INFO 已直读标记
+        ...(p.toLowerCase().endsWith('.wav') ? { wv: 2 } : {}) // V4.3.16：WAV 标签已仲裁标记
       };
       saveStore({ metaCache: store.metaCache });
     }
@@ -1128,8 +1141,8 @@ function registerIpc() {
       let mtimeMs = 0;
       try { mtimeMs = fs.statSync(p).mtimeMs; } catch { }
       const c = store.metaCache[p];
-      // V4.3.15：.wav 旧缓存可能是 GBK 乱码——无 wv 标记视为未命中
-      if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 1)) {
+      // V4.3.16：.wav 旧缓存可能是乱码——wv 标记 <2 视为未命中
+      if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 2)) {
         const cover = library.getCachedCover(p, mtimeMs);
         if (cover !== undefined) {
           out[p] = {
@@ -1158,7 +1171,7 @@ function registerIpc() {
             bitrate: meta.bitrate || 0, channels: meta.channels || 0,
             fileSize: meta.fileSize || 0, mtimeMs: mt,
             rg: meta.rg || null, // V3.5.15：ReplayGain 标签
-            ...(p.toLowerCase().endsWith('.wav') ? { wv: 1 } : {}) // V4.3.15
+            ...(p.toLowerCase().endsWith('.wav') ? { wv: 2 } : {}) // V4.3.16
           };
         }
         out[p] = meta;
@@ -1263,6 +1276,7 @@ ipcMain.handle('stream:hotComments', (_e, params) => streaming.hotComments(param
 ipcMain.handle('stream:leaderboards', (_e, params) => streaming.leaderboards(params));
 ipcMain.handle('stream:leaderboardList', (_e, params) => streaming.leaderboardList(params));
 ipcMain.handle('stream:songLists', (_e, params) => streaming.songLists(params));
+ipcMain.handle('stream:songListSearch', (_e, params) => streaming.songListSearch(params)); // V4.3.16：歌单关键词搜索
 ipcMain.handle('stream:songListDetail', (_e, params) => streaming.songListDetail(params));
 // V4.3：专辑搜索 / 专辑曲目
 ipcMain.handle('stream:albumSearch', (_e, params) => streaming.albumSearch(params));
@@ -1428,6 +1442,7 @@ ipcMain.handle('app:openExternal', (_e, url) => {
   const u = String(url || '');
   if (/^https?:\/\//i.test(u)) { const { shell } = require('electron'); shell.openExternal(u); }
 });
+ipcMain.handle('app:copyText', (_e, text) => { require('electron').clipboard.writeText(String(text || '')); return { ok: true }; }); // V4.3.16：分享链接复制
 ipcMain.handle('app:checkUpdate', async () => {
   if (!app.isPackaged) return { dev: true };
   if (!__manualCheckUpdate) return { ok: false, error: 'updater 未初始化' };

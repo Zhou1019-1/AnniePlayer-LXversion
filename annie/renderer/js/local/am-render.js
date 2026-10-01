@@ -24,6 +24,7 @@
   var next = AM.next;
   var prev = AM.prev;
   var seek = AM.seek;
+  var bindProgDrag = AM.bindProgDrag; // V4.3.16：进度条拖动（顶栏/沉浸/迷你共用）
   var playStreamAt = AM.playStreamAt;
   var patchStreamPlayNext = AM.patchStreamPlayNext;
   var build = AM.build;
@@ -326,10 +327,7 @@
     var bar = el('div', 'am-imm-bar');
     R.immFill = el('div', 'am-imm-fill');
     bar.appendChild(R.immFill);
-    bar.onclick = function (e) {
-      var r = bar.getBoundingClientRect();
-      if (S.dur > 0) seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * S.dur);
-    };
+    bindProgDrag(bar, R.immFill, R.immCur); // V4.3.16：可拖动（原仅点击）
     R.immRemain = el('span', 'am-imm-time', '-0:00');
     prog.appendChild(R.immCur); prog.appendChild(bar); prog.appendChild(R.immRemain);
     left.appendChild(prog);
@@ -429,10 +427,7 @@
     var bar = el('div', 'am-mini-bar');
     R.miniFill = el('div', 'am-mini-fill');
     bar.appendChild(R.miniFill);
-    bar.onclick = function (e) {
-      var r = bar.getBoundingClientRect();
-      if (S.dur > 0) seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * S.dur);
-    };
+    bindProgDrag(bar, R.miniFill, R.miniCur); // V4.3.16：可拖动（原仅点击）
     R.miniRemain = el('span', 'am-mini-time', '-0:00');
     prog.appendChild(R.miniCur); prog.appendChild(bar); prog.appendChild(R.miniRemain);
     m.appendChild(prog);
@@ -542,6 +537,7 @@
     }
   }
   function refreshAuxProgress() {
+    if (state.seeking) return; // V4.3.16：拖动预览期间不覆盖沉浸/迷你进度
     var pct = S.dur > 0 ? Math.min(1, S.pos / S.dur) : 0;
     var cur = fmtTime(S.pos);
     var rem = S.dur > 0 ? '-' + fmtTime(Math.max(0, S.dur - S.pos)) : '-0:00';
@@ -620,6 +616,7 @@
   }
   function refreshTimes() {
     if (!R.npCur) return;
+    if (state.seeking) return; // V4.3.16：拖动预览期间不覆盖
     R.npCur.textContent = fmtTime(S.pos);
     R.npRemain.textContent = S.dur > 0 ? fmtRemain(S.dur - S.pos) : '0:00';
     if (R.npProgFill && S.dur > 0) R.npProgFill.style.width = (Math.min(1, S.pos / S.dur) * 100) + '%';
@@ -695,6 +692,14 @@
     });
     window.mine.onEngineEvent(function (event, data) {
       if (event === 'position' && data) {
+        // V4.3.16：拖动预览期间位置事件不回写（预览归拖动器负责）
+        if (state.seeking) return;
+        // V4.3.16：seek 保护——引擎重缓冲期间的旧位置事件丢弃（在线曲目 1~3s 回拉根因），到达目标后解除
+        if (state.seekPending) {
+          var rel = Math.max(0, (data.seconds || 0) - (state.currentCue ? state.currentCue.start : 0));
+          if (rel >= (state.seekTarget || 0) - 0.5) { state.seekPending = false; clearTimeout(state.seekTimer); }
+          else return;
+        }
         S.pos = Math.max(0, (data.seconds || 0) - (state.currentCue ? state.currentCue.start : 0));
         S.dur = state.currentCue ? (state.currentCue.end - state.currentCue.start)
           : (data.duration || (state.currentStream && state.duration) || 0);

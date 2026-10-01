@@ -231,24 +231,27 @@
     var ch = String(title || '').replace(/^\s+/, '').charAt(0);
     return /[a-z]/i.test(ch) ? ch.toUpperCase() : '#';
   }
-  function sortByInitial(list) {
+  function sortByInitial(list, field) {
+    field = field || 'title'; // V4.3.16：'title'（V4.3.8 原版）| 'artist'（群友需求：演唱者头文字索引）
     var tick = S._metaTick || 0, search = S.search || '';
     var cache = S._azCache;
-    if (cache && cache.list === list && cache.search === search && cache.tick === tick) return cache.out;
+    if (cache && cache.list === list && cache.search === search && cache.tick === tick && cache.field === field) return cache.out;
     var col = azCollator();
     var keys = list.map(function (t) {
-      var title = trackMeta(t).title || '';
-      return { t: t, letter: azLetterOf(title), title: title };
+      var m = trackMeta(t);
+      var key = field === 'artist' ? (m.artist || '') : (m.title || '');
+      return { t: t, letter: azLetterOf(key), key: key, title: m.title || '' };
     });
     keys.sort(function (a, b) {
       // '#'（数字/符号/生僻字）排最后，其余按字母；同字母内按拼音/字母序
       var la = a.letter === '#' ? '\uffff' : a.letter, lb = b.letter === '#' ? '\uffff' : b.letter;
       if (la !== lb) return la < lb ? -1 : 1;
-      return col.compare(a.title, b.title);
+      var c = col.compare(a.key, b.key);
+      return c !== 0 ? c : col.compare(a.title, b.title);
     });
     var firstIdx = {};
     var out = keys.map(function (k, i) { if (firstIdx[k.letter] === undefined) firstIdx[k.letter] = i; return k.t; });
-    S._azCache = { list: list, search: search, tick: tick, out: out, firstIdx: firstIdx };
+    S._azCache = { list: list, search: search, tick: tick, field: field, out: out, firstIdx: firstIdx };
     return out;
   }
 
@@ -260,6 +263,7 @@
   function sortSongs(list) {
     var mode = songSortMode();
     if (mode === 'az') return sortByInitial(list);
+    if (mode === 'azArtist') return sortByInitial(list, 'artist'); // V4.3.16
     var arr = list.slice();
     if (mode === 'name') arr.sort(function (a, b) { return azCollator().compare(a.name, b.name); });
     else if (mode === 'mtimeDesc') arr.sort(function (a, b) { return (b.mtime || 0) - (a.mtime || 0); });
@@ -338,7 +342,41 @@
   }
   function seek(sec) {
     var base = state.currentCue ? state.currentCue.start : 0;
-    window.mine.engine('seek', { seconds: base + Math.max(0, sec) }, 30000).catch(function () { });
+    var target = Math.max(0, sec);
+    // V4.3.16：seek 保护——引擎重缓冲期间旧 position 事件持续到达，会把进度条拉回播放中位置
+    // （在线流媒体重缓冲 1~3s，回拉尤其明显）；锁定目标位置，引擎确认到达或 10s 超时后解除（与舞台主题同一套）
+    state.seekPending = true; state.seekTarget = target;
+    clearTimeout(state.seekTimer);
+    state.seekTimer = setTimeout(function () { state.seekPending = false; }, 10000);
+    window.mine.engine('seek', { seconds: base + target }, 30000).catch(function () {
+      state.seekPending = false; clearTimeout(state.seekTimer);
+    });
+  }
+  // V4.3.16：进度条拖动——pointerdown/move/up 全程本地预览（填充+时间跟手），松手才 seek。
+  // 原三处进度条（顶栏/沉浸/迷你）只有 onclick，无法拖动；在线曲目引擎事件 10Hz 更显迟钝，预览期间以 state.seeking 屏蔽位置回写。
+  function bindProgDrag(bar, fillEl, curEl) {
+    bar.addEventListener('pointerdown', function (e) {
+      if (!state.currentPath || !(S.dur > 0)) return;
+      e.preventDefault();
+      var preview = function (ev) {
+        var r = bar.getBoundingClientRect();
+        var f = r.width > 0 ? Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)) : 0;
+        fillEl.style.width = (f * 100) + '%';
+        if (curEl) curEl.textContent = fmtTime(f * S.dur);
+        return f;
+      };
+      state.seeking = true;
+      var frac = preview(e);
+      var move = function (ev) { frac = preview(ev); };
+      var up = function () {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        state.seeking = false;
+        seek(frac * S.dur);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
   }
 
 
@@ -370,4 +408,5 @@
   AM.next = next;
   AM.prev = prev;
   AM.seek = seek;
+  AM.bindProgDrag = bindProgDrag;
 })();

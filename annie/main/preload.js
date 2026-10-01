@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('mine', {
   streamLeaderboards: (params) => ipcRenderer.invoke('stream:leaderboards', params),
   streamLeaderboardList: (params) => ipcRenderer.invoke('stream:leaderboardList', params),
   streamSongLists: (params) => ipcRenderer.invoke('stream:songLists', params),
+  streamSongListSearch: (params) => ipcRenderer.invoke('stream:songListSearch', params), // V4.3.16
   streamSongListDetail: (params) => ipcRenderer.invoke('stream:songListDetail', params),
   // V4.3：专辑搜索 / 专辑曲目
   streamAlbumSearch: (params) => ipcRenderer.invoke('stream:albumSearch', params),
@@ -101,6 +102,7 @@ contextBridge.exposeInMainWorld('mine', {
   // 设置中心：版本 / 手动检查更新 / 外链 / 更新状态订阅
   appVersion: () => ipcRenderer.invoke('app:getVersion'),
   checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
+  copyText: (text) => ipcRenderer.invoke('app:copyText', text), // V4.3.16
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   onUpdateStatus: (cb) => {
     const listener = (_e, payload) => cb(payload);
@@ -158,6 +160,7 @@ contextBridge.exposeInMainWorld('mine', {
   // Pro beat0.0.1：响度分析（EBU R128）
   loudnessAnalyze: (p) => ipcRenderer.invoke('loudness:analyze', p),
   loudnessSet: (updates) => ipcRenderer.invoke('loudness:set', updates),
+  bpmSet: (updates) => ipcRenderer.invoke('bpm:set', updates), // V4.3.16：BPM 落盘（相似推荐）
   loudnessBatchStart: (paths) => ipcRenderer.invoke('loudness:batchStart', paths),
   loudnessBatchCancel: () => ipcRenderer.invoke('loudness:batchCancel'),
   onLoudnessEvent: (cb) => {

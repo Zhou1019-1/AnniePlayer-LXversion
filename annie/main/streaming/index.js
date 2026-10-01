@@ -51,6 +51,7 @@ async function getPic(params) {
 async function leaderboards(params) { return lxsdk.leaderboards(params); }
 async function leaderboardList(params) { return lxsdk.leaderboardList(params); }
 async function songLists(params) { return lxsdk.songLists(params); }
+async function songListSearch(params) { return lxsdk.songListSearch(params); }
 async function songListDetail(params) { return lxsdk.songListDetail(params); }
 /* V4.3：专辑搜索 / 专辑曲目 */
 async function albumSearch(params) { return lxsdk.albumSearch(params); }
@@ -241,7 +242,7 @@ async function writeDownloadedTags(dest, song, provider, opts) {
 
 module.exports = {
   init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir,
-  leaderboards, leaderboardList, songLists, songListDetail, albumSearch, albumSongs,
+  leaderboards, leaderboardList, songLists, songListSearch, songListDetail, albumSearch, albumSongs,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层
 };

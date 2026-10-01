@@ -193,7 +193,7 @@
       S.abDetailId = ''; S.abDetailInfo = null;
       if (S.abKw && !S.abSearching) doAlbumSearch(true); else renderView();
     }
-    else { S.slDetailId = ''; S.slDetailName = ''; renderView(); loadSongLists(1); }
+    else { S.slDetailId = ''; S.slDetailName = ''; S.slSearch = ''; renderView(); loadSongLists(1); }
   }
   function loadBoards() {
     var provider = S.stProvider;
@@ -224,6 +224,18 @@
       S.slProvider = provider; S.slPage = r.page || 1; S.slLimit = r.limit || 30; S.slTotal = r.total || 0;
       renderView(); renderStreamStatus('');
     }).catch(function (e) { renderStreamStatus('歌单加载失败：' + (e.message || e), true); });
+  }
+  /* V4.3.16：歌单关键词搜索（当前平台；结果复用广场网格，清空 slSearch 即回广场） */
+  function searchSongLists(text, page) {
+    var provider = S.stProvider;
+    renderStreamStatus('搜索歌单「' + text + '」…');
+    window.mine.streamSongListSearch({ provider: provider, text: text, page: page || 1 }).then(function (r) {
+      if (S.stProvider !== provider || S.slSearch !== text) return;
+      S.slLists = page > 1 ? S.slLists.concat(r.list || []) : (r.list || []);
+      S.slProvider = provider; S.slPage = r.page || 1; S.slLimit = r.limit || 20; S.slTotal = r.total || 0;
+      renderView();
+      renderStreamStatus(S.slLists.length ? '' : '没有找到与「' + text + '」相关的歌单');
+    }).catch(function (e) { renderStreamStatus('歌单搜索失败：' + (e.message || e), true); });
   }
   /* V3.5.14：解析歌单链接 / 纯 ID → { provider, id }；无法识别返回 null */
   function parsePlaylistInput(text) {
@@ -338,7 +350,7 @@
   /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播） */
   function renderSongsTable(c) {
     var tb = el('table', 'am-table');
-    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:72px">音质</th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
+    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:72px">音质</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
     var body = el('tbody');
     // 在线歌单播放中队列≠本表：高亮只认当前队列（防误标同索引行）
     var queueHere = !S._playList || S._playList === S.stResults;
@@ -368,6 +380,17 @@
       bFav.title = '收藏到在线歌单';
       bFav.onclick = function (e) { e.stopPropagation(); openSplPicker(e.clientX, e.clientY, [song]); };
       tdFav.appendChild(bFav); tr.appendChild(tdFav);
+      // V4.3.16：复制平台分享链接
+      var tdShare = el('td');
+      var bShare = el('button', 'am-dl-btn', '🔗');
+      bShare.title = '复制' + (PLATFORMS[song.provider] || '') + '分享链接';
+      bShare.onclick = function (e) {
+        e.stopPropagation();
+        var url = window.annieShare && window.annieShare.trackUrl(song.provider, song);
+        if (!url) { stToast('该平台暂不支持生成分享链接'); return; }
+        window.annieShare.copy(url).then(function (ok) { stToast(ok ? '链接已复制：' + url : '复制失败'); });
+      };
+      tdShare.appendChild(bShare); tr.appendChild(tdShare);
       // V3.5.8：单曲下载按钮（含进度百分比，完成后写入标签/封面/歌词）
       var tdDl = el('td');
       var bDl = el('button', 'am-dl-btn', '⬇');
@@ -546,6 +569,35 @@
 
     if (S.stTab === 'lists') {
       if (!S.slDetailId) {
+        // V4.3.16：歌单关键词搜索（当前平台）
+        var slsRow = el('div', 'am-st-inputrow');
+        var slsInp = document.createElement('input');
+        slsInp.className = 'am-st-input'; slsInp.placeholder = '搜索' + PLATFORMS[S.stProvider] + '歌单（关键词）…';
+        slsInp.value = S.slSearch || '';
+        var bSls = el('button', 'am-btn', '搜索歌单');
+        function doSlSearch() {
+          var kw = slsInp.value.trim();
+          if (!kw) { if (S.slSearch) { S.slSearch = ''; loadSongLists(1); } return; }
+          S.slSearch = kw;
+          searchSongLists(kw, 1);
+        }
+        slsInp.onkeydown = function (e) { if (e.key === 'Enter') doSlSearch(); };
+        bSls.onclick = doSlSearch;
+        slsRow.appendChild(slsInp); slsRow.appendChild(bSls);
+        c.appendChild(slsRow);
+        // 搜索态提示条（✕ 清除回广场）
+        if (S.slSearch) {
+          var srow = el('div', 'am-st-pfs');
+          srow.style.marginBottom = '10px';
+          var schip = el('span', 'am-chip');
+          schip.appendChild(el('span', '', '「' + S.slSearch + '」的搜索结果（' + (S.slTotal || 0) + '）'));
+          var sx = el('span', 'am-chip-x', '✕');
+          sx.title = '清除搜索，返回歌单广场';
+          sx.onclick = function () { S.slSearch = ''; loadSongLists(1); };
+          schip.appendChild(sx);
+          srow.appendChild(schip);
+          c.appendChild(srow);
+        }
         // V3.5.14：歌单链接 / ID 导入（自动识别平台并跳转详情）
         var impRow = el('div', 'am-st-inputrow');
         var impInp = document.createElement('input');
@@ -599,7 +651,7 @@
           grid.appendChild(card);
         });
         c.appendChild(grid);
-        if (S.slPage * S.slLimit < S.slTotal) renderMoreBtn(c, '加载更多歌单（' + S.slLists.length + '/' + S.slTotal + '）', function () { loadSongLists(S.slPage + 1); });
+        if (S.slPage * S.slLimit < S.slTotal) renderMoreBtn(c, '加载更多歌单（' + S.slLists.length + '/' + S.slTotal + '）', function () { S.slSearch ? searchSongLists(S.slSearch, S.slPage + 1) : loadSongLists(S.slPage + 1); });
         return;
       }
       // 歌单详情（返回 + 歌曲表）
@@ -619,6 +671,15 @@
         renderSidebar(); // 侧栏「收藏的歌单」分组即时增减
       };
       barD.appendChild(bFav);
+      // V4.3.16：复制歌单平台分享链接
+      var bLink = el('button', 'am-btn', '🔗 复制链接');
+      bLink.title = '复制该歌单在' + PLATFORMS[S.stProvider] + '的分享链接';
+      bLink.onclick = function () {
+        var url = window.annieShare && window.annieShare.playlistUrl(S.stProvider, S.slDetailId);
+        if (!url) { stToast('该平台暂不支持生成分享链接'); return; }
+        window.annieShare.copy(url).then(function (ok) { stToast(ok ? '歌单链接已复制：' + url : '复制失败'); });
+      };
+      barD.appendChild(bLink);
       c.appendChild(barD);
       c.appendChild(el('div', 'am-view-h', esc(S.slDetailName)));
       if (!S.stResults.length) { c.appendChild(el('div', 'am-empty', '正在加载歌单歌曲…')); return; }
@@ -806,7 +867,7 @@
     c.appendChild(R.stStatus);
 
     var tb = el('table', 'am-table');
-    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:64px">平台</th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
+    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:64px">平台</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
     var body = el('tbody');
     pl.items.forEach(function (it, i) {
       var song = it.song;
@@ -828,6 +889,17 @@
       var tdPf = el('td');
       tdPf.appendChild(el('span', 'am-qbadge', PLATFORMS[it.provider] ? PLATFORMS[it.provider].replace('音乐', '') : it.provider));
       tr.appendChild(tdPf);
+      // V4.3.16：复制平台分享链接
+      var tdShare2 = el('td');
+      var bShare2 = el('button', 'am-dl-btn', '🔗');
+      bShare2.title = '复制' + (PLATFORMS[it.provider] || '') + '分享链接';
+      bShare2.onclick = function (e) {
+        e.stopPropagation();
+        var url = window.annieShare && window.annieShare.trackUrl(it.provider, song);
+        if (!url) { stToast('该平台暂不支持生成分享链接'); return; }
+        window.annieShare.copy(url).then(function (ok) { stToast(ok ? '链接已复制：' + url : '复制失败'); });
+      };
+      tdShare2.appendChild(bShare2); tr.appendChild(tdShare2);
       // V4.3.13：在线歌单补齐下载（与搜索结果行同一机制）
       var tdDl = el('td');
       var bDl = el('button', 'am-dl-btn', '⬇');
@@ -910,6 +982,13 @@
   AM.renderSplView = renderSplView;       // V4.3.5：在线歌单视图
   AM.openSplPicker = openSplPicker;       // V4.3.5：收藏到在线歌单选择器
   AM.favCurrentStream = favCurrentStream; // V4.3.5：播放中一键收藏
+  AM.copyCurrentStreamLink = function () {  // V4.3.16：复制播放中在线歌的分享链接
+    var cs = state.currentStream;
+    if (!cs || !cs.song) { stToast('当前没有正在播放的在线歌曲'); return; }
+    var url = window.annieShare && window.annieShare.trackUrl(cs.song.provider || cs.provider, cs.song);
+    if (!url) { stToast('该平台暂不支持生成分享链接'); return; }
+    window.annieShare.copy(url).then(function (ok) { stToast(ok ? '链接已复制：' + url : '复制失败'); });
+  };
   AM.locateStream = locateStream;         // V4.3.13：定位当前播放的在线曲目
   AM.downloadStreamSong = downloadSong;   // V4.3.13：迷你模式 ⬇ 复用
 

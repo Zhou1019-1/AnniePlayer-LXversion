@@ -19,7 +19,7 @@
     // —— 界面 ——
     particlesEnabled: true, albumBg: true, albumBgBlur: 120,
     sortMode: 'name', sidebarCollapsed: false, viewMode: 'tree',
-    amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
+    amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
     // 侧栏宽度（px）与可视化面板整体关闭状态（持久化，重启后恢复）
     sidebarWidth: 320, vizBarHidden: false,
     // Plus：配色方案（gold 暗夜金 / aurora 靛蓝极光 / jade 翡翠深空 / day 白昼）
@@ -1808,6 +1808,26 @@
     };
     loudBtnRow.appendChild(loudBtnLab); loudBtnRow.appendChild(loudBtn);
     sFk.appendChild(loudBtnRow);
+
+    // —— V4.3.16：曲库节奏（BPM）补算——为「找相似歌曲」供特征 ——
+    var bpmBtnRow = markItem(el('div', 'set-row'), '曲库节奏补算 BPM 相似推荐 music-tempo');
+    var bpmBtnLab = el('div'); bpmBtnLab.appendChild(el('div', '', '曲库节奏补算（BPM）'));
+    bpmBtnLab.appendChild(el('div', 'set-hint', '后台逐轨分析节奏（music-tempo，约每首数秒），供「找相似歌曲」打分；CUE/ISO 分轨跳过'));
+    var bpmBtn = el('button', 'btn-ghost', '开始补算');
+    var bpmBusy = false;
+    bpmBtn.onclick = async function () {
+      if (bpmBusy) { window.annieRhythm.batchCancel(); return; }
+      bpmBusy = true;
+      bpmBtn.textContent = '补算中…（点击取消）';
+      var r = await window.annieRhythm.batchFill(function (done, total) {
+        bpmBtn.textContent = '补算中 ' + done + '/' + total + '（点击取消）';
+      });
+      bpmBusy = false;
+      bpmBtn.textContent = r.canceled ? '已取消（' + r.ok + ' 首已分析）' : (r.total ? '完成：' + r.ok + '/' + r.total + ' 首' : '全部已分析 ✓');
+      setTimeout(function () { bpmBtn.textContent = '开始补算'; }, 4000);
+    };
+    bpmBtnRow.appendChild(bpmBtnLab); bpmBtnRow.appendChild(bpmBtn);
+    sFk.appendChild(bpmBtnRow);
 
     // —— 假无损批量检测（V4.0.5：四方法加权融合；整库/文件夹/单曲三种范围；只出报告不打标） ——
     var fkRow = markItem(el('div', 'set-row'), '假无损 批量检测 频谱 fake lossless 文件夹 单曲');

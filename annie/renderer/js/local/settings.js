@@ -43,7 +43,8 @@
     saveCover: true,        // 下载时在目录生成封面图片文件（嵌入标签始终做）
     closeToTray: false,      // V3.5.9：关闭主窗口后驻留系统托盘（默认关=关窗即退出，保证更新顺利安装）
     accent: 'default',       // V3.5.17：强调色（default=主题原色；AM/粒子舞台生效）
-    amViz: true              // V3.5.17：AM 主题底部实时频谱条
+    amViz: true,              // V3.5.17：AM 主题底部实时频谱条
+    amVizColor: 'cover'      // V4.3.17：频谱条配色 cover|coverMulti|rainbow|heat|accent
   };
 
   /* V3.5.17：强调色预设——内联 style 写到 <html>，优先级高于所有 CSS 变量定义（含 data-palette 方案） */
@@ -563,6 +564,19 @@
     vizWrap.appendChild(vizChk); vizWrap.appendChild(el('span', 'knob'));
     vizRow.appendChild(vizLab); vizRow.appendChild(vizWrap);
     s5.appendChild(vizRow);
+
+    // —— AM 频谱条配色模式（V4.3.17） ——
+    var vcRow = markItem(el('div', 'set-row'), '频谱条配色 颜色 封面取色 彩虹 热成像 spectrum color');
+    var vcLab = el('div'); vcLab.appendChild(el('div', '', '频谱条配色'));
+    vcLab.appendChild(el('div', 'set-hint', '跟随封面：切歌自动换封面主色；封面多色：呈现封面多种颜色；黑白封面/无封面自动回落主题强调色'));
+    var vcSel = document.createElement('select');
+    [['cover', '跟随专辑封面'], ['coverMulti', '封面多色渐变'], ['rainbow', '彩虹频段'], ['heat', '幅度热成像'], ['accent', '主题强调色']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; vcSel.appendChild(op);
+    });
+    vcSel.value = ui.amVizColor || 'cover';
+    vcSel.onchange = function () { ui.amVizColor = vcSel.value; save(); };
+    vcRow.appendChild(vcLab); vcRow.appendChild(vcSel);
+    s5.appendChild(vcRow);
 
     // —— 氛围模式（V3.5.18：全屏频谱，任意主题可用） ——
     var ambRow = markItem(el('div', 'set-row'), '氛围模式 全屏 频谱 可视化 ambient');

@@ -657,10 +657,18 @@ html[data-motion="off"] #am-root::before {
 .am-np-prog i { transition: width .25s linear, background .15s; }
 .am-imm-fill { transition: width .25s linear; }
 .am-mini-fill { transition: width .25s linear; }
-/* 音量条 hover 展开（Apple 风：元素滑开让位） */
-.am-vol input[type="range"] { width: 0; opacity: 0;
-  transition: width var(--dur-comp) var(--ease-out), opacity var(--dur-micro); }
-.am-vol:hover input[type="range"], .am-vol input[type="range"]:focus { width: 84px; opacity: 1; }
+/* V4.3.21：音量条 hover 展开重构——旧方案 width 0→84px 布局动画在顶栏拖拽区反复触发命中重测，
+ * hover 抖动抽搐；改为绝对定位浮层，只动 opacity/位移，不挤布局 */
+.am-vol { position: relative; }
+.am-vol input[type="range"] {
+  position: absolute; left: 32px; top: 50%; transform: translateY(-50%);
+  width: 96px; height: auto; padding: 9px 8px; /* 加大命中区：裸条只有 4px 高很难点 */
+  opacity: 0; pointer-events: none; z-index: 6;
+  background: var(--am-card, rgba(28,28,34,.92)); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  transition: opacity var(--dur-micro);
+}
+.am-vol:hover input[type="range"], .am-vol input[type="range"]:focus { opacity: 1; pointer-events: auto; }
 /* 行内迷你按钮/弹层项补齐按压反馈 */
 .am-mini-btn { transition: opacity .12s, color .12s, transform .1s; }
 .am-mini-btn:active { transform: scale(.88); }

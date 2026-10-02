@@ -7,8 +7,11 @@
 (function () {
   'use strict';
 
-  function meta(p) { return (window.state && state.library.metaCache && state.library.metaCache[p]) || {}; }
-  function statsOf(p) { return (window.state && state.library.stats && state.library.stats[p]) || null; }
+  /* 注意：player.js 的 state 是顶层 const，跨脚本共享词法作用域但【不在 window 上】——
+   * 用 typeof 守卫，绝不能写 window.state（恒 undefined，V4.3.16 曾因此整个功能静默失效） */
+  function libOf() { return (typeof state !== 'undefined' && state.library) || null; }
+  function meta(p) { var lib = libOf(); return (lib && lib.metaCache && lib.metaCache[p]) || {}; }
+  function statsOf(p) { var lib = libOf(); return (lib && lib.stats && lib.stats[p]) || null; }
 
   /* BPM 距离：半速/倍速等价，取最小差 */
   function bpmDist(a, b) {
@@ -36,7 +39,7 @@
 
   /* 找相似：seedPath → [{ t, score }][n] */
   function similarTo(seedPath, n) {
-    var lib = window.state && state.library;
+    var lib = libOf();
     if (!lib) return [];
     var seed = lib.tracks.find(function (t) { return t.path === seedPath; });
     if (!seed) return [];
@@ -69,7 +72,7 @@
   }
 
   async function open(seedPath) {
-    var lib = window.state && state.library;
+    var lib = libOf();
     if (!lib) return;
     var seed = lib.tracks.find(function (t) { return t.path === seedPath; });
     if (!seed) return;
@@ -159,5 +162,61 @@
     btns.appendChild(btnClose);
   }
 
-  window.annieSimilar = { similarTo: similarTo, open: open };
+  /* ---------------- V4.3.21：一键电台（种子曲 + 相似链式续播） ----------------
+   * 开电台：队列 = 种子 + 相似 Top15，从种子播起；
+   * 续播：5s 轮询，播到队尾剩 <3 首时以当前曲目为新种子追加 12 首（全队列去重，链条随听感漂移）。
+   * 关电台只停续播，不清队列。 */
+  var radio = { on: false, queued: {}, timer: null };
+
+  async function radioStart(seedPath) {
+    var lib = libOf();
+    if (!lib) return;
+    var seed = lib.tracks.find(function (t) { return t.path === seedPath; });
+    if (!seed) return;
+    var sm = meta(seedPath);
+    // 种子缺 BPM 先即时补算（打分权重 45%，缺了电台质量差一截）
+    if (!(sm.bpm > 0) && seedPath.indexOf('#cue') < 0 && seedPath.indexOf('#iso') < 0 && !/^https?:/i.test(seedPath)) {
+      try { if (typeof proToast === 'function') proToast('📻 电台预热：分析种子曲目节奏…'); } catch (e) { }
+      try {
+        var bpm = await window.annieRhythm.analyzeTrack(seedPath);
+        if (bpm > 0) {
+          sm.bpm = Math.round(bpm * 10) / 10;
+          var o = {}; o[seedPath] = sm.bpm;
+          try { window.mine.bpmSet(o); } catch (e) { }
+        }
+      } catch (e) { }
+    }
+    var first = similarTo(seedPath, 15).map(function (r) { return r.t; });
+    radio.queued = {}; radio.queued[seedPath] = 1;
+    first.forEach(function (t) { radio.queued[t.path] = 1; });
+    state.queue = [seed].concat(first);
+    radio.on = true;
+    clearInterval(radio.timer);
+    radio.timer = setInterval(radioExtend, 5000);
+    if (typeof playAt === 'function') playAt(0);
+    try {
+      if (typeof proToast === 'function') proToast(first.length
+        ? '📻 电台已开启（' + state.queue.length + ' 首），将自动续播相似歌曲'
+        : '📻 电台已开启，但曲库相似数据不足（先跑「设置 → 曲库工具 → 节奏/响度补算」效果更好）');
+    } catch (e) { }
+  }
+
+  function radioExtend() {
+    if (!radio.on || typeof state === 'undefined') return;
+    if (state.index < 0) return;                        // 不在本地队列（流媒体等），不动
+    if (state.index < state.queue.length - 3) return;   // 余粮充足
+    var cur = state.queue[state.index] || state.queue[state.queue.length - 1];
+    if (!cur || !cur.path) return;
+    var more = similarTo(cur.path, 12).filter(function (r) { return !radio.queued[r.t.path]; });
+    more.forEach(function (r) { radio.queued[r.t.path] = 1; state.queue.push(r.t); });
+  }
+
+  function radioStop() {
+    radio.on = false; clearInterval(radio.timer); radio.timer = null; radio.queued = {};
+  }
+
+  window.annieSimilar = {
+    similarTo: similarTo, open: open,
+    radio: { start: radioStart, stop: radioStop, isOn: function () { return radio.on; } }
+  };
 })();

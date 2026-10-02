@@ -162,7 +162,10 @@
   function srcFileOf(t) { return (t.cue && t.cue.src) || (t.iso && t.iso.src) || t.path; }
   function albumKeyOf(t) {
     var m = trackMeta(t);
-    return m.album || ('dir:' + (t.dir || '')); // 无专辑标签时按目录分组（同目录≈同专辑）
+    /* V4.3.21：键加艺人防跨艺人同名专辑串封面；专辑缺失时退回按文件——
+     * 旧逻辑「无专辑按目录分组」在下载/混装文件夹里把整目录的歌共用一张封面（迷你/队列张冠李戴现场） */
+    if (m.album) return m.album + '|' + (m.artist || '');
+    return 'file:' + t.path;
   }
   /* 取某曲目所在专辑的封面；cb(dataURL|null)。同专辑并发请求合并，只解析一次 */
   function albumCover(t, cb) {

@@ -30,6 +30,9 @@ const state = {
   gridPath: null,         // 网格视图当前所在文件夹（null=根层级）
   libNav: { mode: 'folders', folder: null }, // V1.1.0：folders=平铺文件夹 | tracks=文件夹内曲目
 };
+/* V4.3.21：挂 window —— const 顶层声明只进全局词法环境不上 window，
+ * similar/rhythmBatch/smartLists/mediaSession 等一堆 `window.state && ...` 守卫曾因此恒 false 静默失效 */
+window.state = state;
 
 /* ---------------- 工具 ---------------- */
 const fmtTime = (s) => {

@@ -616,6 +616,8 @@
     }
     tr.appendChild(acts);
     tr.ondblclick = function () { playList(opts.tracks, i); };
+    // V4.3.21：行右键 = ⊕ 菜单（同一入口，坐标取鼠标位置）
+    tr.oncontextmenu = function (e) { e.preventDefault(); openAddMenu(e.clientX, e.clientY, t.path); };
     return tr;
   }
   function amSpacerRow(h, cols) {
@@ -788,6 +790,18 @@
       if (window.annieSimilar) window.annieSimilar.open(trackPath);
     };
     pop.appendChild(msr);
+    // V4.3.21：一键电台（种子 + 相似链式续播）
+    var mrd = el('button', 'am-pop-item',
+      (window.annieSimilar && annieSimilar.radio.isOn()) ? '📻 关闭电台' : '📻 一键电台');
+    mrd.onclick = function () {
+      pop.classList.remove('on');
+      if (!window.annieSimilar) return;
+      if (annieSimilar.radio.isOn()) {
+        annieSimilar.radio.stop();
+        try { if (typeof proToast === 'function') proToast('📻 电台已关闭'); } catch (e) { }
+      } else annieSimilar.radio.start(trackPath);
+    };
+    pop.appendChild(mrd);
     // V4.3.19：歌词海报（仅当前播放且有歌词的行；竖版 1080×1620，含封面/音质/节选歌词/版本号）
     try {
       var isCurTrack = (typeof state !== 'undefined' && state && state.currentPath === trackPath);

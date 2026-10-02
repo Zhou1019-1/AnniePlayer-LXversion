@@ -948,6 +948,13 @@
     }]);
     items.push(['在线匹配歌词 / 封面…', function () { if (window.annieMatch) window.annieMatch.open({ path: t.path }); }]);
     items.push(['找相似歌曲…', function () { if (window.annieSimilar) window.annieSimilar.open(t.path); }]); // V4.3.16
+    items.push([ // V4.3.21：一键电台（种子 + 相似链式续播）
+      (window.annieSimilar && annieSimilar.radio.isOn()) ? '📻 关闭电台' : '📻 一键电台',
+      function () {
+        if (!window.annieSimilar) return;
+        if (annieSimilar.radio.isOn()) { annieSimilar.radio.stop(); try { if (typeof proToast === 'function') proToast('📻 电台已关闭'); } catch (e) { } }
+        else annieSimilar.radio.start(t.path);
+      }]);
     if (S.sel.size > 1) items.push(['批量匹配歌词（' + S.sel.size + ' 首）…', function () {
       var paths = []; forEachSel(function (x) { paths.push(x.path); });
       if (window.annieBatchMatch) window.annieBatchMatch.open(paths);

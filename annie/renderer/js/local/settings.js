@@ -1256,6 +1256,81 @@
     var aeLab = el('div'); aeLab.appendChild(el('div', '', 'AutoEq 耳机校正'));
     aeLab.appendChild(el('div', 'set-hint', '按耳机型号套用 AutoEq 实测校正曲线（oratory1990 / crinacle / Rtings 等来源）；低架/高架滤波以峰值滤波近似，前级增益由自动前级补偿接管'));
     aeWrap.appendChild(aeLab);
+    // V4.3.19：AutoEq 结果文件导入（脑暴 7.2）——ParametricEQ.txt → PEQ 自由频段；GraphicEQ.txt / freq,gain CSV → 15 段 EQ（log 插值）
+    var aeFileBtn = el('button', 'btn-ghost', '导入结果文件…');
+    aeFileBtn.style.cssText = 'width:auto;padding:6px 12px;font-size:12px;margin:6px 0 2px';
+    aeFileBtn.title = '支持 AutoEq 网页版下载的 ParametricEQ / GraphicEQ 结果文件（.txt），或 频率,增益 两列 CSV';
+    var aeFile = document.createElement('input');
+    aeFile.type = 'file'; aeFile.accept = '.txt,.csv'; aeFile.style.display = 'none';
+    aeFileBtn.onclick = function () { aeFile.click(); };
+    aeFile.onchange = function () {
+      var f = aeFile.files && aeFile.files[0];
+      aeFile.value = '';
+      if (!f) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var toast = function (s) { try { if (typeof proToast === 'function') proToast(s, 6000); } catch (e) { } };
+        try {
+          var text = String(rd.result || '');
+          // Parametric：Filter  1: ON PK Fc 105.0 Hz Gain -2.9 dB Q 0.70（GEQ 类型行归为图示曲线）
+          var peq = [], geqPts = [];
+          var re = /Filter\s+\d+:\s+ON\s+([A-Za-z]+)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+(-?[\d.]+)\s*dB(?:\s+Q\s+([\d.]+))?/g;
+          var mm;
+          while ((mm = re.exec(text))) {
+            var tp = mm[1].toUpperCase();
+            if (tp === 'GEQ') geqPts.push([+mm[2], +mm[3]]);
+            else peq.push({ f: +mm[2], g: +mm[3], q: +(mm[4] || 1) }); // 低架/高架以峰值近似（与内置库一致）
+          }
+          if (!geqPts.length) { // 纯文本/CSV：每行 "freq gain"（逗号/空白/分号分隔）
+            text.split(/\r?\n/).forEach(function (line) {
+              var g = /^\s*([\d.]+)[\s,;]+(-?[\d.]+)\s*$/.exec(line);
+              if (g && +g[1] >= 10 && +g[1] <= 22050) geqPts.push([+g[1], +g[2]]);
+            });
+          }
+          if (peq.length) {
+            // 引擎上限 8 段：超了按 |增益| 保大头，再按频率排序
+            if (peq.length > 8) {
+              peq = peq.slice().sort(function (a, b) { return Math.abs(b.g) - Math.abs(a.g); }).slice(0, 8)
+                .sort(function (a, b) { return a.f - b.f; });
+            }
+            ui.peqBands = peq.map(function (b) { return { f: b.f, g: b.g, q: b.q }; });
+            ui.peqOn = true; peqChk.checked = true;
+            save(); pushPeq(); renderPeqBands();
+            toast('已导入 ' + f.name + '：' + peq.length + ' 段参量 EQ 频段');
+            return;
+          }
+          if (geqPts.length >= 2) {
+            geqPts.sort(function (a, b) { return a[0] - b[0]; });
+            var EQ = window.annieEQ;
+            if (!EQ) { toast('EQ 模块未就绪'); return; }
+            EQ.FREQS.forEach(function (tf, i) {
+              // log 域分段线性插值（相邻恒 Q 段间误差 <1dB）
+              var lt = Math.log(tf), g0 = geqPts[0], g1 = geqPts[geqPts.length - 1], v;
+              if (tf <= g0[0]) v = g0[1];
+              else if (tf >= g1[0]) v = g1[1];
+              else {
+                for (var k = 0; k < geqPts.length - 1; k++) {
+                  var a = geqPts[k], b = geqPts[k + 1];
+                  if (tf >= a[0] && tf <= b[0]) {
+                    v = a[1] + (b[1] - a[1]) * (lt - Math.log(a[0])) / (Math.log(b[0]) - Math.log(a[0]));
+                    break;
+                  }
+                }
+              }
+              EQ.setGain(i, v);
+            });
+            EQ.setEnabled(true);
+            toast('已导入 ' + f.name + '：曲线已映射到 15 段 EQ');
+            return;
+          }
+          toast('未识别：请使用 AutoEq 的 ParametricEQ / GraphicEQ 结果文件，或「频率,增益」两列 CSV');
+        } catch (e) {
+          try { if (typeof proToast === 'function') proToast('解析失败：' + (e && e.message || e)); } catch (e2) { }
+        }
+      };
+      rd.readAsText(f);
+    };
+    aeLab.appendChild(aeFileBtn); aeLab.appendChild(aeFile);
     sPeq.appendChild(aeWrap);
     var aeBox = el('div', 'autoeq-box');
     var aeIn = document.createElement('input');
@@ -1977,6 +2052,31 @@
       }).catch(function () { dupBtn.disabled = false; dupBtn.textContent = '扫描重复'; });
     };
 
+    // —— V4.3.19：配置备份（脑暴 10.1）——设置/歌单/收藏/统计一键导出导入 ——
+    var bakRow = markItem(el('div', 'set-row'), '配置备份 导出备份 导入备份 换机 迁移 backup');
+    var bakLab = el('div'); bakLab.appendChild(el('div', '', '配置备份'));
+    bakLab.appendChild(el('div', 'set-hint', '设置/歌单/收藏/收听统计打包为备份文件；换机导入后重扫曲库即可（曲库索引与标签缓存会自动重建）'));
+    var bakWrap = el('div', 'set-ctrl');
+    var bakExp = el('button', 'btn-ghost', '导出备份');
+    var bakImp = el('button', 'btn-ghost', '导入备份…');
+    bakExp.onclick = function () {
+      bakExp.disabled = true;
+      window.mine.backupExport()
+        .then(function (r) { bakExp.textContent = r && r.ok ? '已导出 ✓' : '已取消'; })
+        .catch(function () { bakExp.textContent = '导出失败'; })
+        .finally(function () { bakExp.disabled = false; setTimeout(function () { bakExp.textContent = '导出备份'; }, 3000); });
+    };
+    bakImp.onclick = function () {
+      if (!confirm('导入备份会用备份内容覆盖当前的设置/歌单/收藏/收听统计（现有配置会自动留 .bak 兜底），导入后应用自动重启。继续？')) return;
+      window.mine.backupImport().then(function (r) {
+        if (r && r.ok) { window.mine.relaunchApp(); return; }
+        if (r && r.reason !== 'canceled') { try { if (typeof proToast === 'function') proToast('导入失败：' + r.reason); } catch (e) { } }
+      });
+    };
+    bakWrap.appendChild(bakExp); bakWrap.appendChild(bakImp);
+    bakRow.appendChild(bakLab); bakRow.appendChild(bakWrap);
+    sFk.appendChild(bakRow);
+
     // —— 诊断信息导出（Pro beat0.0.1：崩溃报障用） ——
     var diagRow = markItem(el('div', 'set-row'), '导出诊断信息 报障 日志 zip 崩溃');
     var diagLab = el('div'); diagLab.appendChild(el('div', '', '导出诊断信息'));
@@ -2276,6 +2376,20 @@
 
     /* ================= 更新与关于 ================= */
     var sUp = section(pgUpdate, '更新');
+    // V4.3.19：联系渠道（QQ 群二维码，与首启引导/更新播报同一组）
+    var sContact = section(pgUpdate, '联系我们（QQ 交流群）');
+    var gWrap = markItem(el('div', 'set-groups'), '联系我们 QQ群 交流群 反馈 入群 二维码');
+    [['assets/qq-group-annie.png', '安妮播放器专属群', '1128065156', '需求反馈 / Bug 上报'],
+     ['assets/qq-group-hifi.png', '真无损HiFi音乐发烧友群', '1023637098', '无敌章鱼哥的 HiFi 交流群']].forEach(function (g) {
+      var item = el('div', 'set-group');
+      var img = document.createElement('img'); img.src = g[0]; img.alt = g[1];
+      item.appendChild(img);
+      item.appendChild(el('div', 'set-group-name', g[1]));
+      item.appendChild(el('div', 'set-group-no', '群号 ' + g[2] + ' · ' + g[3]));
+      gWrap.appendChild(item);
+    });
+    gWrap.appendChild(el('div', 'set-group-note', '请通过安妮播放器扫码入群的用户，在入群问题回答时明确备注入群渠道'));
+    sContact.appendChild(gWrap);
     // 当前版本
     var verRow = markItem(el('div', 'set-row'), '当前版本 版本号 version');
     var verLab = el('div'); verLab.appendChild(el('div', '', '当前版本'));

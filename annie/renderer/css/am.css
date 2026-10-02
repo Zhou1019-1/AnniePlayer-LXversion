@@ -752,6 +752,19 @@ html[data-motion="off"] #am-root::before {
   transition: opacity .18s ease, transform .18s ease, right .25s ease, background .12s ease, color .12s ease;
 }
 .am-backtop.on { opacity: 1; pointer-events: auto; transform: none; }
+/* V4.3.19：切歌格式 OSD（底部居中，避开右下角的设备切换提示与回顶部按钮） */
+#am-fmt-osd {
+  position: absolute; left: 50%; bottom: 72px; z-index: 9;
+  max-width: min(70%, 480px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 6px 13px; border-radius: 14px; font-size: 12px;
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text-2);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  opacity: 0; transform: translateX(-50%) translateY(8px); pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+}
+#am-fmt-osd.on { opacity: 1; transform: translateX(-50%); }
+#am-root.am-mini-on #am-fmt-osd, #am-root.am-imm-on #am-fmt-osd { bottom: 14px; }
 .am-backtop:hover { background: var(--am-accent); color: var(--am-accent-ink); border-color: transparent; }
 #am-root.am-lyr-on .am-backtop { right: 382px; }
 /* 迷你/沉浸模式下内容区被顶栏取代，索引栏隐藏 */

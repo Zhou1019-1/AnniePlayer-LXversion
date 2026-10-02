@@ -409,4 +409,18 @@
   AM.prev = prev;
   AM.seek = seek;
   AM.bindProgDrag = bindProgDrag;
+
+  /* V4.3.19：切歌格式 OSD（新脑暴 E）——右下胶囊显示当前格式/输出链，3.2s 淡出 */
+  var fmtOsdTimer = null;
+  function showFmtOsd(text) {
+    if (!text) return;
+    var host = document.querySelector('.am-body') || document.body;
+    var d = document.getElementById('am-fmt-osd');
+    if (!d) { d = el('div'); d.id = 'am-fmt-osd'; host.appendChild(d); }
+    d.textContent = text;
+    d.classList.add('on');
+    clearTimeout(fmtOsdTimer);
+    fmtOsdTimer = setTimeout(function () { d.classList.remove('on'); }, 3200);
+  }
+  AM.showFmtOsd = showFmtOsd;
 })();

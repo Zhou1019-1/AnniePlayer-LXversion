@@ -70,6 +70,7 @@
       if (!r || !r.playable || !r.url) { renderStreamStatus(song.name + '：' + ((r && r.message) || '无法播放'), true); return; }
       S.fmt = (r.quality || '') + (r.format ? ' · ' + String(r.format).toUpperCase() : '');
       refreshBadge();
+      if (AM.showFmtOsd && S.fmt) AM.showFmtOsd(PLATFORMS[song.provider] + ' · ' + S.fmt); // V4.3.19：在线切歌格式 OSD
       renderStreamStatus(PLATFORMS[song.provider] + ' · ' + (r.quality || '') + ' ' + (r.format || '').toUpperCase() + ' · 独占输出中');
       if (window.annieStreamPlay) {
         // 单击即播（与洛雪流媒体面板一致）；annieStreamPlay 返回 false 表示引擎拒绝流地址

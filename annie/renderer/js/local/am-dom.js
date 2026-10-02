@@ -767,6 +767,18 @@
       if (window.annieSimilar) window.annieSimilar.open(trackPath);
     };
     pop.appendChild(msr);
+    // V4.3.19：歌词海报（仅当前播放且有歌词的行；竖版 1080×1620，含封面/音质/节选歌词/版本号）
+    try {
+      var isCurTrack = (typeof state !== 'undefined' && state && state.currentPath === trackPath);
+      if (isCurTrack && S.lyrLines && S.lyrLines.length) {
+        var mpp = el('button', 'am-pop-item', '🖼 生成歌词海报');
+        mpp.onclick = function () {
+          pop.classList.remove('on');
+          if (window.anniePoster) window.anniePoster.open(trackPath);
+        };
+        pop.appendChild(mpp);
+      }
+    } catch (e) { }
     pop.appendChild(el('div', 'am-pop-sep'));
     S.playlists.forEach(function (pl) {
       var it = el('button', 'am-pop-item', pl.name);

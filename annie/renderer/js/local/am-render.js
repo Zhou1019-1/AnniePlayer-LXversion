@@ -718,6 +718,16 @@
         // 迷你/沉浸的参数行不走 syncAuxViews（它只在切歌/封面回调时跑），这里直接同步
         if (R.miniFmt) R.miniFmt.textContent = S.fmt;
         if (R.immFmt) R.immFmt.textContent = S.fmt;
+        // V4.3.19：切歌格式 OSD（FLAC · 24bit · 96kHz · ASIO/重采样 一目了然）
+        if (AM.showFmtOsd && parts.length) {
+          // dsdMode/dop 是引擎全局设置不是当前曲目状态——只在当前曲目真是 DSD 时才显示
+          var isDsd = data.codec && /dsd/i.test(String(data.codec));
+          var osdTxt = S.fmt +
+            (data.backend === 'asio' ? ' · ASIO' : data.backend ? ' · WASAPI' : '') +
+            (isDsd && data.dsdMode === 'native' ? ' · Native DSD' : isDsd && data.dop ? ' · DoP' : '') +
+            (data.resampled ? ' · 重采样至 ' + Math.round((data.sampleRate || 0) / 100) / 10 + 'kHz' : '');
+          AM.showFmtOsd(osdTxt);
+        }
       }
     });
     // state.currentPath 变化（playAt 触发后无专用事件）——轮询兜底 + 主题切换时刷新

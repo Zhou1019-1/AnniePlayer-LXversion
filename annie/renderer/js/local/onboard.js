@@ -6,6 +6,22 @@
   var LS_KEY = 'annieplayer.onboarded';
   function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
 
+  /* V4.3.19：QQ 群联系渠道卡片（首次引导完成页 + 更新播报弹窗共用） */
+  function groupBlock() {
+    var box = el('div', 'ob-groups');
+    [['assets/qq-group-annie.png', '安妮播放器专属群', '1128065156', '需求反馈 / Bug 上报'],
+     ['assets/qq-group-hifi.png', '真无损HiFi音乐发烧友群', '1023637098', '无敌章鱼哥的 HiFi 交流群']].forEach(function (g) {
+      var item = el('div', 'ob-group');
+      var img = document.createElement('img'); img.src = g[0]; img.alt = g[1]; img.className = 'ob-qr';
+      item.appendChild(img);
+      item.appendChild(el('div', 'ob-group-name', g[1]));
+      item.appendChild(el('div', 'ob-group-no', '群号 ' + g[2] + ' · ' + g[3]));
+      box.appendChild(item);
+    });
+    box.appendChild(el('div', 'ob-group-note', '请通过安妮播放器扫码入群的用户，在入群问题回答时明确备注入群渠道'));
+    return box;
+  }
+
   function done() {
     try { localStorage.setItem(LS_KEY, '1'); } catch (e) { }
     var ov = document.getElementById('ob-overlay');
@@ -89,6 +105,7 @@
         '· 空格 播放暂停，Ctrl+K 命令面板\n' +
         '· 遇到问题：设置中心 → 曲库工具 → 导出诊断信息'));
       card.querySelector('.ob-sub').style.whiteSpace = 'pre-line';
+      card.appendChild(groupBlock());
       var btns = el('div', 'ob-btns');
       var go = el('button', 'ob-btn pri', '开始使用');
       go.onclick = done;
@@ -147,6 +164,7 @@
     // 轻量 markdown：去粗体标记，**xx** → xx（保持纯文本可读即可）
     body.textContent = bodyMd.replace(/\*\*/g, '').replace(/^#+\s*/gm, '');
     card.appendChild(body);
+    card.appendChild(groupBlock());
     var btns = el('div', 'ob-btns');
     var go = el('button', 'ob-btn pri', '知道了');
     go.onclick = function () { ov.remove(); };

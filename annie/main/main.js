@@ -1081,6 +1081,54 @@ function registerIpc() {
     return { ok: true, path: r.filePath };
   });
 
+  /* ---------------- V4.3.19：配置备份（脑暴 10.1） ----------------
+   * 导出：store 全量键减去 tracks/metaCache（路径键派生数据，换机即失效，重扫自动重建）。
+   * 导入：校验 kind 标记 → 现有 library.json 留 .bak 兜底 → 键级整体覆盖（tracks/metaCache 不动）→ 渲染层自行 relaunch。 */
+  ipcMain.handle('backup:export', async () => {
+    const { dialog } = require('electron');
+    flushStore(); // 防抖窗口内的改动先落盘
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '导出配置备份',
+      defaultPath: 'annieplayer-backup-' + new Date().toISOString().slice(0, 10) + '.anniebak.json',
+      filters: [{ name: '安妮播放器备份', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
+    try {
+      const s = loadStore();
+      const data = {};
+      for (const k of Object.keys(s)) if (k !== 'tracks' && k !== 'metaCache') data[k] = s[k];
+      fs.writeFileSync(r.filePath, JSON.stringify({
+        kind: 'annie-backup', app: app.getName(), ver: app.getVersion(), time: new Date().toISOString(), data
+      }), 'utf8');
+      return { ok: true, path: r.filePath };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
+  ipcMain.handle('backup:import', async () => {
+    const { dialog } = require('electron');
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '导入配置备份',
+      filters: [{ name: '安妮播放器备份', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, reason: 'canceled' };
+    try {
+      const pkg = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
+      if (!pkg || pkg.kind !== 'annie-backup' || !pkg.data || typeof pkg.data !== 'object') {
+        return { ok: false, reason: '不是有效的安妮备份文件' };
+      }
+      const sp = storePath();
+      try { fs.copyFileSync(sp, sp + '.bak-' + Date.now()); } catch { } // 导入前兜底
+      const s = loadStore();
+      for (const k of Object.keys(pkg.data)) {
+        if (k === 'tracks' || k === 'metaCache') continue; // 派生数据不覆盖
+        s[k] = pkg.data[k];
+      }
+      touchStore(); flushStore();
+      return { ok: true, ver: pkg.ver || '', time: pkg.time || '' };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
+  ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
+
   // V4.3.18：封面磁盘缓存（头脑风暴 2.3），userData/covercache/，二次启动封面免整文件解析
   library.initCoverDiskCache(path.join(app.getPath('userData'), 'covercache'));
 

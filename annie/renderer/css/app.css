@@ -990,6 +990,19 @@ body.mini > *:not(#mini-bar) { display: none !important; }
 .ob-btn.pri { background: #fa2d55; border-color: #fa2d55; color: #fff; font-weight: 600; }
 .ob-btn.pri:hover { background: #ff4066; }
 .ob-card > .ob-btn { margin-top: 4px; }
+/* V4.3.19：QQ 群联系渠道（首启引导完成页 / 更新播报 / 设置关于共用） */
+.ob-groups { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; margin: 6px 0 2px; }
+.ob-group { text-align: center; }
+.ob-qr { width: 138px; height: auto; border-radius: 10px; display: block; background: #0c0e13; }
+.ob-group-name { font-size: 13px; font-weight: 600; margin-top: 7px; }
+.ob-group-no { font-size: 11px; color: rgba(232,234,240,.55); margin-top: 2px; }
+.ob-group-note { flex-basis: 100%; text-align: center; font-size: 12px; color: #e0a44a; margin-top: 10px; }
+.set-groups { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px 4px; }
+.set-group { text-align: center; }
+.set-group img { width: 168px; height: auto; border-radius: 10px; display: block; background: #0c0e13; }
+.set-group-name { font-size: 13px; font-weight: 600; margin-top: 7px; }
+.set-group-no { font-size: 11px; opacity: .55; margin-top: 2px; }
+.set-group-note { flex-basis: 100%; font-size: 12px; color: #e0a44a; }
 
 /* ---- Now Playing 全屏 ---- */
 #np-full { position: fixed; inset: 0; z-index: 850; display: none; background: #07080c; color: #e8eaf0; }

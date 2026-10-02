@@ -143,7 +143,19 @@ async function metaBatch(jobId, paths) {
           title, artist, album,
           genre: (c.genre && c.genre[0]) || '', year: c.year || 0
         };
-      } catch (e) { batch[p] = { ok: false, error: e.message }; }
+      } catch (e) {
+        // V4.3.20：mp4 家族非典型结构（CMAF/fMP4）mm 抛错 → ffprobe 兜底，别让整首变「未知」
+        const ext = p.toLowerCase().slice(p.lastIndexOf('.'));
+        if (['.m4a', '.mp4', '.m4b', '.m4v', '.aac'].includes(ext)) {
+          try {
+            const lib2 = require('./library');
+            const t = await lib2.ffprobeTags(p);
+            console.log('[meta-fallback]', p, '=>', t ? 'OK ' + t.title + '/' + t.artist : 'null');
+            if (t) { batch[p] = { ok: true, title: t.title, artist: t.artist, album: t.album, genre: t.genre, year: t.year }; continue; }
+          } catch (e2) { console.log('[meta-fallback] FAIL', p, e2 && e2.message); }
+        }
+        batch[p] = { ok: false, error: e.message };
+      }
       done++;
       if (Object.keys(batch).length >= 50) flush();
     }

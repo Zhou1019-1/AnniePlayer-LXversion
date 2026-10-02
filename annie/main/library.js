@@ -275,6 +275,70 @@ function readWavInfo(filePath) {
   finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { } }
 }
 
+/* V4.3.20：music-metadata 解析失败时的 ffprobe/ffmpeg 兜底（实测场景：CMAF/fMP4 结构的 m4a，
+ * udta 内嵌 FullBox meta 让 mm 抛「FourCC contains invalid characters」，ffprobe 读取完全正常）。
+ * 仅 mp4 家族扩展名启用，避免给本来就坏的文件多一次进程开销。 */
+const { execFile } = require('child_process');
+
+function resolveTool(name) {
+  const prod = path.join(process.resourcesPath || '', 'engine', 'tools', name);
+  const devRoot = path.join(__dirname, '..', '..', 'engine', 'tools', name);
+  for (const p of [prod, devRoot]) { try { if (fs.existsSync(p)) return p; } catch { } }
+  return name; // 回退 PATH
+}
+
+function runTool(name, args, maxBuffer = 8 * 1024 * 1024, encoding = 'utf8') {
+  return new Promise((resolve, reject) => {
+    // encoding:'buffer' → stdout 为 Buffer（抽封面等二进制场景）；默认 utf8 字符串
+    execFile(resolveTool(name), args, { windowsHide: true, maxBuffer, timeout: 20000, encoding }, (err, stdout) => {
+      if (err) reject(err); else resolve(stdout);
+    });
+  });
+}
+
+const MP4_FAMILY = new Set(['.m4a', '.mp4', '.m4b', '.m4v', '.aac']);
+
+/** ffprobe 兜底：标签 + 格式参数（不含封面）；失败返回 null。 */
+async function ffprobeTags(filePath) {
+  const out = await runTool('ffprobe.exe', ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', filePath]);
+  const j = JSON.parse(out.toString('utf8'));
+  const tags = (j.format && j.format.tags) || {};
+  const audio = (j.streams || []).find((s) => s.codec_type === 'audio');
+  if (!audio) return null;
+  const picStream = (j.streams || []).find((s) => s.codec_type === 'video' && s.disposition && s.disposition.attached_pic === 1);
+  const year = parseInt(tags.date || tags.year || '', 10) || 0;
+  return {
+    title: tags.title || '', artist: tags.artist || '', album: tags.album || '',
+    albumArtist: tags.album_artist || '', genre: tags.genre || '', year,
+    track: tags.track || '', disc: tags.disc || '', composer: tags.composer || '',
+    comment: tags.comment || '', publisher: tags.publisher || '',
+    duration: +(j.format && j.format.duration) || 0,
+    codec: audio.codec_name || '',
+    sampleRate: +audio.sample_rate || 0,
+    bitsPerSample: +audio.bits_per_raw_sample || +audio.bits_per_sample || 0,
+    bitrate: +(j.format && j.format.bit_rate) || 0,
+    channels: +audio.channels || 0,
+    hasCover: !!picStream,
+  };
+}
+
+/** ffmpeg 兜底抽封面（attached_pic 流直出，不重编码）；无封面返回 null。 */
+async function ffprobeCover(filePath) {
+  const buf = await runTool('ffmpeg.exe',
+    ['-v', 'error', '-i', filePath, '-map', '0:v:0', '-frames:v', '1', '-c', 'copy', '-f', 'image2pipe', 'pipe:1'],
+    48 * 1024 * 1024, 'buffer'); // 二进制必须 Buffer，默认 utf8 字符串会把图片数据毁成乱码
+  if (!buf || !buf.length) return null;
+  // 魔数校验：JPEG(FF D8 FF)/PNG(89 50 4E 47) 才算数——输出是垃圾时返回 null，
+  // 防止损坏数据进缓存（实测现场：139 字节高熵数据被当 .jpg 落盘，列表显示裂图）
+  const isJpg = buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+  const isPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+  if (!isJpg && !isPng) {
+    console.log('[cover-fallback] 非图片输出，已丢弃:', filePath, buf.length + 'B', buf.slice(0, 12).toString('hex'));
+    return null;
+  }
+  return `data:${isPng ? 'image/png' : 'image/jpeg'};base64,${buf.toString('base64')}`;
+}
+
 /** 读内嵌标签（标题/艺术家/专辑/时长/码率 + 封面 dataURL）。 */
 async function readMeta(filePath) {
   try {
@@ -347,6 +411,28 @@ async function readMeta(filePath) {
       cover
     };
   } catch (e) {
+    // V4.3.20：mp4 家族（CMAF/fMP4 等非典型结构）mm 抛错时走 ffprobe 兜底
+    if (MP4_FAMILY.has(path.extname(filePath).toLowerCase())) {
+      try {
+        const t = await ffprobeTags(filePath);
+        if (t) {
+          let cover = null;
+          if (t.hasCover) { try { cover = await ffprobeCover(filePath); } catch { } }
+          if (!cover) cover = findExternalCover(path.dirname(filePath)) || null;
+          const st = fs.statSync(filePath);
+          return {
+            ok: true,
+            title: t.title || path.basename(filePath, path.extname(filePath)),
+            artist: t.artist || '未知艺术家', album: t.album || '',
+            genre: t.genre, year: t.year, albumArtist: t.albumArtist,
+            track: t.track, disc: t.disc, composer: t.composer, comment: t.comment, publisher: t.publisher,
+            duration: t.duration, codec: t.codec, sampleRate: t.sampleRate,
+            bitsPerSample: t.bitsPerSample, bitrate: t.bitrate, channels: t.channels,
+            fileSize: st.size, mtimeMs: st.mtimeMs, rg: null, cover,
+          };
+        }
+      } catch { }
+    }
     return { ok: false, error: e.message, title: path.basename(filePath, path.extname(filePath)), artist: '未知艺术家', album: '', cover: null };
   }
 }
@@ -451,4 +537,4 @@ function readFileBuffer(filePath) {
   return fs.readFileSync(filePath);
 }
 
-module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, getDiskCover, setDiskCover, initCoverDiskCache, readWavInfo, pickWavField, cleanWavTitle };
+module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, getDiskCover, setDiskCover, initCoverDiskCache, readWavInfo, pickWavField, cleanWavTitle, ffprobeTags };

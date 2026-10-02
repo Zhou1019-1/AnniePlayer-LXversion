@@ -586,6 +586,12 @@ span.am-chip { cursor:pointer; display:inline-flex; align-items:center; }
 .am-cmt-row { padding: 10px 4px; border-bottom: 1px dashed rgba(128,128,128,.18); }
 .am-cmt-text { font-size: 13px; line-height: 1.6; color: inherit; word-break: break-word; }
 .am-cmt-meta { font-size: 11px; opacity: .5; margin-top: 4px; }
+/* V4.3.20：评论文字配色分场景——沉浸抽屉恒为深色半透明底，浅色主题下 inherit 会变深字看不清 → 强制白；
+ * 浅色迷你面板是浅底（#f6f4ef），反过来强制深字 */
+.am-imm-queue .am-cmt-text { color: #fff; }
+.am-imm-queue .am-cmt-meta { color: rgba(255,255,255,.55); opacity: 1; }
+#am-root.am-light.am-mini-on .am-cmt-text { color: var(--am-text); }
+#am-root.am-light.am-mini-on .am-cmt-meta { color: var(--am-text-3); opacity: 1; }
 
 /* ================= V4.1：AM 界面动效体系 =================
  * 原则：只动 transform/opacity（GPU 合成层，不触发布局）；

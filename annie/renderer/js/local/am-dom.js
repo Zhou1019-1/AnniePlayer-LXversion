@@ -17,7 +17,9 @@
   var ensureMeta = AM.ensureMeta;
   var ensureMetaDeep = AM.ensureMetaDeep;
   var albumCover = AM.albumCover;
-  var folderGroups = AM.folderGroups;
+  var folderRoots = AM.folderRoots;
+  var folderChildren = AM.folderChildren;
+  var normP = AM.normP;
   var currentTracks = AM.currentTracks;
   var playList = AM.playList;
   var togglePlay = AM.togglePlay;
@@ -244,10 +246,10 @@
     sb.innerHTML = '';
 
     function nav(icon, name, view) {
-      var b = el('button', 'am-nav' + (S.view === view && !S.albumKey && !S.folderKey ? ' cur' : ''));
+      var b = el('button', 'am-nav' + (S.view === view && !S.albumKey && !S.folderPath ? ' cur' : ''));
       b.appendChild(el('span', 'am-nav-ico', icon));
       b.appendChild(el('span', 'am-nav-name', name));
-      b.onclick = function () { S.view = view; S.albumKey = null; S.folderKey = null; renderSidebar(); renderView(); };
+      b.onclick = function () { S.view = view; S.albumKey = null; S.folderPath = null; renderSidebar(); renderView(); };
       return b;
     }
 
@@ -377,8 +379,8 @@
       S.search = inp.value.trim();
       if (S.search) {
         // 搜索是全库行为：专辑网格/文件夹列表/在线搜索里输入时切回歌曲列表
-        if (S.view === 'stream' || (S.view === 'albums' && !S.albumKey) || (S.view === 'folders' && !S.folderKey)) {
-          S.view = 'songs'; S.albumKey = null; S.folderKey = null;
+        if (S.view === 'stream' || (S.view === 'albums' && !S.albumKey) || (S.view === 'folders' && !S.folderPath)) {
+          S.view = 'songs'; S.albumKey = null; S.folderPath = null;
           renderSidebar();
         }
         ensureMetaDeep(); // 后台分块补齐全库标签（metaCache 持久化，仅首次有成本）
@@ -400,7 +402,7 @@
     if (oldAz) oldAz.remove();
     S._az = null;
     // V4.1：视图切换动画只在「视图签名变化」时播放——切歌高亮/搜索输入/标签到达的重绘不闪
-    var sig = S.view + '|' + (S.albumKey || '') + '|' + (S.folderKey ? S.folderKey.root + S.folderKey.seg : '');
+    var sig = S.view + '|' + (S.albumKey || '') + '|' + (S.folderPath || '');
     if (sig !== S._vswSig) {
       S._vswSig = sig;
       c.classList.remove('am-vsw'); void c.offsetWidth; c.classList.add('am-vsw');
@@ -415,14 +417,30 @@
     var tracks = currentTracks();
 
     if (S.view === 'albums' && !S.albumKey) { renderAlbumGrid(c); return; }
-    if (S.view === 'folders' && !S.folderKey) { renderFolderList(c); return; }
+    if (S.view === 'folders' && !S.folderPath) { renderFolderRoots(c); return; }
 
-    if (S.view === 'folders' && S.folderKey) {
-      var fback = el('button', 'am-btn', '‹ 文件夹');
-      fback.onclick = function () { S.folderKey = null; renderView(); };
+    var folderKids = null;
+    if (S.view === 'folders' && S.folderPath) {
+      // V4.3.20：逐级浏览——返回上级 + 当前目录名 + 直接子文件夹行
+      var fback = el('button', 'am-btn', '‹ 返回上级');
+      fback.onclick = function () {
+        var p = normP(S.folderPath).replace(/\\+$/, '');
+        var isRoot = (S.libFolders || []).some(function (f) { return normP(f).replace(/\\+$/, '').toLowerCase() === p.toLowerCase(); });
+        var parent = p.replace(/\\[^\\]+$/, '');
+        S.folderPath = (isRoot || parent === p) ? null : parent;
+        renderView();
+      };
       c.appendChild(fback);
-      c.appendChild(el('div', 'am-view-h', S.folderKey.seg ||
-        (S.folderKey.root ? S.folderKey.root.split('\\').pop() + '（根目录）' : '未分类')));
+      c.appendChild(el('div', 'am-view-h', S.folderPath.split('\\').filter(Boolean).pop() || S.folderPath));
+      folderKids = folderChildren(S.folderPath);
+      folderKids.forEach(function (g) {
+        var row = el('div', 'am-folder-row');
+        row.appendChild(el('span', 'am-folder-ico', '📁'));
+        row.appendChild(el('span', 'am-folder-name', g.name));
+        row.appendChild(el('span', 'am-folder-sub', g.count + ' 首'));
+        row.onclick = function () { S.folderPath = g.path; renderView(); };
+        c.appendChild(row);
+      });
     } else if (S.view === 'albums' && S.albumKey) {
       var back = el('button', 'am-btn', '‹ 专辑');
       back.onclick = function () { S.albumKey = null; renderView(); };
@@ -459,9 +477,13 @@
     }
 
     if (!tracks.length) {
-      c.appendChild(el('div', 'am-empty',
-        S.view === 'favorites' ? '还没有喜爱的歌曲' :
-        S.view.indexOf('pl:') === 0 ? '播放列表是空的——在歌曲行上点 ⊕ 添加' : '曲库为空，请先在设置中添加音乐文件夹'));
+      // 文件夹层级页：只有子文件夹没有直属音频时不报「曲库为空」
+      if (!(S.view === 'folders' && folderKids && folderKids.length)) {
+        c.appendChild(el('div', 'am-empty',
+          S.view === 'favorites' ? '还没有喜爱的歌曲' :
+          S.view === 'folders' ? '此文件夹内没有音频文件' :
+          S.view.indexOf('pl:') === 0 ? '播放列表是空的——在歌曲行上点 ⊕ 添加' : '曲库为空，请先在设置中添加音乐文件夹'));
+      }
       return;
     }
     renderTrackTable(c, tracks);
@@ -469,10 +491,10 @@
     ensureMeta(tracks.slice(0, 120));
   }
 
-  /* 文件夹列表：媒体库根目录下的一级子文件夹（根目录本身不外显） */
-  function renderFolderList(c) {
+  /* V4.3.20：文件夹根列表——媒体库根目录（点入逐级深入；根外目录兜底平铺） */
+  function renderFolderRoots(c) {
     c.appendChild(el('div', 'am-view-h', '文件夹'));
-    var groups = folderGroups();
+    var groups = folderRoots();
     if (!groups.length) {
       c.appendChild(el('div', 'am-empty', '曲库为空——点击侧栏"添加歌曲文件夹…"开始'));
       return;
@@ -480,10 +502,9 @@
     groups.forEach(function (g) {
       var row = el('div', 'am-folder-row');
       row.appendChild(el('span', 'am-folder-ico', '📁'));
-      var name = g.seg || (g.root ? g.root.split('\\').pop() + '（根目录文件）' : '未分类');
-      row.appendChild(el('span', 'am-folder-name', name));
+      row.appendChild(el('span', 'am-folder-name', g.name));
       row.appendChild(el('span', 'am-folder-sub', g.count + ' 首'));
-      row.onclick = function () { S.folderKey = { root: g.root, seg: g.seg }; renderView(); };
+      row.onclick = function () { S.folderPath = g.path; renderView(); };
       c.appendChild(row);
     });
   }
@@ -858,7 +879,7 @@
     if (!p) return;
     var inView = currentTracks().some(function (t) { return t.path === p; });
     if (!inView) {
-      S.view = 'songs'; S.albumKey = null; S.folderKey = null; S.search = '';
+      S.view = 'songs'; S.albumKey = null; S.folderPath = null; S.search = '';
       renderSidebar();
     }
     renderView();

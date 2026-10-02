@@ -740,7 +740,7 @@
         // 行已在可视区则不打扰；流媒体与专辑/文件夹网格视图跳过）
         var p2 = state.currentPath;
         if (p2 && !state.currentStream && S.view !== 'stream'
-            && !(S.view === 'albums' && !S.albumKey) && !(S.view === 'folders' && !S.folderKey)
+            && !(S.view === 'albums' && !S.albumKey) && !(S.view === 'folders' && !S.folderPath)
             && currentTracks().some(function (t) { return t.path === p2; })) {
           scrollRowIntoView(p2, { auto: true });
         }

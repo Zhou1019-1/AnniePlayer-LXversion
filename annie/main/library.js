@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const AUDIO_EXTS = new Set([
   '.flac', '.mp3', '.wav', '.ape', '.m4a', '.aac', '.alac',
@@ -132,6 +133,78 @@ function setCachedCover(filePath, mtimeMs, cover) {
   if (coverCache.has(filePath)) coverCache.delete(filePath);
   coverCache.set(filePath, { mtime: mtimeMs, cover });
   while (coverCache.size > COVER_CACHE_MAX) coverCache.delete(coverCache.keys().next().value);
+}
+
+/* V4.3.18：封面磁盘缓存（头脑风暴 2.3）——内存 LRU 之下的持久层，二次启动免 readMeta 整文件解析。
+ * 文件名 <sha1(path)>_<mtimeMs>.<ext>：mtime 变了文件名就变，天然失效；.none = 已知无封面标记。
+ * 目录索引启动时一次建成（Map: sha1 -> 文件名），查找 O(1) 不 readdir。
+ * 返回值语义与 getCachedCover 一致：undefined = 未缓存；null = 已知无封面。 */
+let coverDiskDir = null;
+let coverDiskIndex = null; // sha1 -> filename
+const COVER_DISK_MAX = 3000;
+
+function initCoverDiskCache(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    coverDiskDir = dir;
+    coverDiskIndex = new Map();
+    for (const f of fs.readdirSync(dir)) {
+      const m = /^([0-9a-f]{40})_\d+\..+$/.exec(f);
+      if (m) coverDiskIndex.set(m[1], f);
+    }
+  } catch { coverDiskDir = null; coverDiskIndex = null; }
+}
+const coverSha1 = (p) => crypto.createHash('sha1').update(p).digest('hex');
+
+function getDiskCover(filePath, mtimeMs) {
+  if (!coverDiskIndex || !mtimeMs) return undefined;
+  const h = coverSha1(filePath);
+  const fn = coverDiskIndex.get(h);
+  if (!fn || !fn.startsWith(h + '_' + Math.floor(mtimeMs) + '.')) return undefined; // mtime 漂移 = 失效
+  if (fn.endsWith('.none')) return null;
+  try {
+    const buf = fs.readFileSync(path.join(coverDiskDir, fn));
+    const ext = fn.slice(fn.lastIndexOf('.') + 1);
+    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch { return undefined; }
+}
+
+function setDiskCover(filePath, mtimeMs, coverDataUrl) {
+  if (!coverDiskDir || !coverDiskIndex || !mtimeMs) return;
+  try {
+    const h = coverSha1(filePath);
+    const base = h + '_' + Math.floor(mtimeMs);
+    const old = coverDiskIndex.get(h);
+    if (old) {
+      if (old.startsWith(base + '.')) return; // 同版本已缓存
+      try { fs.unlinkSync(path.join(coverDiskDir, old)); } catch { }
+      coverDiskIndex.delete(h);
+    }
+    let fn;
+    if (!coverDataUrl) {
+      fn = base + '.none';
+      fs.writeFileSync(path.join(coverDiskDir, fn), '');
+    } else {
+      const m = /^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/s.exec(coverDataUrl);
+      if (!m) return;
+      fn = base + '.' + (m[1] === 'jpeg' ? 'jpg' : m[1]);
+      fs.writeFileSync(path.join(coverDiskDir, fn), Buffer.from(m[2], 'base64'));
+    }
+    coverDiskIndex.set(h, fn);
+    // 容量剪枝：超上限按缓存文件的时间戳从旧到新删到 2500
+    if (coverDiskIndex.size > COVER_DISK_MAX) {
+      const entries = [...coverDiskIndex.entries()].sort((a, b) => {
+        const ta = parseInt(a[1].split('_')[1], 10) || 0, tb = parseInt(b[1].split('_')[1], 10) || 0;
+        return ta - tb;
+      });
+      const excess = coverDiskIndex.size - 2500;
+      for (let i = 0; i < excess; i++) {
+        try { fs.unlinkSync(path.join(coverDiskDir, entries[i][1])); } catch { }
+        coverDiskIndex.delete(entries[i][0]);
+      }
+    }
+  } catch { }
 }
 
 /** V4.3.15：WAV LIST/INFO 标签直读。music-metadata 对 GBK 编码的 INAM/IART 解码为乱码
@@ -378,4 +451,4 @@ function readFileBuffer(filePath) {
   return fs.readFileSync(filePath);
 }
 
-module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, readWavInfo, pickWavField, cleanWavTitle };
+module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, getDiskCover, setDiskCover, initCoverDiskCache, readWavInfo, pickWavField, cleanWavTitle };

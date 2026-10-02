@@ -20,7 +20,14 @@ let pairFails = 0;
 let pairLockUntil = 0;
 
 const BASE_PORT = 45823;
-const CMDS = new Set(['playpause', 'next', 'prev', 'seek', 'volume', 'mode']);
+const CMDS = new Set(['playpause', 'next', 'prev', 'seek', 'volume', 'mode', 'playpath']);
+
+/* 遥控二期（V4.3.18）：渲染层推送的曲库快照 [{p,t,ar,al}]，内存驻留，供手机端搜索/翻页/点播 */
+let libSnapshot = [];
+function pushLibrary(list) {
+  if (!Array.isArray(list)) return;
+  libSnapshot = list.filter((r) => r && r.p).slice(0, 50000);
+}
 
 function lanAddrs() {
   const out = [];
@@ -113,6 +120,23 @@ function handle(req, res) {
     return;
   }
 
+  // 遥控二期：曲库搜索 + 分页（q 匹配歌名/歌手/专辑/路径文件名，大小写不敏感）
+  if (path === '/api/library' && req.method === 'GET') {
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+    const off = Math.max(0, parseInt(url.searchParams.get('off'), 10) || 0);
+    const lim = Math.min(200, Math.max(1, parseInt(url.searchParams.get('lim'), 10) || 80));
+    let items = libSnapshot;
+    if (q) {
+      items = items.filter((r) =>
+        (r.t && r.t.toLowerCase().includes(q)) ||
+        (r.ar && r.ar.toLowerCase().includes(q)) ||
+        (r.al && r.al.toLowerCase().includes(q)) ||
+        r.p.toLowerCase().includes(q));
+    }
+    sendJson(res, 200, { total: items.length, items: items.slice(off, off + lim) });
+    return;
+  }
+
   if (path === '/events' && req.method === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -136,6 +160,10 @@ function handle(req, res) {
         value = Number(value);
         if (!Number.isFinite(value)) { sendJson(res, 400, { ok: false, error: 'bad value' }); return; }
         if (body.cmd === 'volume') value = Math.max(0, Math.min(1, value));
+      }
+      if (body.cmd === 'playpath') { // 遥控二期：点歌（本地曲库路径，渲染层校验存在性）
+        value = String(value == null ? '' : value);
+        if (!value || value.length > 2000) { sendJson(res, 400, { ok: false, error: 'bad value' }); return; }
       }
       if (forwardCmd) forwardCmd(body.cmd, value);
       sendJson(res, 200, { ok: true });
@@ -197,7 +225,7 @@ function init(opts) {
   forwardCmd = opts.forwardCmd;
 }
 
-module.exports = { init, start, stop, info, pushState };
+module.exports = { init, start, stop, info, pushState, pushLibrary };
 
 /* ---------------- 手机端页面（内嵌，免打包路径问题） ---------------- */
 const PAGE = `<!DOCTYPE html>
@@ -238,6 +266,19 @@ const PAGE = `<!DOCTYPE html>
   #vol { flex:1; accent-color:#4a6cf7; }
   #conn { position:fixed; top:8px; right:10px; font-size:11px; color:#666; }
   #conn.bad { color:#ff6b6b; }
+  /* 遥控二期：页签 + 曲库点播 */
+  #tabs { display:flex; gap:8px; margin-bottom:12px; }
+  #tabs button { flex:1; padding:8px 0; border-radius:10px; border:1px solid #333; background:#1a1a20; color:#999; font-size:14px; }
+  #tabs button.on { background:#4a6cf7; border-color:#4a6cf7; color:#fff; }
+  #view-play { display:flex; flex-direction:column; flex:1; min-height:0; }
+  #view-lib { display:none; flex-direction:column; flex:1; min-height:0; }
+  #lib-search { width:100%; padding:10px 14px; border-radius:12px; border:1px solid #333; background:#1a1a20; color:#fff; font-size:15px; outline:none; margin-bottom:8px; }
+  #lib-list { flex:1; overflow-y:auto; min-height:200px; max-height:calc(100vh - 190px); }
+  .lib-row { padding:10px 6px; border-bottom:1px solid #222; }
+  .lib-row:active { background:#1c1c26; }
+  .lib-row .t { font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lib-row .a { font-size:12px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #lib-status { text-align:center; color:#666; font-size:12px; padding:10px 0; }
 </style>
 </head>
 <body>
@@ -250,6 +291,8 @@ const PAGE = `<!DOCTYPE html>
 </div>
 <div id="main">
   <div id="conn">已连接</div>
+  <div id="tabs"><button id="tab-play" class="on">正在播放</button><button id="tab-lib">曲库点播</button></div>
+  <div id="view-play">
   <img id="cover" alt="">
   <div id="title">—</div>
   <div id="artist">—</div>
@@ -264,6 +307,12 @@ const PAGE = `<!DOCTYPE html>
   <div id="row2">
     <button id="b-mode">顺序</button>
     <input type="range" id="vol" min="0" max="100" value="100">
+  </div>
+  </div>
+  <div id="view-lib">
+    <input id="lib-search" placeholder="搜索歌名 / 歌手 / 专辑" autocomplete="off">
+    <div id="lib-list"></div>
+    <div id="lib-status"></div>
   </div>
 </div>
 <script>
@@ -316,6 +365,64 @@ const PAGE = `<!DOCTYPE html>
     var ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     cmd('seek', ratio * state.duration);
   });
+
+  /* ---- 遥控二期：页签 + 曲库点播 ---- */
+  var libQ = '', libOff = 0, libTotal = 0, libLoading = false, libLoaded = false, libSearchTimer = null;
+
+  function switchTab(w) {
+    $('tab-play').className = w === 'play' ? 'on' : '';
+    $('tab-lib').className = w === 'lib' ? 'on' : '';
+    $('view-play').style.display = w === 'play' ? 'flex' : 'none';
+    $('view-lib').style.display = w === 'lib' ? 'flex' : 'none';
+    if (w === 'lib' && !libLoaded) libLoad(true);
+  }
+  $('tab-play').onclick = function () { switchTab('play'); };
+  $('tab-lib').onclick = function () { switchTab('lib'); };
+
+  function libLoad(reset) {
+    if (libLoading) return;
+    if (reset) { libOff = 0; $('lib-list').innerHTML = ''; }
+    libLoading = true;
+    $('lib-status').textContent = '加载中…';
+    fetch('/api/library?token=' + encodeURIComponent(token) + '&q=' + encodeURIComponent(libQ) + '&off=' + libOff + '&lim=80')
+      .then(function (r) {
+        if (r.status === 401) { localStorage.removeItem('annie-remote-token'); showPair('配对已失效，请重新配对'); return null; }
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j) return;
+        libLoading = false; libLoaded = true;
+        if (!j.items) { $('lib-status').textContent = '加载失败'; return; }
+        libTotal = j.total;
+        var html = '';
+        for (var i = 0; i < j.items.length; i++) {
+          var it = j.items[i];
+          html += '<div class="lib-row" data-p="' + encodeURIComponent(it.p) + '">' +
+            '<div class="t">' + esc(it.t || it.p.split(/[\\\\/]/).pop()) + '</div>' +
+            '<div class="a">' + esc([it.ar, it.al].filter(Boolean).join(' · ')) + '</div></div>';
+        }
+        $('lib-list').insertAdjacentHTML('beforeend', html);
+        libOff += j.items.length;
+        $('lib-status').textContent = libTotal
+          ? (libOff >= libTotal ? '共 ' + libTotal + ' 首' : '上滑加载更多（' + libOff + '/' + libTotal + '）')
+          : (libQ ? '没有匹配「' + libQ + '」的歌曲' : '曲库为空或尚未同步，稍后再试');
+      })
+      .catch(function () { libLoading = false; $('lib-status').textContent = '加载失败，点搜索框重试'; });
+  }
+  $('lib-search').oninput = function () {
+    clearTimeout(libSearchTimer);
+    libSearchTimer = setTimeout(function () { libQ = $('lib-search').value.trim(); libLoad(true); }, 300);
+  };
+  $('lib-list').onscroll = function () {
+    var el2 = $('lib-list');
+    if (el2.scrollTop + el2.clientHeight >= el2.scrollHeight - 200 && libOff < libTotal) libLoad(false);
+  };
+  $('lib-list').onclick = function (e) {
+    var row = e.target.closest ? e.target.closest('.lib-row') : null;
+    if (!row) return;
+    cmd('playpath', decodeURIComponent(row.getAttribute('data-p')));
+    switchTab('play');
+  };
 
   function render(st) {
     state = st;

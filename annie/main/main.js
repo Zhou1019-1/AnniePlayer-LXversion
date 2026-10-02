@@ -1081,6 +1081,9 @@ function registerIpc() {
     return { ok: true, path: r.filePath };
   });
 
+  // V4.3.18：封面磁盘缓存（头脑风暴 2.3），userData/covercache/，二次启动封面免整文件解析
+  library.initCoverDiskCache(path.join(app.getPath('userData'), 'covercache'));
+
   // Pro：CUE 虚拟分轨（路径含 #cueN）不读文件系统，直接由 metaCache 合成
   // SVLX 1.2.0：SACD ISO 虚拟分轨（路径含 #isoN）同样由 metaCache 合成
   ipcMain.handle('track:meta', async (_e, p) => {
@@ -1096,7 +1099,11 @@ function registerIpc() {
     const c = store.metaCache[p];
     // V4.3.16：.wav 旧缓存可能是乱码——wv 标记 <2 视为未命中，重走 readMeta（含 INFO 直读+仲裁）
     if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 2)) {
-      const cover = library.getCachedCover(p, mtimeMs);
+      let cover = library.getCachedCover(p, mtimeMs);
+      if (cover === undefined) { // V4.3.18：内存 LRU 未命中 → 磁盘缓存，仍免 readMeta
+        cover = library.getDiskCover(p, mtimeMs);
+        if (cover !== undefined) library.setCachedCover(p, mtimeMs, cover);
+      }
       if (cover !== undefined) {
         return {
           ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '',
@@ -1110,7 +1117,8 @@ function registerIpc() {
     const meta = await library.readMeta(p);
     if (meta && meta.ok) {
       const mt = meta.mtimeMs || mtimeMs;
-      library.setCachedCover(p, mt, meta.cover); // 封面 dataURL 体积大，只进内存 LRU，不写持久缓存
+      library.setCachedCover(p, mt, meta.cover); // 封面 dataURL 体积大，只进内存 LRU + 磁盘缓存，不写持久 metaCache
+      library.setDiskCover(p, mt, meta.cover);
       store.metaCache[p] = {
         ...(store.metaCache[p] || {}), // 保留 loudness / fakeScan 等外部写入的字段
         title: meta.title, artist: meta.artist, album: meta.album,
@@ -1143,7 +1151,11 @@ function registerIpc() {
       const c = store.metaCache[p];
       // V4.3.16：.wav 旧缓存可能是乱码——wv 标记 <2 视为未命中
       if (c && mtimeMs && c.mtimeMs === mtimeMs && (!p.toLowerCase().endsWith('.wav') || c.wv === 2)) {
-        const cover = library.getCachedCover(p, mtimeMs);
+        let cover = library.getCachedCover(p, mtimeMs);
+        if (cover === undefined) { // V4.3.18：内存 LRU 未命中 → 磁盘缓存
+          cover = library.getDiskCover(p, mtimeMs);
+          if (cover !== undefined) library.setCachedCover(p, mtimeMs, cover);
+        }
         if (cover !== undefined) {
           out[p] = {
             ok: true, title: c.title || '', artist: c.artist || '', album: c.album || '',
@@ -1163,6 +1175,7 @@ function registerIpc() {
         if (meta && meta.ok) {
           const mt = meta.mtimeMs || 0;
           library.setCachedCover(p, mt, meta.cover);
+          library.setDiskCover(p, mt, meta.cover); // V4.3.18
           store.metaCache[p] = {
             ...(store.metaCache[p] || {}),
             title: meta.title, artist: meta.artist, album: meta.album,
@@ -1325,6 +1338,8 @@ ipcMain.handle('stream:albumSongs', (_e, params) => streaming.albumSongs(params)
     return { code: st.remote.code };
   });
   ipcMain.on('remote:push', (_e, state) => { remote.pushState(state); });
+  // 遥控二期（V4.3.18）：渲染层曲库快照 → 主进程内存，供手机端浏览点播
+  ipcMain.on('remote:pushLib', (_e, list) => { remote.pushLibrary(list); });
   ipcMain.handle('stream:sources:importUrl', async (_e, { url }) => {
     try {
       return { canceled: false, source: await streaming.sources.importFromUrl(url) };

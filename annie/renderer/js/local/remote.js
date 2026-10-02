@@ -106,6 +106,40 @@
     try { window.mine.remotePushState(snapshot()); } catch (e) { }
   }, 700);
 
+  /* 遥控二期（V4.3.18）：曲库快照推送——lib/meta 变化时推给主进程（5s 轮询签名，8s 节流）。
+   * 行格式 {p,t,ar,al}，meta 未加载的行退化为文件名，随后 meta 到位自动补推。 */
+  var lastLibSig = '';
+  var lastLibPush = 0;
+  function pushLibSnapshot() {
+    try {
+      if (!window.mine.remotePushLib) return;
+      var AM = window.__annieAMInternal || {};
+      var S = AM.S || {};
+      if (!AM.allTracks) return;
+      var lib = AM.allTracks() || [];
+      var mcount = 0;
+      if (S.meta) { for (var k in S.meta) mcount++; }
+      var sig = lib.length + ':' + mcount;
+      var now = Date.now();
+      if (sig === lastLibSig || (lastLibSig && now - lastLibPush < 8000)) return;
+      lastLibSig = sig; lastLibPush = now;
+      var rows = [];
+      for (var i = 0; i < lib.length; i++) {
+        var t = lib[i] || {};
+        var m = t.path && S.meta ? S.meta[t.path] : null;
+        var ok = m && !m.fail;
+        rows.push({
+          p: t.path || '',
+          t: (ok && m.title) || t.title || nameFromPath(t.path),
+          ar: (ok && m.artist) || t.artist || '',
+          al: (ok && m.album) || t.album || '',
+        });
+      }
+      window.mine.remotePushLib(rows);
+    } catch (e) { }
+  }
+  setInterval(pushLibSnapshot, 5000);
+
   window.mine.onRemoteCmd(function (p) {
     if (!p || !p.cmd) return;
     var AM = window.__annieAMInternal || {};
@@ -130,6 +164,14 @@
           break;
         }
         case 'mode': if (window.anniePlayMode) window.anniePlayMode.cycle(); break;
+        case 'playpath': { // 遥控二期：手机点歌——全库上下文播放（与界面点行同语义）
+          var all2 = AM.allTracks ? AM.allTracks() : [];
+          var want = String(p.value || '');
+          for (var pi = 0; pi < all2.length; pi++) {
+            if (all2[pi] && all2[pi].path === want) { if (AM.playList) AM.playList(all2, pi); break; }
+          }
+          break;
+        }
       }
     } catch (e) { }
   });

@@ -224,6 +224,7 @@ contextBridge.exposeInMainWorld('mine', {
   remoteSetEnabled: (enabled) => ipcRenderer.invoke('remote:setEnabled', { enabled: !!enabled }),
   remoteRegenCode: () => ipcRenderer.invoke('remote:regenCode'),
   remotePushState: (state) => ipcRenderer.send('remote:push', state),
+  remotePushLib: (list) => ipcRenderer.send('remote:pushLib', list), // 遥控二期：曲库快照
   onRemoteCmd: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('remote:cmd', listener);

@@ -197,6 +197,48 @@ html[data-theme="am"] #titlebar { display: none !important; }
   border-radius: 8px; padding: 5px 8px; font: 12px var(--am-font); outline: none; cursor: pointer;
   margin-bottom: 16px;
 }
+/* V4.3.22：视图内搜索框（歌曲/专辑/喜爱歌曲头部，样式对齐 .am-sort-sel） */
+.am-view-search {
+  flex: none; width: 200px; border: 1px solid var(--am-sep); outline: none;
+  background: var(--am-glass-2); color: var(--am-text);
+  border-radius: 8px; padding: 5px 10px; font: 12px var(--am-font);
+  margin-bottom: 16px; transition: border-color .15s;
+}
+.am-view-search:focus { border-color: var(--am-accent); }
+.am-view-search::placeholder { color: var(--am-text-3); }
+
+/* V4.3.22：下载情况视图（五标签 + 任务表格，洛雪式） */
+.am-dlt-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.am-dlt-tabs { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+.am-dlt-bar .am-btn { margin-left: auto; }
+.am-dlt-empty { padding: 90px 0; text-align: center; color: var(--am-text-3); font-size: 15px; }
+.am-dlt-table td { vertical-align: middle; }
+.am-dlt-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.am-dlt-sub { font-size: 11px; color: var(--am-text-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.am-dlt-prog { display: flex; align-items: center; gap: 8px; }
+.am-dlt-prog-track { flex: 1; height: 6px; border-radius: 3px; background: var(--am-sep); overflow: hidden; }
+.am-dlt-prog-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--am-accent), color-mix(in srgb, var(--am-accent) 60%, #fff)); transition: width .3s ease; }
+.am-dlt-pct { font-size: 11px; color: var(--am-text-2); width: 38px; text-align: right; flex: none; }
+.am-dlt-err { color: #e5534b; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; display: inline-block; vertical-align: middle; }
+.am-dlt-ops { display: flex; gap: 2px; }
+
+/* V4.3.22：在线音乐多选模式 */
+.am-ms-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.am-ms-count { margin-left: auto; font-size: 12px; color: var(--am-text-2); }
+.am-ms-ck { accent-color: var(--am-accent); width: 15px; height: 15px; cursor: pointer; vertical-align: middle; }
+.am-tr.sel { background: color-mix(in srgb, var(--am-accent) 14%, transparent); }
+.am-tr.sel:hover { background: color-mix(in srgb, var(--am-accent) 20%, transparent); }
+
+/* V4.3.22：删除确认弹窗 + 危险按钮 */
+.am-btn-danger { color: #e5534b !important; border-color: color-mix(in srgb, #e5534b 45%, transparent) !important; }
+.am-btn-danger:hover { background: color-mix(in srgb, #e5534b 14%, transparent) !important; }
+.am-del-opt { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 13px; color: var(--am-text); cursor: pointer; }
+.am-del-opt input { accent-color: #e5534b; width: 15px; height: 15px; }
+
+/* V4.3.22：播放列表行拖拽排序的落点高亮 */
+.am-tr.drag-over { outline: 2px solid var(--am-accent); outline-offset: -2px; border-radius: 6px; }
+.am-tr[draggable="true"] { cursor: grab; }
+.am-tr[draggable="true"]:active { cursor: grabbing; }
 
 /* 专辑网格 */
 .am-album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 22px 18px; }
@@ -276,7 +318,16 @@ html[data-theme="am"] #titlebar { display: none !important; }
   background: var(--am-glass-2);
   backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
 }
-.am-lyr-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 40vh 26px; scroll-behavior: smooth; }
+.am-lyr-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 40vh 26px; scroll-behavior: smooth; transition: top .25s ease; }
+/* V4.3.22：面板顶部封面——绝对定位叠加在歌词区上方；有封面且开关打开时歌词滚动区顶部让位 */
+.am-lyr-cover {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 4;
+  width: 200px; aspect-ratio: 1; object-fit: cover; border-radius: 12px;
+  background: var(--am-glass-2); box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+}
+.am-lyr-cover:not([src]) { display: none; }
+#am-root.am-lyrcover-off .am-lyr-cover { display: none; }
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyr-scroll { top: 228px; padding-top: 20px; }
 .am-lyr-line {
   font-size: calc(22px * var(--am-lyr-scale, 1)); font-weight: 700; line-height: var(--am-lyr-lh, 1.45); letter-spacing: -.01em;
   padding: 7px 0; cursor: pointer;
@@ -532,6 +583,21 @@ html[data-theme="am"] #titlebar { display: none !important; }
 }
 .am-imm-q-fold:hover { color: #fff; background: rgba(40,40,48,.8); }
 
+/* V4.3.22：歌词面板折叠/展开小标签（与沉浸队列抽屉同一交互）
+ * 挂 .am-body（面板 overflow:hidden 会裁负 left 子元素）。
+ * 面板开：贴面板左缘（right:360px，❯收回）；面板关：贴窗口右缘（right:0，❮展开） */
+.am-lyr-fold {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 68px; padding: 0;
+  border: 1px solid var(--am-sep); border-right: none; border-radius: 10px 0 0 10px;
+  background: var(--am-glass); backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  color: var(--am-text-2); font-size: 14px; line-height: 1; cursor: pointer; z-index: 6;
+  transition: right .25s ease;
+}
+#am-root.am-lyr-on .am-lyr-fold { right: 360px; }
+.am-lyr-fold:hover { color: var(--am-text); background: var(--am-bg-2); }
+#am-root.am-mini-on .am-lyr-fold { display: none; }
+
 /* ================= V3.2：AM 迷你模式 ================= */
 .am-mini { position: absolute; inset: 0; z-index: 70; display: none; flex-direction: column; background: #1b1b1f; }
 #am-root.am-mini-on .am-mini { display: flex; }
@@ -640,7 +706,7 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-bgout::before { opacity: 0; }
 /* 封面卡片弹入 */
 @keyframes amCoverIn { from { opacity: 0; transform: scale(.85); } }
-.am-np-cover.am-swap, .am-imm-cover.am-swap, .am-mini-cover.am-swap {
+.am-np-cover.am-swap, .am-imm-cover.am-swap, .am-mini-cover.am-swap, .am-lyr-cover.am-swap {
   animation: amCoverIn var(--dur-micro) var(--ease-out);
 }
 /* 标题/艺人文本：上浮淡出 → 新文本下移淡入（am-render 两阶段 class） */

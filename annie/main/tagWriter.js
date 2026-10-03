@@ -16,7 +16,10 @@ const path = require('path');
 function resolveTool(name) {
   const prod = path.join(process.resourcesPath || '', 'engine', 'tools', name);
   const dev = path.join(__dirname, '..', 'engine', 'tools', name);
-  for (const p of [prod, dev]) { try { if (fs.existsSync(p)) return p; } catch { } }
+  // SVLX 仓库布局：annie/main → 仓库根 engine/tools（V4.3.22 前缺这条，
+  // dev 下落回 PATH 找不到 ffmpeg → 下载的歌静默无标签无封面，与分析器当年同款坑）
+  const devRoot = path.join(__dirname, '..', '..', 'engine', 'tools', name);
+  for (const p of [prod, dev, devRoot]) { try { if (fs.existsSync(p)) return p; } catch { } }
   return name; // 回退 PATH
 }
 
@@ -64,9 +67,10 @@ async function writeTags(opts) {
   const supported = ['mp3', 'flac', 'm4a', 'mp4', 'ogg', 'wav', 'aiff', 'aac'];
   if (!supported.includes(ext)) return { ok: false, reason: 'unsupported-ext:' + ext };
 
-  // 封面：优先传入字节，否则按 URL 抓取
-  let coverBuf = opts.coverBytes || null;
-  if (!coverBuf && opts.coverUrl) coverBuf = await fetchCoverBytes(opts.coverUrl).catch(() => null);
+  // 封面：优先传入字节，否则按 URL 抓取；embedCover=false 时不嵌入（洛雪「嵌入封面」开关）
+  const wantEmbedCover = opts.embedCover !== false;
+  let coverBuf = wantEmbedCover ? (opts.coverBytes || null) : null;
+  if (wantEmbedCover && !coverBuf && opts.coverUrl) coverBuf = await fetchCoverBytes(opts.coverUrl).catch(() => null);
 
   // 临时输出路径（同目录保证跨设备 rename 原子性）
   const tmpOut = dest.replace(/\.[^.]+$/, '') + '.tagtmp.' + ext;
@@ -104,10 +108,14 @@ async function writeTags(opts) {
   }
   // V1.1.10：嵌入歌词——FLAC 用大写 LYRICS（Vorbis comment），MP3 用小写 lyrics（ID3 USLT）。
   // 实测：flac + LYRICS 有效；mp3 + lyrics 有效（写成 ID3 标签，播放器/ffprobe 可读）。
-  const lrc = metaValue(opts.lyrics);
-  if (lrc) {
-    const lyricKey = ext === 'flac' ? 'LYRICS' : 'lyrics';
-    args.push('-metadata', `${lyricKey}=${lrc}`);
+  // V4.3.22：embedLrc/embedTLrc 开关（洛雪「嵌入歌词 / 同时嵌入翻译歌词」）
+  if (opts.embedLrc !== false) {
+    let lrc = metaValue(opts.lyrics);
+    if (lrc && opts.embedTLrc !== false && opts.tlyric) lrc += '\n' + metaValue(opts.tlyric);
+    if (lrc) {
+      const lyricKey = ext === 'flac' ? 'LYRICS' : 'lyrics';
+      args.push('-metadata', `${lyricKey}=${lrc}`);
+    }
   }
   if (coverFile) {
     args.push('-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)');
@@ -142,7 +150,9 @@ function cleanup(p) { if (p) { try { fs.unlinkSync(p); } catch { } } }
 
 /**
  * 写 .lrc 歌词文件（与音频同目录同名）。
- * @param {object} opts { dest, lrc, tlyric }
+ * @param {object} opts { dest, lrc, tlyric, includeTlyric?, encoding? }
+ *   includeTlyric: 是否把翻译歌词并入文件（默认 true，洛雪「同时将翻译歌词写入歌词文件」）
+ *   encoding: 'utf8'（默认）| 'gbk'（洛雪同款编码选项，GBK 经 iconv-lite 编码）
  */
 function writeLyric(opts) {
   const dest = opts && opts.dest;
@@ -151,8 +161,14 @@ function writeLyric(opts) {
   if (!lrc.trim()) return { ok: false, reason: 'no-lrc' };
   const lrcPath = dest.replace(/\.[^.]+$/, '') + '.lrc';
   try {
-    // 有翻译歌词且原歌词无翻译时合并（洛雪惯例：翻译追加为 [offset] 换行不合并，直接单文件主歌词）
-    fs.writeFileSync(lrcPath, lrc + (opts.tlyric ? '\n' + opts.tlyric : ''), 'utf8');
+    const includeT = opts.includeTlyric !== false;
+    const text = lrc + (includeT && opts.tlyric ? '\n' + opts.tlyric : '');
+    if (opts.encoding === 'gbk') {
+      const iconv = require('iconv-lite');
+      fs.writeFileSync(lrcPath, iconv.encode(text, 'gbk'));
+    } else {
+      fs.writeFileSync(lrcPath, text, 'utf8');
+    }
     return { ok: true, path: lrcPath };
   } catch (e) { return { ok: false, reason: e.message }; }
 }

@@ -20,6 +20,8 @@
     particlesEnabled: true, albumBg: true, albumBgBlur: 120,
     sortMode: 'name', sidebarCollapsed: false, viewMode: 'tree',
     amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
+    amFavSort: 'az',        // V4.3.22：AM 喜爱歌曲视图排序（选项同歌曲视图）
+    amAlbumSort: 'az',      // V4.3.22：AM 专辑视图排序 az|azArtist|countDesc|countAsc
     // 侧栏宽度（px）与可视化面板整体关闭状态（持久化，重启后恢复）
     sidebarWidth: 320, vizBarHidden: false,
     // Plus：配色方案（gold 暗夜金 / aurora 靛蓝极光 / jade 翡翠深空 / day 白昼）
@@ -2372,6 +2374,85 @@
           dirVal.textContent = dir; dirVal.title = dir;
         } catch { }
       };
+    })();
+
+    // V4.3.22：下载任务管理选项（主进程 dlManager 持久化，改并发即时生效）
+    (function () {
+      if (!window.mine || !window.mine.dlGetSettings) return;
+      var dlSet = { concurrency: 3, skipExisting: true, fileNameFmt: 'artist-name', embedCover: true, embedLrc: true, embedTLrc: true, lrcTLrc: true, lrcEncoding: 'utf8' };
+      window.mine.dlGetSettings().then(function (s) { if (s) { dlSet = s; applyToUI(); } }).catch(function () { });
+      var uiRefs = {};
+      function applyToUI() {
+        if (uiRefs.conc) uiRefs.conc.value = String(dlSet.concurrency || 3);
+        if (uiRefs.skip) uiRefs.skip.checked = !!dlSet.skipExisting;
+        if (uiRefs.fmt) uiRefs.fmt.value = dlSet.fileNameFmt || 'artist-name';
+        ['embedCover', 'embedLrc', 'embedTLrc', 'lrcTLrc'].forEach(function (k) { if (uiRefs[k]) uiRefs[k].checked = dlSet[k] !== false; });
+        if (uiRefs.lrcEncoding) uiRefs.lrcEncoding.value = dlSet.lrcEncoding || 'utf8';
+      }
+      function push(patch) { window.mine.dlSetSettings(patch).then(function (s) { if (s) dlSet = s; }).catch(function () { }); }
+      function mkSel(opts, val, onch) {
+        var s = el('select', 'am-sort-sel');
+        opts.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; s.appendChild(op); });
+        s.value = val; s.onchange = function () { onch(s.value); };
+        return s;
+      }
+      // 同时下载任务数
+      var r1 = markItem(el('div', 'set-row'), '同时下载任务数 并发 download concurrency 批量下载');
+      var l1 = el('div');
+      l1.appendChild(el('div', '', '同时下载任务数'));
+      l1.appendChild(el('div', 'set-hint', '批量下载时的并行任务数，其余任务排队等待（下载情况页可管理）'));
+      r1.appendChild(l1);
+      uiRefs.conc = mkSel([['1', '1'], ['2', '2'], ['3', '3'], ['4', '4'], ['5', '5'], ['6', '6'], ['8', '8'], ['10', '10']],
+        String(dlSet.concurrency), function (v) { push({ concurrency: parseInt(v, 10) }); });
+      r1.appendChild(uiRefs.conc);
+      s0.appendChild(r1);
+      // 同名文件跳过
+      var r2 = markItem(el('div', 'set-row'), '同名文件 跳过 重复下载 download skip existing');
+      var l2 = el('div');
+      l2.appendChild(el('div', '', '下载目录存在同名文件时跳过'));
+      l2.appendChild(el('div', 'set-hint', '开启后同名文件不重复下载；关闭则自动加序号另存'));
+      r2.appendChild(l2);
+      uiRefs.skip = document.createElement('input');
+      uiRefs.skip.type = 'checkbox'; uiRefs.skip.checked = !!dlSet.skipExisting;
+      uiRefs.skip.onchange = function () { push({ skipExisting: uiRefs.skip.checked }); };
+      r2.appendChild(uiRefs.skip);
+      s0.appendChild(r2);
+      // 文件命名方式
+      var r3 = markItem(el('div', 'set-row'), '文件命名方式 下载文件名 download filename 命名');
+      var l3 = el('div');
+      l3.appendChild(el('div', '', '文件命名方式'));
+      l3.appendChild(el('div', 'set-hint', '下载文件的命名规则，对之后的下载任务生效'));
+      r3.appendChild(l3);
+      uiRefs.fmt = mkSel([['artist-name', '艺术家 - 歌曲名'], ['name-artist', '歌曲名 - 艺术家'], ['name', '歌曲名']],
+        dlSet.fileNameFmt, function (v) { push({ fileNameFmt: v }); });
+      r3.appendChild(uiRefs.fmt);
+      s0.appendChild(r3);
+      // 嵌入到音频文件中的内容（洛雪同款）：嵌入封面 / 嵌入歌词 / 同时嵌入翻译歌词
+      function mkCkRow(key, title, hint, terms) {
+        var r = markItem(el('div', 'set-row'), terms);
+        var l = el('div');
+        l.appendChild(el('div', '', title));
+        l.appendChild(el('div', 'set-hint', hint));
+        r.appendChild(l);
+        uiRefs[key] = document.createElement('input');
+        uiRefs[key].type = 'checkbox'; uiRefs[key].checked = dlSet[key] !== false;
+        uiRefs[key].onchange = function () { var p = {}; p[key] = uiRefs[key].checked; push(p); };
+        r.appendChild(uiRefs[key]);
+        s0.appendChild(r);
+      }
+      mkCkRow('embedCover', '嵌入封面', '把专辑封面嵌入下载的音频文件标签中', '嵌入封面 下载 embed cover');
+      mkCkRow('embedLrc', '嵌入歌词', '把歌词嵌入下载的音频文件标签中', '嵌入歌词 下载 embed lyrics');
+      mkCkRow('embedTLrc', '同时嵌入翻译歌词（如果有）', '嵌入歌词时一并将翻译歌词并入', '嵌入翻译歌词 tlyric');
+      mkCkRow('lrcTLrc', '旁挂歌词文件含翻译（如果有）', '生成旁挂 .lrc 时把翻译歌词写入同一文件', '歌词文件 翻译 lrc tlyric');
+      // 歌词文件编码
+      var r4 = markItem(el('div', 'set-row'), '歌词编码 UTF-8 GBK lrc encoding');
+      var l4 = el('div');
+      l4.appendChild(el('div', '', '下载的歌词文件编码格式'));
+      l4.appendChild(el('div', 'set-hint', '旁挂 .lrc 的编码；老播放器/车机不认 UTF-8 时选 GBK'));
+      r4.appendChild(l4);
+      uiRefs.lrcEncoding = mkSel([['utf8', 'UTF-8'], ['gbk', 'GBK']], dlSet.lrcEncoding, function (v) { push({ lrcEncoding: v }); });
+      r4.appendChild(uiRefs.lrcEncoding);
+      s0.appendChild(r4);
     })();
 
     /* ================= 更新与关于 ================= */

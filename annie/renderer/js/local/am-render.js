@@ -573,6 +573,12 @@
     if ((img.getAttribute('src') || '') === (url || '')) return;
     if (url) img.src = url; else img.removeAttribute('src');
     img.classList.remove('am-swap'); void img.offsetWidth; img.classList.add('am-swap');
+    // V4.3.22：顶栏封面变化时镜像到歌词面板封面，并标记有无封面（CSS 据此给歌词区顶部让位）
+    if (img === R.npCover && R.lyrCover) {
+      swapCover(R.lyrCover, url);
+      var root = document.getElementById('am-root');
+      if (root) root.classList.toggle('am-lyrcover-has', !!url);
+    }
   }
   var _txT = 0;
   /* V4.3.13：迷你模式 ♥/⬇ 只在播在线曲目时露面；切歌时重置下载按钮状态 */

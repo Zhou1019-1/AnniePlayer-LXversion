@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('mine', {
   getLibrary: () => ipcRenderer.invoke('lib:get'),
   libDuplicates: () => ipcRenderer.invoke('lib:duplicates'),       // V3.5.8：重复歌曲检测
   libDeleteFiles: (paths) => ipcRenderer.invoke('lib:deleteFiles', paths), // V3.5.8：移入回收站
+  tracksHide: (paths) => ipcRenderer.invoke('lib:tracksHide', paths), // V4.3.22：仅移出曲库显示
   toggleFavorite: (p) => ipcRenderer.invoke('lib:toggleFavorite', p),
   metaBatch: (paths) => ipcRenderer.invoke('lib:metaBatch', paths),
   metaFullBatch: (paths) => ipcRenderer.invoke('lib:metaFullBatch', paths), // V3.1：批量完整 meta（含封面）
@@ -40,6 +41,9 @@ contextBridge.exposeInMainWorld('mine', {
   playlistRename: (id, name) => ipcRenderer.invoke('lib:playlist:rename', id, name),
   playlistDelete: (id) => ipcRenderer.invoke('lib:playlist:delete', id),
   playlistAdd: (id, paths) => ipcRenderer.invoke('lib:playlist:add', id, paths),
+  playlistReorder: (id, paths) => ipcRenderer.invoke('lib:playlist:reorder', id, paths), // V4.3.22：拖拽排序
+  // V4.3.22：导入 foobar2000 .fpl 播放列表
+  fplImport: () => ipcRenderer.invoke('lib:playlist:importFpl'),
   // V4.3.5：在线歌单（流媒体收藏）
   splList: () => ipcRenderer.invoke('spl:list'),
   splCreate: (name) => ipcRenderer.invoke('spl:create', name),
@@ -142,6 +146,18 @@ contextBridge.exposeInMainWorld('mine', {
   streamDownloadDir: () => ipcRenderer.invoke('stream:downloadDir'),
   streamSetDownloadDir: () => ipcRenderer.invoke('stream:downloadDir:set'),
   streamResetDownloadDir: () => ipcRenderer.invoke('stream:downloadDir:reset'),
+  // V4.3.22：下载任务管理器（下载情况视图）
+  dlList: () => ipcRenderer.invoke('dl:list'),
+  dlAdd: (items) => ipcRenderer.invoke('dl:add', items),
+  dlPause: (id) => ipcRenderer.invoke('dl:pause', id),
+  dlResume: (id) => ipcRenderer.invoke('dl:resume', id),
+  dlRemove: (id) => ipcRenderer.invoke('dl:remove', id),
+  dlClear: (statuses) => ipcRenderer.invoke('dl:clear', statuses),
+  dlRetryAll: () => ipcRenderer.invoke('dl:retryAll'),
+  dlOpenFolder: (id) => ipcRenderer.invoke('dl:openFolder', id),
+  dlGetSettings: () => ipcRenderer.invoke('dl:settings:get'),
+  dlSetSettings: (patch) => ipcRenderer.invoke('dl:settings:set', patch),
+  onDlEvent: (cb) => { const h = (_e, ev) => cb(ev); ipcRenderer.on('dl:event', h); return () => ipcRenderer.removeListener('dl:event', h); },
   onStreamDownloadProgress: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('stream:downloadProgress', listener);

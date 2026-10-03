@@ -38,6 +38,7 @@ async function scan(jobId, folders) {
 
   const cueFiles = []; // Pro beat0.0.1：扫描中收集 .cue
   const isoFiles = []; // SVLX 1.2.0：扫描中收集 SACD .iso
+  const fplFiles = []; // V4.3.22：扫描中收集 foobar2000 .fpl（主线程解析建/更新播放列表）
 
   async function walk(dir, depth) {
     if (cancelled || depth > 12) return;
@@ -52,6 +53,10 @@ async function scan(jobId, folders) {
         if (!e.isFile()) continue;
         const ext = path.extname(e.name).toLowerCase();
         if (ext === '.cue') { cueFiles.push(full); continue; } // Pro：CUE 分轨
+        if (ext === '.fpl') { // V4.3.22：foobar2000 播放列表（附带 mtime 供增量同步）
+          let fm = 0; try { fm = fs.statSync(full).mtimeMs; } catch { }
+          fplFiles.push({ path: full, mtime: fm }); continue;
+        }
         if (ext === '.iso') { // SVLX 1.2.0：SACD ISO 分轨（主线程探测后生成虚拟分轨）
           let size = 0, mtime = 0;
           try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; } catch { }
@@ -107,7 +112,7 @@ async function scan(jobId, folders) {
   if (!cancelled && isoFiles.length) post({ type: 'isoFound', isos: isoFiles });
 
   flush();
-  post({ type: cancelled ? 'cancelled' : 'done', found });
+  post({ type: cancelled ? 'cancelled' : 'done', found, fpls: fplFiles });
 }
 
 /* ---------------- 元数据批量解析（并发 4，50 条一批回传） ---------------- */

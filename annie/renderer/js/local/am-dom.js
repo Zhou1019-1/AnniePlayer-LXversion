@@ -166,6 +166,7 @@
       S.lyricsOn = !S.lyricsOn;
       root.classList.toggle('am-lyr-on', S.lyricsOn);
       R.btnLyr.classList.toggle('on', S.lyricsOn);
+      syncLyrFold(); // 与面板左缘折叠小标签同步图标/方向
     };
     R.btnLight = el('button', 'am-tbtn', isLight() ? '🌙' : '☀'); R.btnLight.title = '亮色/暗色';
     R.btnLight.onclick = function () {
@@ -197,6 +198,9 @@
       S._tblRAF = requestAnimationFrame(function () { S._tblRAF = 0; renderAmWindow(); });
     });
     var lyr = el('aside', 'am-lyrics');
+    // V4.3.22：面板顶部封面（绝对定位叠加在歌词滚动区上方；无封面/开关关闭时隐藏）
+    R.lyrCover = el('img', 'am-lyr-cover'); R.lyrCover.alt = '';
+    lyr.appendChild(R.lyrCover);
     R.lyrScroll = el('div', 'am-lyr-scroll');
     lyr.appendChild(R.lyrScroll);
     // 歌词外观设置入口（悬浮 ⚙，hover 面板显现）
@@ -204,7 +208,24 @@
     R.btnLyrSet.title = '歌词外观（字号 / 行距）';
     R.btnLyrSet.onclick = function (e) { e.stopPropagation(); toggleLyrSetPop(); };
     lyr.appendChild(R.btnLyrSet);
+    // V4.3.22：歌词面板折叠小标签（贴面板左缘外侧，与沉浸队列抽屉同一交互）
+    // 挂 .am-body 而非 .am-lyrics——面板 overflow:hidden 会把负 left 的子元素裁掉。
+    // 双态：面板开=❯收回（贴面板左缘）；面板关=❮展开（贴窗口右缘），与顶栏 💬 互相同步
+    var btnLyrFold = el('button', 'am-lyr-fold', S.lyricsOn ? '❯' : '❮');
+    function syncLyrFold() {
+      btnLyrFold.textContent = S.lyricsOn ? '❯' : '❮';
+      btnLyrFold.title = S.lyricsOn ? '收回歌词面板' : '展开歌词面板';
+    }
+    syncLyrFold();
+    btnLyrFold.onclick = function (e) {
+      e.stopPropagation();
+      S.lyricsOn = !S.lyricsOn;
+      root.classList.toggle('am-lyr-on', S.lyricsOn);
+      if (R.btnLyr) R.btnLyr.classList.toggle('on', S.lyricsOn);
+      syncLyrFold();
+    };
     body.appendChild(R.sidebar); body.appendChild(R.content); body.appendChild(lyr);
+    body.appendChild(btnLyrFold);
 
     // V4.3.16：悬浮回顶部——滚过约 1.5 屏才浮出，点击平滑回顶（挂 .am-body 不随 content 清空，全视图通用）
     var backTop = el('button', 'am-backtop', '⤒');
@@ -255,6 +276,7 @@
 
     sb.appendChild(el('div', 'am-side-h', '媒体库'));
     sb.appendChild(nav('🔍', '在线音乐', 'stream'));
+    sb.appendChild(nav('⬇', '下载情况', 'downloads')); // V4.3.22：下载任务管理（洛雪式五标签）
     sb.appendChild(nav('🔷', 'Qobuz', 'qobuz')); // V4.3.6：Qobuz 在线播放/下载（登录自己的付费账号）
     // 添加文件夹：只作入口，文件夹列表不外显在 AM 界面（与粒子舞台/FB2K 不同）
     var addFolder = el('button', 'am-nav am-new');
@@ -305,6 +327,43 @@
       });
     };
     sb.appendChild(add);
+
+    // V4.3.22：导入 foobar2000 .fpl 播放列表（扫描曲库时也会自动识别媒体库内的 .fpl）
+    var impFpl = el('button', 'am-nav am-new');
+    impFpl.appendChild(el('span', 'am-nav-ico', '📥'));
+    impFpl.appendChild(el('span', 'am-nav-name', '导入 FPL 播放列表…'));
+    impFpl.title = '导入 foobar2000 播放列表（.fpl）；媒体库文件夹内的 .fpl 会在扫描曲库时自动导入';
+    impFpl.onclick = function () {
+      // 首次使用给引导：fpl 默认在 fb2k 配置目录，不在歌曲文件夹里
+      try {
+        if (localStorage.getItem('annieplayer.fplGuide') !== '1') {
+          var go = confirm(
+            '安妮播放器会在每次扫描曲库时，自动导入媒体库文件夹内的 foobar2000 播放列表（.fpl）。\n\n' +
+            '但 foobar2000 默认把播放列表保存在自己的配置目录：\n%AppData%\\foobar2000\\playlists-v2.0\\（老版本为 playlists-v1.4）\n通常和你的歌曲文件夹不在一起，所以自动识别可能找不到。\n\n' +
+            '想自动同步的话：在 foobar2000 里右键播放列表页签 → 另存为，把 .fpl 存到任一媒体库文件夹内，' +
+            '下次扫描即自动导入；之后在 fb2k 里改了歌单重新另存一次，安妮会跟随更新。\n\n' +
+            '点「确定」立即手动选择 .fpl 文件导入（可一次多选）。');
+          localStorage.setItem('annieplayer.fplGuide', '1');
+          if (!go) return;
+        }
+      } catch (e) { }
+      window.mine.fplImport().then(function (r) {
+        if (!r || r.canceled) return;
+        if (r.playlists) S.playlists = r.playlists;
+        var oks = (r.results || []).filter(function (x) { return x.ok; });
+        var fails = (r.results || []).length - oks.length;
+        var total = oks.reduce(function (s, x) { return s + x.count; }, 0);
+        var msg = oks.length ? ('已导入 ' + oks.length + ' 个播放列表（共 ' + total + ' 首）') : '';
+        if (fails) msg += (msg ? '，' : '') + fails + ' 个解析失败';
+        try { if (msg && typeof proToast === 'function') proToast(msg); } catch (e) { }
+        if (oks.length === 1) { // 只导入一个时直接跳过去
+          var last = S.playlists[S.playlists.length - 1];
+          if (last) { S.view = 'pl:' + last.id; renderSidebar(); renderView(); return; }
+        }
+        renderSidebar();
+      }).catch(function () { });
+    };
+    sb.appendChild(impFpl);
 
     // V4.3.5：在线歌单（流媒体收藏；与本地播放列表并列但互不相混）
     sb.appendChild(el('div', 'am-side-h', '在线歌单'));
@@ -393,6 +452,57 @@
   }
 
   /* ---------------- 内容区 ---------------- */
+  /* V4.3.22：视图头部共享构建器——标题 + 视图内搜索框 + 排序下拉（歌曲/专辑/喜爱歌曲共用）。
+   * 搜索框匹配字段跟随当前排序方式（标题排序搜标题、演唱者排序搜演唱者……），
+   * 查询串存 S.viewQuery[view]（会话级），输入 150ms 防抖重绘。 */
+  var SONG_SORT_OPTS = [['az', '首字母 A–Z（标题）'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'],
+    ['mtimeDesc', '修改时间 · 新→旧'], ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']];
+  var ALBUM_SORT_OPTS = [['az', '名称 A–Z'], ['azArtist', '艺人 A–Z'], ['countDesc', '曲目数 · 多→少'], ['countAsc', '曲目数 · 少→多']];
+  function viewQuery(view) { return (S.viewQuery && S.viewQuery[view]) || ''; }
+  function buildViewHead(title, cfg) {
+    var head = el('div', 'am-view-head');
+    head.appendChild(el('div', 'am-view-h', title));
+    if (cfg.search) {
+      var inp = document.createElement('input');
+      inp.className = 'am-view-search';
+      inp.placeholder = cfg.search.placeholder;
+      inp.value = viewQuery(cfg.view);
+      inp.oninput = function () {
+        S.viewQuery = S.viewQuery || {};
+        S.viewQuery[cfg.view] = inp.value.trim();
+        clearTimeout(S._vqT);
+        S._vqT = setTimeout(function () {
+          renderView();
+          // 重绘会重建输入框——恢复焦点并把光标移到末尾，保证连续输入不中断
+          var el2 = R.content && R.content.querySelector('.am-view-search');
+          if (el2) { el2.focus(); try { el2.setSelectionRange(el2.value.length, el2.value.length); } catch (e) { } }
+        }, 150);
+      };
+      head.appendChild(inp);
+    }
+    if (cfg.sort) {
+      var sel = el('select', 'am-sort-sel');
+      sel.title = '排序方式';
+      cfg.sort.opts.forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0]; op.textContent = o[1];
+        sel.appendChild(op);
+      });
+      sel.value = cfg.sort.value;
+      sel.onchange = function () {
+        if (window.annieSettings) { annieSettings.ui[cfg.sort.key] = sel.value; annieSettings.save(); }
+        renderView();
+      };
+      head.appendChild(sel);
+    }
+    return head;
+  }
+  /* 搜索框占位符：明示当前匹配字段（跟随排序方式） */
+  function songSearchPh(mode) {
+    var f = AM.songSearchField(mode);
+    return f === 'artist' ? '搜索演唱者' : f === 'name' ? '搜索文件名' : '搜索标题';
+  }
+
   function renderView() {
     if (!R.content || (window.annieTheme && annieTheme.current !== 'am')) return;
     var c = R.content;
@@ -410,7 +520,13 @@
       S._vswT = setTimeout(function () { c.classList.remove('am-vsw'); }, 400);
     }
 
+    // V4.3.22：多选模式只在 歌曲/专辑详情/喜爱歌曲 存活，切走即退出
+    if (S.msOn && !(S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey))) {
+      S.msOn = false; if (S.msSel) S.msSel.clear();
+    }
+
     if (S.view === 'stream') { renderStreamView(c); return; }
+    if (S.view === 'downloads') { if (window.annieAMDownload) window.annieAMDownload.render(c); return; } // V4.3.22：下载情况
     if (S.view === 'qobuz') { if (AM.renderQobuzView) AM.renderQobuzView(c); return; } // V4.3.6：Qobuz 视图
     if (S.view.indexOf('spl:') === 0) { renderSplView(c); return; } // V4.3.5：在线歌单
 
@@ -449,27 +565,20 @@
     } else if (S.view.indexOf('pl:') === 0) {
       renderPlaylistHead(c);
     } else if (S.view === 'favorites') {
-      c.appendChild(el('div', 'am-view-h', '喜爱歌曲'));
+      // V4.3.22：喜爱歌曲头部——视图内搜索 + 排序下拉（同歌曲视图）
+      c.appendChild(buildViewHead('喜爱歌曲', {
+        view: 'favorites',
+        search: { placeholder: songSearchPh(AM.favSortMode()) },
+        sort: { opts: SONG_SORT_OPTS, value: AM.favSortMode(), key: 'amFavSort' }
+      }));
     } else {
       // V4.3.15：歌曲视图标题行——右侧排序下拉（首字母/文件名/修改时间/大小）
-      var shead = el('div', 'am-view-head');
-      shead.appendChild(el('div', 'am-view-h', '歌曲'));
-      var ssel = el('select', 'am-sort-sel');
-      ssel.title = '排序方式';
-      [['az', '首字母 A–Z（标题）'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'], ['mtimeDesc', '修改时间 · 新→旧'],
-       ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']]
-        .forEach(function (o) {
-          var op = document.createElement('option');
-          op.value = o[0]; op.textContent = o[1];
-          ssel.appendChild(op);
-        });
-      ssel.value = AM.songSortMode ? AM.songSortMode() : 'az';
-      ssel.onchange = function () {
-        if (window.annieSettings) { annieSettings.ui.amSongSort = ssel.value; annieSettings.save(); }
-        renderView();
-      };
-      shead.appendChild(ssel);
-      c.appendChild(shead);
+      // V4.3.22：加视图内搜索框，匹配字段跟随排序方式
+      c.appendChild(buildViewHead('歌曲', {
+        view: 'songs',
+        search: { placeholder: songSearchPh(AM.songSortMode()) },
+        sort: { opts: SONG_SORT_OPTS, value: AM.songSortMode(), key: 'amSongSort' }
+      }));
     }
 
     if (S.view === 'songs' && (!AM.songSortMode || AM.songSortMode() === 'az' || AM.songSortMode() === 'azArtist')) {
@@ -510,7 +619,13 @@
   }
 
   function renderAlbumGrid(c) {
-    c.appendChild(el('div', 'am-view-h', '专辑'));
+    // V4.3.22：专辑视图头部——视图内搜索 + 排序下拉（名称/艺人/曲目数）
+    var amode = AM.albumSortMode ? AM.albumSortMode() : 'az';
+    c.appendChild(buildViewHead('专辑', {
+      view: 'albums',
+      search: { placeholder: amode === 'azArtist' ? '搜索艺人' : '搜索专辑名' },
+      sort: { opts: ALBUM_SORT_OPTS, value: amode, key: 'amAlbumSort' }
+    }));
     var tracks = allTracks();
     ensureMeta(tracks.slice(0, 400)); // 专辑分组依赖标签，取回后自动重绘
     var byAlbum = {};
@@ -520,8 +635,28 @@
       if (!byAlbum[k]) byAlbum[k] = { name: k, artist: m.artist, tracks: [] };
       byAlbum[k].tracks.push(t);
     });
+    // 视图内搜索：匹配字段跟随排序方式（艺人排序搜艺人，其余搜专辑名）
+    var aq = viewQuery('albums').toLowerCase();
+    if (aq) {
+      Object.keys(byAlbum).forEach(function (k) {
+        var a = byAlbum[k];
+        var v = (amode === 'azArtist' ? (a.artist || '') : a.name).toLowerCase();
+        if (v.indexOf(aq) < 0) delete byAlbum[k];
+      });
+    }
+    // 排序：名称/艺人走拼音 collator，曲目数按数量
+    var col = AM.azCollator ? AM.azCollator() : null;
+    var keys = Object.keys(byAlbum).sort(function (x, y) {
+      var a = byAlbum[x], b = byAlbum[y];
+      if (amode === 'countDesc') return b.tracks.length - a.tracks.length;
+      if (amode === 'countAsc') return a.tracks.length - b.tracks.length;
+      var ka = amode === 'azArtist' ? (a.artist || '') : a.name;
+      var kb = amode === 'azArtist' ? (b.artist || '') : b.name;
+      var r = col ? col.compare(ka, kb) : ka.localeCompare(kb);
+      return r !== 0 ? r : (col ? col.compare(a.name, b.name) : a.name.localeCompare(b.name));
+    });
     var grid = el('div', 'am-album-grid');
-    Object.keys(byAlbum).sort().forEach(function (k) {
+    keys.forEach(function (k) {
       var a = byAlbum[k];
       var card = el('div', 'am-album-card');
       var img = el('img'); img.alt = ''; img.loading = 'lazy';
@@ -530,6 +665,21 @@
       card.appendChild(el('div', 'am-album-name', a.name));
       card.appendChild(el('div', 'am-album-sub', a.artist + ' · ' + a.tracks.length + ' 首'));
       card.onclick = function () { S.albumKey = k; renderView(); };
+      // V4.3.22：专辑右键——删除整个专辑（仅移出曲库 / 连同源文件，弹窗勾选确认）
+      card.oncontextmenu = function (e) {
+        e.preventDefault();
+        var pop = R.pop;
+        pop.innerHTML = '';
+        pop.appendChild(el('div', 'am-pop-item', a.name)).style.fontWeight = '600';
+        pop.appendChild(el('div', 'am-pop-sep'));
+        var md = el('button', 'am-pop-item', '🗑 删除该专辑（' + a.tracks.length + ' 首）…');
+        md.onclick = function () { pop.classList.remove('on'); deleteTracks(a.tracks.map(function (t) { return t.path; })); };
+        pop.appendChild(md);
+        pop.classList.add('on');
+        var w = pop.offsetWidth, h = pop.offsetHeight;
+        pop.style.left = Math.min(e.clientX, window.innerWidth - w - 12) + 'px';
+        pop.style.top = Math.min(e.clientY, window.innerHeight - h - 12) + 'px';
+      };
       grid.appendChild(card);
     });
     c.appendChild(grid);
@@ -578,11 +728,19 @@
   var AM_ROW_H_COVER = 52, AM_ROW_H_PLAIN = 41, AM_WINDOW_MIN = 300, AM_OVERSCAN = 15;
   function buildTrackRow(t, i, opts) {
     var m = trackMeta(t);
-    var tr = el('tr', 'am-tr' + (state.currentPath === t.path ? ' cur' : ''));
+    var selected = S.msOn && S.msSel && S.msSel.has(t.path);
+    var tr = el('tr', 'am-tr' + (state.currentPath === t.path && !S.msOn ? ' cur' : '') + (selected ? ' sel' : ''));
     tr.dataset.path = t.path; // 定位播放文件用
+    if (S.msOn) { // V4.3.22：多选模式——行首复选框，点击行=切换选中（不播放）
+      var tdCk = el('td');
+      var ck = document.createElement('input');
+      ck.type = 'checkbox'; ck.checked = !!selected; ck.className = 'am-ms-ck';
+      ck.onclick = function (e) { e.stopPropagation(); msToggle(t.path, tr, ck); };
+      tdCk.appendChild(ck); tr.appendChild(tdCk);
+    }
     if (opts.withCover) {
       var tdCover = el('td');
-      var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy';
+      var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy'; img.draggable = false;
       img.style.visibility = 'hidden';
       albumCover(t, function (url) { if (url) { img.src = url; img.style.visibility = ''; } });
       tdCover.appendChild(img); tr.appendChild(tdCover);
@@ -615,10 +773,118 @@
       acts.appendChild(bRm);
     }
     tr.appendChild(acts);
-    tr.ondblclick = function () { playList(opts.tracks, i); };
-    // V4.3.21：行右键 = ⊕ 菜单（同一入口，坐标取鼠标位置）
-    tr.oncontextmenu = function (e) { e.preventDefault(); openAddMenu(e.clientX, e.clientY, t.path); };
+    // V4.3.22：播放列表内拖拽排序（与迷你待播清单同一交互：拖到目标行放下即插入该行前）
+    if (opts.inPlaylist && !S.msOn) {
+      tr.draggable = true;
+      tr.title = '拖拽调整顺序';
+      tr.addEventListener('dragstart', function (e) {
+        S._plDragPath = t.path;
+        try { e.dataTransfer.effectAllowed = 'move'; } catch (er) { }
+      });
+      tr.addEventListener('dragover', function (e) { e.preventDefault(); tr.classList.add('drag-over'); });
+      tr.addEventListener('dragleave', function () { tr.classList.remove('drag-over'); });
+      tr.addEventListener('drop', function (e) {
+        e.preventDefault(); tr.classList.remove('drag-over');
+        var from = S._plDragPath; S._plDragPath = null;
+        if (from && from !== t.path) movePlRow(opts.plId, from, t.path);
+      });
+      tr.addEventListener('dragend', function () { S._plDragPath = null; tr.classList.remove('drag-over'); });
+    }
+    if (S.msOn) {
+      tr.onclick = function () { msToggle(t.path, tr, tr.querySelector('.am-ms-ck')); };
+    } else {
+      tr.ondblclick = function () { playList(opts.tracks, i); };
+      // V4.3.21：行右键 = ⊕ 菜单（同一入口，坐标取鼠标位置）
+      tr.oncontextmenu = function (e) { e.preventDefault(); openAddMenu(e.clientX, e.clientY, t.path); };
+    }
     return tr;
+  }
+
+  /* ---------- V4.3.22：本地曲库多选 + 删除（歌曲/专辑详情/喜爱歌曲） ---------- */
+  /* 播放列表拖拽排序：from 插到 to 行之前（按路径定位——窗口化行索引在 paths 有缺口时会错位） */
+  function movePlRow(plId, fromPath, toPath) {
+    var pl = S.playlists.find(function (p) { return p.id === plId; });
+    if (!pl) return;
+    var arr = pl.paths;
+    var fi = arr.indexOf(fromPath), ti = arr.indexOf(toPath);
+    if (fi < 0 || ti < 0) return;
+    arr.splice(fi, 1);
+    arr.splice(arr.indexOf(toPath), 0, fromPath); // 删除后目标索引自动前移，插到它前面=占据原视觉位
+    renderView(); // 本地先重排即时反馈，持久化随后
+    window.mine.playlistReorder(plId, arr).then(function (pls) { S.playlists = pls; }).catch(function () { });
+  }
+  function msToggle(p, tr, ck) {
+    if (!S.msSel) S.msSel = new Set();
+    if (S.msSel.has(p)) { S.msSel.delete(p); tr.classList.remove('sel'); if (ck) ck.checked = false; }
+    else { S.msSel.add(p); tr.classList.add('sel'); if (ck) ck.checked = true; }
+    var cnt = document.querySelector('.am-ms-count');
+    if (cnt) cnt.textContent = '已选 ' + S.msSel.size + ' 首';
+  }
+  function msExit() { S.msOn = false; if (S.msSel) S.msSel.clear(); renderView(); }
+  function renderMsToolbar(c, tracks) {
+    var bar = el('div', 'am-ms-bar');
+    var bAll = el('button', 'am-btn', (S.msSel && S.msSel.size >= tracks.length && tracks.length) ? '☐ 取消全选' : '☑ 全选');
+    bAll.onclick = function () {
+      if (!S.msSel) S.msSel = new Set();
+      if (S.msSel.size >= tracks.length) S.msSel.clear();
+      else tracks.forEach(function (t) { S.msSel.add(t.path); });
+      renderView();
+    };
+    bar.appendChild(bAll);
+    var bDel = el('button', 'am-btn am-btn-danger', '🗑 删除选中');
+    bDel.onclick = function () {
+      if (!S.msSel || !S.msSel.size) { try { proToast('先勾选要删除的歌曲'); } catch (e) { } return; }
+      deleteTracks(Array.from(S.msSel));
+    };
+    bar.appendChild(bDel);
+    var bExit = el('button', 'am-btn', '✕ 退出多选');
+    bExit.onclick = msExit;
+    bar.appendChild(bExit);
+    bar.appendChild(el('span', 'am-ms-count', '已选 ' + (S.msSel ? S.msSel.size : 0) + ' 首'));
+    c.appendChild(bar);
+  }
+  /* 删除确认：默认仅移出曲库显示；勾选后连同源文件（系统回收站，可恢复） */
+  function amConfirmDel(count, cb) {
+    var ov = el('div', 'am-prompt-ov');
+    var box = el('div', 'am-prompt');
+    box.appendChild(el('div', 'am-pop-h', '删除 ' + count + ' 首歌曲'));
+    box.appendChild(el('div', 'am-pop-hint', '默认仅从曲库移除显示，磁盘文件不受影响。'));
+    var lab = el('label', 'am-del-opt');
+    var ck = document.createElement('input'); ck.type = 'checkbox';
+    lab.appendChild(ck);
+    lab.appendChild(el('span', '', '同时删除源文件（移入系统回收站，可恢复）'));
+    box.appendChild(lab);
+    var row = el('div', 'am-prompt-btns');
+    var bNo = el('button', 'am-btn', '取消');
+    var bOk = el('button', 'am-btn am-btn-danger', '删除');
+    function close(v) { ov.remove(); if (v != null) cb(v); }
+    bNo.onclick = function () { close(null); };
+    bOk.onclick = function () { close(ck.checked); };
+    ov.onclick = function (e) { if (e.target === ov) close(null); };
+    row.appendChild(bNo); row.appendChild(bOk);
+    box.appendChild(row); ov.appendChild(box);
+    document.body.appendChild(ov);
+  }
+  function deleteTracks(paths) {
+    if (!paths || !paths.length) return;
+    amConfirmDel(paths.length, function (delFile) {
+      var done = function (pls, msg) {
+        if (pls) S.playlists = pls;
+        S.msOn = false; if (S.msSel) S.msSel.clear();
+        renderSidebar(); renderView();
+        try { proToast(msg); } catch (e) { }
+      };
+      if (delFile) {
+        window.mine.libDeleteFiles(paths).then(function (r) {
+          var n = r && r.done ? r.done.length : 0, f = r && r.failed ? r.failed.length : 0;
+          done(r && r.playlists, '已删除 ' + n + ' 首（源文件已入回收站）' + (f ? '，' + f + ' 个失败' : ''));
+        }).catch(function () { });
+      } else {
+        window.mine.tracksHide(paths).then(function (r) {
+          done(r && r.playlists, '已移出曲库 ' + (r ? r.removed : paths.length) + ' 首（源文件保留）');
+        }).catch(function () { });
+      }
+    });
   }
   function amSpacerRow(h, cols) {
     var tr = el('tr');
@@ -637,7 +903,8 @@
       plId: inPlaylist ? S.view.slice(3) : null,
       tracks: tracks
     };
-    tb.innerHTML = '<thead><tr>' + (opts.withCover ? '<th style="width:46px"></th>' : '') +
+    if (S.msOn) renderMsToolbar(c, tracks); // V4.3.22：多选工具条（全选/删除选中/退出）
+    tb.innerHTML = '<thead><tr>' + (S.msOn ? '<th style="width:34px"></th>' : '') + (opts.withCover ? '<th style="width:46px"></th>' : '') +
       '<th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:96px"></th></tr></thead>';
     var body = el('tbody');
     tb.appendChild(body);
@@ -650,7 +917,7 @@
     }
     // 窗口化：可视区 ±15 行
     var rowH = opts.withCover ? AM_ROW_H_COVER : AM_ROW_H_PLAIN;
-    var cols = opts.withCover ? 5 : 4;
+    var cols = (opts.withCover ? 5 : 4) + (S.msOn ? 1 : 0);
     var win = { tracks: tracks, opts: opts, body: body, tb: tb, rowH: rowH, cols: cols, lastStart: -1, lastEnd: -1 };
     S._tbl = win;
     renderAmWindow();
@@ -783,6 +1050,17 @@
       if (window.annieMatch) window.annieMatch.open({ path: trackPath });
     };
     pop.appendChild(mch);
+    // V4.3.22：查看所在专辑——跳到专辑视图并打开该曲所属专辑
+    var mal = el('button', 'am-pop-item', '💿 查看所在专辑');
+    mal.onclick = function () {
+      pop.classList.remove('on');
+      var t = null;
+      allTracks().forEach(function (x) { if (x.path === trackPath) t = x; });
+      if (!t) return;
+      S.view = 'albums'; S.albumKey = trackMeta(t).album || '未知专辑'; S.folderPath = null;
+      renderSidebar(); renderView();
+    };
+    pop.appendChild(mal);
     // V4.3.16：相似歌曲推荐（零云端本地打分）
     var msr = el('button', 'am-pop-item', '✨ 找相似歌曲…');
     msr.onclick = function () {
@@ -802,6 +1080,16 @@
       } else annieSimilar.radio.start(trackPath);
     };
     pop.appendChild(mrd);
+    // V4.3.22：多选（歌曲/专辑详情/喜爱歌曲视图）——进入多选模式并选中本行
+    if (S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey)) {
+      var mms = el('button', 'am-pop-item', '☑ 多选');
+      mms.onclick = function () { pop.classList.remove('on'); S.msOn = true; S.msSel = new Set([trackPath]); renderView(); };
+      pop.appendChild(mms);
+    }
+    // V4.3.22：删除——弹窗勾选：仅移出曲库显示 / 连同源文件入回收站
+    var mdel = el('button', 'am-pop-item', '🗑 删除…');
+    mdel.onclick = function () { pop.classList.remove('on'); deleteTracks([trackPath]); };
+    pop.appendChild(mdel);
     // V4.3.19：歌词海报（仅当前播放且有歌词的行；竖版 1080×1620，含封面/音质/节选歌词/版本号）
     try {
       var isCurTrack = (typeof state !== 'undefined' && state && state.currentPath === trackPath);

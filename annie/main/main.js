@@ -13,6 +13,7 @@ const onlineMatch = require('./onlineMatch');
 const analyzer = require('./analyzer');
 const tagWriter = require('./tagWriter'); // V3.5.9：曲库标签编辑（与下载写标签同一实现）
 const qobuz = require('./qobuz'); // V4.3.6：Qobuz 在线播放/下载（用户登录自己的付费账号）
+const dlManager = require('./dlManager'); // V4.3.22：下载任务管理器（下载情况视图）
 const remote = require('./remote'); // V4.3.12：局域网手机遥控（脑暴 9.1）
 
 const engine = new EngineClient();
@@ -71,13 +72,49 @@ function finishScanIfReady() {
   if (!pendingScanDone || isoProbeJobs > 0) return;
   const m = pendingScanDone; pendingScanDone = null;
   try { saveStore({ tracks: scannedTracks }); } catch { }
+  // V4.3.22：FPL 自动识别——扫描到媒体库内的 .fpl 即建/更新同名播放列表
+  let fplStat = null;
+  try { fplStat = syncFplPlaylists(m.fpls); } catch { }
   if (watchScanPending) {
     // V4.3.10：监听触发的扫描——不打扰进度 UI，只在完成后让渲染层全量刷新
     watchScanPending = false; libWatchRunning = false;
-    broadcastScan({ type: 'done', found: m.found, fallback: true, watch: true });
+    broadcastScan({ type: 'done', found: m.found, fallback: true, watch: true, fpl: fplStat });
   } else {
-    broadcastScan({ type: 'done', found: m.found });
+    broadcastScan({ type: 'done', found: m.found, fpl: fplStat });
   }
+}
+/* V4.3.22：FPL 同步——播放列表条目用 fplPath 绑定来源文件，mtime 未变跳过，
+ * 变化则整表替换 paths（在 fb2k 里改动后重新另存，安妮扫描时跟随更新） */
+function syncFplPlaylists(fpls) {
+  if (!Array.isArray(fpls) || !fpls.length) return null;
+  const { parseFpl } = require('./fpl');
+  const store = loadStore();
+  const byFpl = new Map();
+  for (const p of store.playlists) if (p.fplPath) byFpl.set(String(p.fplPath).toLowerCase(), p);
+  let added = 0, updated = 0;
+  for (const f of fpls) {
+    if (!f || !f.path) continue;
+    let paths;
+    try { paths = parseFpl(fs.readFileSync(f.path), path.dirname(f.path)); } catch { continue; }
+    if (!paths.length) continue;
+    const existing = byFpl.get(String(f.path).toLowerCase());
+    if (existing) {
+      if (existing.fplMtime === f.mtime) continue;
+      existing.paths = paths; existing.fplMtime = f.mtime; updated++;
+    } else {
+      let name = path.basename(f.path).replace(/\.fpl$/i, '') || 'FPL 导入';
+      const names = new Set(store.playlists.map(p => p.name));
+      const base = name; let n = 2;
+      while (names.has(name)) name = base + ' (' + (n++) + ')';
+      const pl = {
+        id: 'pl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        name, paths, created: Date.now(), fplPath: f.path, fplMtime: f.mtime || 0
+      };
+      store.playlists.push(pl); byFpl.set(String(f.path).toLowerCase(), pl); added++;
+    }
+  }
+  if (added || updated) { saveStore({ playlists: store.playlists }); return { added, updated }; }
+  return null;
 }
 async function probeIsos(isos) {
   isoProbeJobs++;
@@ -628,6 +665,7 @@ function registerIpc() {
   });
 
   // V3.5.8：批量删除文件（移入回收站）并同步曲库/收藏
+  // V4.3.22：顺带清理播放列表引用（删掉的文件不该在歌单里留尸）
   ipcMain.handle('lib:deleteFiles', async (_e, paths) => {
     const done = [], failed = [];
     for (const p of (paths || [])) {
@@ -637,13 +675,31 @@ function registerIpc() {
     if (done.length) {
       const store = loadStore();
       const del = new Set(done);
+      for (const pl of store.playlists) pl.paths = pl.paths.filter(p => !del.has(p));
       saveStore({
         tracks: (store.tracks || []).filter(t => !del.has(t.path)),
         favorites: (store.favorites || []).filter(p => !del.has(p)),
+        playlists: store.playlists,
       });
       broadcastScan({ type: 'done', found: (loadStore().tracks || []).length, fallback: true });
     }
-    return { done, failed };
+    return { done, failed, playlists: loadStore().playlists };
+  });
+
+  // V4.3.22：仅从曲库移除显示（不动磁盘文件）——同步清理收藏/播放列表引用
+  ipcMain.handle('lib:tracksHide', (_e, paths) => {
+    const del = new Set(paths || []);
+    const store = loadStore();
+    if (del.size) {
+      for (const pl of store.playlists) pl.paths = pl.paths.filter(p => !del.has(p));
+      saveStore({
+        tracks: (store.tracks || []).filter(t => !del.has(t.path)),
+        favorites: (store.favorites || []).filter(p => !del.has(p)),
+        playlists: store.playlists,
+      });
+      broadcastScan({ type: 'done', found: (loadStore().tracks || []).length, fallback: true });
+    }
+    return { removed: del.size, playlists: loadStore().playlists };
   });
 
   // 喜爱列表：切换收藏状态，返回最新 favorites 数组
@@ -656,6 +712,13 @@ function registerIpc() {
     return favs;
   });
 
+  // V4.3.22：播放列表拖拽排序——整表顺序回写（渲染层拖完一次性提交）
+  ipcMain.handle('lib:playlist:reorder', (_e, id, paths) => {
+    const store = loadStore();
+    const pl = store.playlists.find(p => p.id === id);
+    if (pl && Array.isArray(paths)) { pl.paths = paths.slice(); saveStore({ playlists: store.playlists }); }
+    return store.playlists;
+  });
   // SVLX 1.3.0：自建播放列表（Apple Music 主题使用；{id, name, paths[], created}）
   ipcMain.handle('lib:playlists', () => loadStore().playlists);
   ipcMain.handle('lib:playlist:create', (_e, name) => {
@@ -695,6 +758,39 @@ function registerIpc() {
     const pl = store.playlists.find(p => p.id === id);
     if (pl) { pl.paths = pl.paths.filter(p => p !== trackPath); saveStore({ playlists: store.playlists }); }
     return store.playlists;
+  });
+
+  // V4.3.22：导入 foobar2000 .fpl 播放列表——二进制解析（./fpl.js），每个文件建一个本地播放列表
+  ipcMain.handle('lib:playlist:importFpl', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '导入 foobar2000 播放列表',
+      filters: [{ name: 'foobar2000 播放列表', extensions: ['fpl'] }],
+      properties: ['openFile', 'multiSelections']
+    });
+    if (r.canceled || !r.filePaths.length) return { canceled: true };
+    const { parseFpl } = require('./fpl');
+    const store = loadStore();
+    const results = [];
+    for (const fp of r.filePaths) {
+      let paths;
+      try { paths = parseFpl(fs.readFileSync(fp), path.dirname(fp)); }
+      catch (e) { results.push({ file: fp, ok: false, error: String((e && e.message) || e) }); continue; }
+      if (!paths.length) { results.push({ file: fp, ok: false, error: '未解析到本地文件路径' }); continue; }
+      // 名称去重：与现有列表重名时追加序号
+      let name = path.basename(fp).replace(/\.fpl$/i, '') || 'FPL 导入';
+      const names = new Set(store.playlists.map(p => p.name));
+      const base = name; let n = 2;
+      while (names.has(name)) name = base + ' (' + (n++) + ')';
+      // 绑定 fplPath：扫描到同一文件时更新本列表而不是重复新建
+      let fm = 0; try { fm = fs.statSync(fp).mtimeMs; } catch { }
+      store.playlists.push({
+        id: 'pl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        name, paths, created: Date.now(), fplPath: fp, fplMtime: fm
+      });
+      results.push({ file: fp, ok: true, name, count: paths.length });
+    }
+    saveStore({ playlists: store.playlists });
+    return { canceled: false, results, playlists: loadStore().playlists };
   });
 
   // V4.3.5：在线歌单（流媒体收藏）——items 存 {provider, song, addedAt}；
@@ -1420,6 +1516,21 @@ ipcMain.handle('stream:albumSongs', (_e, params) => streaming.albumSongs(params)
   });
   ipcMain.handle('stream:downloadDir:reset', () => streaming.setDownloadDir(''));
 
+  // —— V4.3.22：下载任务管理器（洛雪式任务列表/并发/暂停继续，下载情况视图）——
+  dlManager.init((ch, p) => {
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, p); } catch { }
+  });
+  ipcMain.handle('dl:list', () => dlManager.list());
+  ipcMain.handle('dl:add', (_e, items) => dlManager.add(items));
+  ipcMain.handle('dl:pause', (_e, id) => dlManager.pause(id));
+  ipcMain.handle('dl:resume', (_e, id) => dlManager.resume(id));
+  ipcMain.handle('dl:remove', (_e, id) => dlManager.remove(id));
+  ipcMain.handle('dl:clear', (_e, statuses) => dlManager.clear(statuses));
+  ipcMain.handle('dl:retryAll', () => dlManager.retryAll());
+  ipcMain.handle('dl:openFolder', (_e, id) => dlManager.openFolder(id));
+  ipcMain.handle('dl:settings:get', () => dlManager.getSettings());
+  ipcMain.handle('dl:settings:set', (_e, patch) => dlManager.setSettings(patch));
+
   // 音频分析（频谱图 / 波形 / 无损检测）
   analyzer.register(ipcMain, () => mainWindow);
 }
@@ -1506,6 +1617,13 @@ ipcMain.handle('app:openExternal', (_e, url) => {
   if (/^https?:\/\//i.test(u)) { const { shell } = require('electron'); shell.openExternal(u); }
 });
 ipcMain.handle('app:copyText', (_e, text) => { require('electron').clipboard.writeText(String(text || '')); return { ok: true }; }); // V4.3.16：分享链接复制
+/* V4.3.22：运行期间防息屏/休眠（用户拍板：只要软件开着就保持亮屏，不限于播放中）。
+ * 进程退出时 blocker 随进程自动释放，无需手动 stop。 */
+let __awakeBlockId = null;
+function startAwakeBlock() {
+  if (__awakeBlockId != null) return;
+  try { __awakeBlockId = require('electron').powerSaveBlocker.start('prevent-display-sleep'); } catch { }
+}
 ipcMain.handle('app:checkUpdate', async () => {
   if (!app.isPackaged) return { dev: true };
   if (!__manualCheckUpdate) return { ok: false, error: 'updater 未初始化' };
@@ -1579,6 +1697,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     registerIpc();
+    startAwakeBlock(); // V4.3.22：运行期间防息屏/休眠
     setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
     qobuz.init({ loadStore, flushStore, touchStore });

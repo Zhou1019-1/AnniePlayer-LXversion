@@ -285,8 +285,19 @@
   function songSortMode() {
     return (window.annieSettings && annieSettings.ui.amSongSort) || 'az';
   }
-  function sortSongs(list) {
-    var mode = songSortMode();
+  /* V4.3.22：喜爱歌曲/专辑视图排序（各自持久化，选项见 am-dom 头部下拉） */
+  function favSortMode() {
+    return (window.annieSettings && annieSettings.ui.amFavSort) || 'az';
+  }
+  function albumSortMode() {
+    return (window.annieSettings && annieSettings.ui.amAlbumSort) || 'az';
+  }
+  /* 视图内搜索的匹配字段跟随当前排序方式：标题排序搜标题、演唱者排序搜演唱者、文件名排序搜文件名 */
+  function songSearchField(mode) {
+    return mode === 'azArtist' ? 'artist' : mode === 'name' ? 'name' : 'title';
+  }
+  function sortSongs(list, mode) {
+    mode = mode || songSortMode();
     if (mode === 'az') return sortByInitial(list);
     if (mode === 'azArtist') return sortByInitial(list, 'artist'); // V4.3.16
     var arr = list.slice();
@@ -322,7 +333,18 @@
         return (m.title + ' ' + m.artist + ' ' + m.album).toLowerCase().indexOf(q) >= 0;
       });
     }
+    // V4.3.22：视图内搜索（歌曲/喜爱）——匹配字段跟随当前排序方式（标题/演唱者/文件名）
+    var vq = (S.viewQuery && (S.view === 'songs' || S.view === 'favorites') ? (S.viewQuery[S.view] || '') : '').toLowerCase();
+    if (vq) {
+      var vfield = songSearchField(isSongs ? songSortMode() : favSortMode());
+      list = list.filter(function (t) {
+        var m = trackMeta(t);
+        var v = vfield === 'artist' ? (m.artist || '') : vfield === 'name' ? (t.name || '') : (m.title || '');
+        return v.toLowerCase().indexOf(vq) >= 0;
+      });
+    }
     if (isSongs) list = sortSongs(list); // V4.3.15：歌曲视图（含搜索结果）按所选方式排序
+    else if (S.view === 'favorites') list = sortSongs(list, favSortMode()); // V4.3.22：喜爱歌曲同样可多方式排序
     return list;
   }
   function refreshPlaylists() {
@@ -427,6 +449,10 @@
   AM.normP = normP;
   AM.currentTracks = currentTracks;
   AM.songSortMode = songSortMode;
+  AM.favSortMode = favSortMode;
+  AM.albumSortMode = albumSortMode;
+  AM.songSearchField = songSearchField;
+  AM.azCollator = azCollator;
   AM.refreshPlaylists = refreshPlaylists;
   AM.playList = playList;
   AM.togglePlay = togglePlay;

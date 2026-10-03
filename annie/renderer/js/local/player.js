@@ -774,6 +774,18 @@ window.mine.onScanEvent((m) => {
     } else {
       renderFolderTree(); renderCurrentView();
     }
+    // V4.3.22：扫描自动识别到 foobar2000 .fpl 播放列表——刷新 AM 侧栏并提示
+    if (m.fpl && (m.fpl.added || m.fpl.updated)) {
+      try {
+        if (window.__annieAMInternal && __annieAMInternal.refreshPlaylists) __annieAMInternal.refreshPlaylists();
+        if (typeof proToast === 'function') {
+          proToast('🎧 foobar2000 播放列表：' +
+            (m.fpl.added ? '新导入 ' + m.fpl.added + ' 个' : '') +
+            (m.fpl.added && m.fpl.updated ? '，' : '') +
+            (m.fpl.updated ? '更新 ' + m.fpl.updated + ' 个' : ''));
+        }
+      } catch (e) { }
+    }
   }
 });
 

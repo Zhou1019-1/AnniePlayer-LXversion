@@ -131,16 +131,31 @@ function setDownloadDir(dir) {
 
 /**
  * 下载在线曲目到本地曲库目录。
- * @param params { provider, quality, song }
+ * @param params { provider, quality, song, fileNameFmt?, skipExisting?, signal? }
+ *   fileNameFmt: 'artist-name'（默认）| 'name-artist' | 'name'
+ *   skipExisting: 下载目录已存在同名文件时直接返回 { skipped:true }
+ *   signal: AbortSignal——中止即抛 AbortError（半成品删除，任务管理器据此实现暂停）
  * @param onProgress (receivedBytes, totalBytes) => void
  */
+function baseNameFor(song, fmt) {
+  const name = sanitizeFileName((song && (song.name || song.id)) || '未命名');
+  const artist = sanitizeFileName((song && song.artist) || '未知艺人');
+  if (fmt === 'name-artist') return `${name} - ${artist}`;
+  if (fmt === 'name') return name;
+  return `${artist} - ${name}`;
+}
 async function download(params, onProgress) {
   const r = await songUrl(params);
   if (!r || !r.playable || !r.url) throw new Error((r && r.message) || '无法获取下载地址');
   const song = params.song || {};
   const ext = (r.format && /^[a-z0-9]+$/i.test(r.format) ? r.format : (r.url.split('?')[0].split('.').pop() || 'mp3')).toLowerCase();
-  const fileName = sanitizeFileName(`${song.artist || '未知艺人'} - ${song.name || song.id}`) + '.' + ext;
+  const fileName = baseNameFor(song, params.fileNameFmt) + '.' + ext;
   let dest = path.join(downloadDir(), fileName);
+  // V4.3.22：设置「下载目录存在同名文件时跳过下载此任务」
+  if (params.skipExisting && fs.existsSync(dest)) {
+    let size = 0; try { size = fs.statSync(dest).size; } catch { }
+    return { ok: true, skipped: true, path: dest, size, quality: r.quality || '', level: r.level };
+  }
   let n = 1;
   while (fs.existsSync(dest)) {
     dest = path.join(downloadDir(), fileName.replace(new RegExp(`\\.${ext}$`), ` (${n++}).${ext}`));
@@ -153,7 +168,7 @@ async function download(params, onProgress) {
       if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
     }
   }
-  const resp = await fetch(r.url, { headers });
+  const resp = await fetch(r.url, { headers, signal: params.signal });
   if (!resp.ok || !resp.body) throw new Error('下载失败：HTTP ' + resp.status);
   const total = Number(resp.headers.get('content-length') || 0);
   const out = fs.createWriteStream(dest);
@@ -170,9 +185,18 @@ async function download(params, onProgress) {
   } catch (e) {
     out.destroy();
     try { fs.unlinkSync(dest); } catch { }
+    // 中止（暂停）统一抛 AbortError，任务管理器区分「用户暂停」和「真实失败」
+    if ((params.signal && params.signal.aborted) || (e && e.name === 'AbortError')) {
+      const ae = new Error('已暂停'); ae.name = 'AbortError'; throw ae;
+    }
     throw e;
   }
   await new Promise((res) => out.end(res));
+  // 传完到写标签之间被暂停：同样按中止处理（不留未写标签的半成品）
+  if (params.signal && params.signal.aborted) {
+    try { fs.unlinkSync(dest); } catch { }
+    const ae = new Error('已暂停'); ae.name = 'AbortError'; throw ae;
+  }
 
   // V1.1.10：下载后写元数据——封面/标题/歌手/专辑/专辑艺术家/曲目号/碟号/发行时间 + 歌词。
   // 附加项受设置页开关控制：saveLrc（旁挂 .lrc + 嵌入）/ saveCover（嵌入封面）。
@@ -180,6 +204,11 @@ async function download(params, onProgress) {
   const tagged = await writeDownloadedTags(dest, song, params.provider, {
     saveLrc: params.saveLrc !== false,
     saveCover: params.saveCover !== false,
+    embedCover: params.embedCover !== false,   // V4.3.22：洛雪「嵌入封面」
+    embedLrc: params.embedLrc !== false,       // V4.3.22：洛雪「嵌入歌词」
+    embedTLrc: params.embedTLrc !== false,     // V4.3.22：洛雪「同时嵌入翻译歌词」
+    lrcTLrc: params.lrcTLrc !== false,         // V4.3.22：洛雪「翻译歌词写入歌词文件」
+    lrcEncoding: params.lrcEncoding || 'utf8', // V4.3.22：洛雪「歌词文件编码 UTF-8/GBK」
   }).catch(() => false);
 
   return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType, tagged: !!tagged };
@@ -214,7 +243,7 @@ async function writeDownloadedTags(dest, song, provider, opts) {
     // 封面字节：既用于嵌入，也用于 saveCover 时落盘独立文件
     let coverBuf = null;
     if (coverUrl) coverBuf = await tagWriter.fetchCoverBytes(coverUrl).catch(() => null);
-    // 4) 写标签：嵌入歌词（FLAC LYRICS / MP3 USLT）+ 嵌入封面（attached_pic），始终执行
+    // 4) 写标签：嵌入歌词（FLAC LYRICS / MP3 USLT）+ 嵌入封面（attached_pic）
     const tagRes = await tagWriter.writeTags({
       dest,
       title: song && (song.name || (song.meta && song.meta.name)),
@@ -225,13 +254,19 @@ async function writeDownloadedTags(dest, song, provider, opts) {
       disc: detail && detail.disc,
       date: detail && detail.date,
       lyrics: lrc,
+      tlyric,
       coverUrl,
       coverBytes: coverBuf,
+      embedCover: opts.embedCover,
+      embedLrc: opts.embedLrc,
+      embedTLrc: opts.embedTLrc,
     }).catch(() => ({ ok: false }));
+    // V4.3.22：失败留痕——此前全静默，ffmpeg 路径坑排查无门
+    if (!tagRes || !tagRes.ok) console.warn('[dl-tag] 写标签失败：' + dest + '，原因：' + ((tagRes && tagRes.reason) || 'unknown'));
     // 5) 独立文件（受开关控制）：
-    //    - saveLrc   → 旁挂同名 .lrc
+    //    - saveLrc   → 旁挂同名 .lrc（lrcTLrc 控制是否并入翻译，lrcEncoding 控制编码）
     //    - saveCover → 独立封面图片文件（同名 .jpg/.png）
-    if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric });
+    if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric, includeTlyric: opts.lrcTLrc, encoding: opts.lrcEncoding });
     if (wantCover && coverBuf) tagWriter.writeCoverFile({ dest, coverBytes: coverBuf });
     return tagRes && tagRes.ok;
   } catch (e) {

@@ -348,16 +348,26 @@
     badge.textContent = TYPE_LABEL[qt] || qt;
   }
 
-  /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播） */
+  /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播）
+   * V4.3.22：多选模式——右键「多选」进入，行首复选框 + 全选/下载选中/退出；批量下载进任务队列 */
   function renderSongsTable(c) {
+    if (!S.stSel || !(S.stSel instanceof Set)) S.stSel = new Set();
+    if (S.stMulti) renderMsBar(c);
     var tb = el('table', 'am-table');
-    tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:72px">音质</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
+    tb.innerHTML = '<thead><tr>' + (S.stMulti ? '<th style="width:34px"></th>' : '') + '<th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:72px">音质</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
     var body = el('tbody');
     // 在线歌单播放中队列≠本表：高亮只认当前队列（防误标同索引行）
     var queueHere = !S._playList || S._playList === S.stResults;
     S.stResults.forEach(function (song, i) {
-      var tr = el('tr', 'am-tr' + (queueHere && i === S.stIndex ? ' cur' : ''));
+      var tr = el('tr', 'am-tr' + (queueHere && i === S.stIndex && !S.stMulti ? ' cur' : '') + (S.stMulti && S.stSel.has(song) ? ' sel' : ''));
       tr.dataset.st = i;
+      if (S.stMulti) { // 多选模式：行首复选框，点击行=切换选中（不播放）
+        var tdCk = el('td');
+        var ck = document.createElement('input');
+        ck.type = 'checkbox'; ck.checked = S.stSel.has(song); ck.className = 'am-ms-ck';
+        ck.onclick = function (e) { e.stopPropagation(); toggleSel(song, tr, ck); };
+        tdCk.appendChild(ck); tr.appendChild(tdCk);
+      }
       var tdCover = el('td');
       var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy';
       if (song.cover) { img.src = song.cover; img.onerror = function () { img.style.visibility = 'hidden'; }; }
@@ -392,18 +402,99 @@
         window.annieShare.copy(url).then(function (ok) { stToast(ok ? '链接已复制：' + url : '复制失败'); });
       };
       tdShare.appendChild(bShare); tr.appendChild(tdShare);
-      // V3.5.8：单曲下载按钮（含进度百分比，完成后写入标签/封面/歌词）
+      // V3.5.8：单曲下载按钮（V4.3.22 起统一进下载任务队列，见「下载情况」）
       var tdDl = el('td');
       var bDl = el('button', 'am-dl-btn', '⬇');
       bDl.title = '下载到下载目录（音质：' + S.stQuality + '）';
-      bDl.onclick = function (e) { e.stopPropagation(); downloadSong(song, bDl); };
+      bDl.onclick = function (e) {
+        e.stopPropagation();
+        bDl.textContent = '✓';
+        setTimeout(function () { if (bDl.isConnected) bDl.textContent = '⬇'; }, 1500);
+        queueDownloads([song]);
+      };
       tdDl.appendChild(bDl); tr.appendChild(tdDl);
-      tr.onclick = function () { playStreamAt(i); };
-      tr.ondblclick = function () { playStreamAt(i); };
+      if (S.stMulti) {
+        tr.onclick = function () { toggleSel(song, tr, tr.querySelector('.am-ms-ck')); };
+      } else {
+        tr.onclick = function () { playStreamAt(i); };
+        tr.ondblclick = function () { playStreamAt(i); };
+        // 右键：多选 / 下载
+        tr.oncontextmenu = function (e) { e.preventDefault(); openStRowMenu(e.clientX, e.clientY, i); };
+      }
       body.appendChild(tr);
     });
     tb.appendChild(body);
     c.appendChild(tb);
+  }
+
+  /* 多选：切换某行选中态（存歌曲对象引用——翻页/追加加载后选择依然正确；原地更新防滚动丢失） */
+  function toggleSel(song, tr, ck) {
+    if (S.stSel.has(song)) { S.stSel.delete(song); tr.classList.remove('sel'); if (ck) ck.checked = false; }
+    else { S.stSel.add(song); tr.classList.add('sel'); if (ck) ck.checked = true; }
+    var cnt = document.querySelector('.am-ms-count');
+    if (cnt) cnt.textContent = '已选 ' + S.stSel.size + ' 首';
+  }
+
+  /* 多选工具条：全选 / 下载选中 / 退出 */
+  function renderMsBar(c) {
+    var bar = el('div', 'am-ms-bar');
+    var bAll = el('button', 'am-btn', (S.stSel.size >= S.stResults.length && S.stResults.length) ? '☐ 取消全选' : '☑ 全选');
+    bAll.onclick = function () {
+      if (S.stSel.size >= S.stResults.length) S.stSel.clear();
+      else S.stResults.forEach(function (song) { S.stSel.add(song); });
+      renderView();
+    };
+    bar.appendChild(bAll);
+    var bDl = el('button', 'am-btn', '⬇ 下载选中');
+    bDl.onclick = function () {
+      if (!S.stSel.size) { stToast('先勾选要下载的歌曲'); return; }
+      var songs = Array.from(S.stSel);
+      S.stMulti = false; S.stSel = new Set();
+      queueDownloads(songs);
+      renderView();
+    };
+    bar.appendChild(bDl);
+    var bExit = el('button', 'am-btn', '✕ 退出多选');
+    bExit.onclick = function () { S.stMulti = false; S.stSel = new Set(); renderView(); };
+    bar.appendChild(bExit);
+    bar.appendChild(el('span', 'am-ms-count', '已选 ' + S.stSel.size + ' 首'));
+    c.appendChild(bar);
+  }
+
+  /* 右键小菜单：多选 / 下载——直接复用全局共享弹层 R.pop（与 ⊕ 菜单同一套），
+   * 外点关闭走应用初始化时就注册好的成熟机制，不再自己挂监听（此前自挂监听各种关不掉） */
+  function openStRowMenu(x, y, i) {
+    var pop = R.pop;
+    pop.innerHTML = '';
+    var b1 = el('button', 'am-pop-item', '☑ 多选');
+    b1.onclick = function () { pop.classList.remove('on'); S.stMulti = true; S.stSel = new Set([S.stResults[i]]); renderView(); };
+    pop.appendChild(b1);
+    var b2 = el('button', 'am-pop-item', '⬇ 下载');
+    b2.onclick = function () { pop.classList.remove('on'); queueDownloads([S.stResults[i]]); };
+    pop.appendChild(b2);
+    pop.classList.add('on');
+    var w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
+    pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
+  }
+
+  /* V4.3.22：下载统一入口——进主进程任务队列（下载情况视图管理，支持并发/暂停/重试） */
+  function queueDownloads(songs) {
+    if (!window.mine.dlAdd || !songs || !songs.length) return;
+    var asu = (window.annieSettings && window.annieSettings.ui) || {};
+    window.mine.dlAdd(songs.map(function (song) {
+      return {
+        provider: song.provider || S.stProvider, quality: S.stQuality, song: song,
+        saveLrc: asu.saveLrc !== false, saveCover: asu.saveCover !== false
+      };
+    })).then(function (r) {
+      try {
+        if (typeof proToast === 'function') {
+          proToast('已加入下载队列 ' + (r ? r.added : songs.length) + ' 首' +
+            (r && r.skipped ? '（队列中已存在 ' + r.skipped + ' 首）' : '') + '，见「下载情况」');
+        }
+      } catch (e) { }
+    }).catch(function () { });
   }
 
   /* V3.5.8：在线歌曲下载（复用主进程 stream:download） */
@@ -456,35 +547,12 @@
     c.appendChild(more);
   }
 
-  /* V3.5.14：批量下载当前已加载的全部结果（逐首顺序下载，状态行显示进度） */
-  var batchRunning = false;
+  /* V3.5.14：批量下载当前已加载的全部结果（V4.3.22 起进任务队列，并发/暂停在「下载情况」管理） */
   function renderBatchDlBtn(c) {
-    if (!S.stResults.length || !window.mine.streamDownload) return;
+    if (!S.stResults.length || !window.mine.dlAdd) return;
     var btn = el('button', 'am-btn', '⬇ 下载已加载 ' + S.stResults.length + ' 首');
     btn.style.marginTop = '14px'; btn.style.marginLeft = '10px';
-    btn.onclick = function () {
-      if (batchRunning) return;
-      batchRunning = true; btn.disabled = true;
-      var songs = S.stResults.slice();
-      var asu = (window.annieSettings && window.annieSettings.ui) || {};
-      var done = 0, fail = 0;
-      (function step(i) {
-        if (i >= songs.length) {
-          batchRunning = false; btn.disabled = false;
-          btn.textContent = '⬇ 下载已加载 ' + S.stResults.length + ' 首';
-          renderStreamStatus('批量下载完成：成功 ' + done + ' 首' + (fail ? '，失败 ' + fail + ' 首' : ''));
-          return;
-        }
-        var song = songs[i];
-        btn.textContent = '下载中 ' + (i + 1) + '/' + songs.length;
-        renderStreamStatus('批量下载 ' + (i + 1) + '/' + songs.length + '：' + song.name);
-        window.mine.streamDownload({
-          provider: song.provider || S.stProvider, quality: S.stQuality, song: song,
-          saveLrc: asu.saveLrc !== false, saveCover: asu.saveCover !== false,
-          _dlKey: 'amb-' + Date.now() + '-' + i
-        }).then(function () { done++; }).catch(function () { fail++; }).finally(function () { step(i + 1); });
-      })(0);
-    };
+    btn.onclick = function () { queueDownloads(S.stResults.slice()); };
     c.appendChild(btn);
   }
 

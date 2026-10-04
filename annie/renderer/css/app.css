@@ -899,6 +899,46 @@ body.mini > *:not(#mini-bar) { display: none !important; }
 .lsr-heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 10px); gap: 2px; width: fit-content; margin-top: 8px; }
 .lsr-heat-c { width: 10px; height: 10px; border-radius: 2px; background: var(--bg3); }
 
+/* ---- V4.3.24：听歌统计内嵌分页 ---- */
+.set-stats-summary { font-size: 13px; color: var(--dim); margin: 0 0 12px; }
+.set-stats-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.set-stats-card { background: var(--bg3); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  min-width: 0; transition: border-color .15s; }
+.set-stats-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.set-stats-k { font-size: 11.5px; color: var(--dim); }
+.set-stats-v { font-size: 20px; font-weight: 700; color: var(--accent); margin-top: 4px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-stats-sub { font-size: 11px; color: var(--dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.set-stats-box { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 8px; }
+.set-stats-heat-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.set-stats-box .lsr-heat { margin-top: 10px; }
+.set-stats-lg { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--dim); }
+.set-stats-lg-c { width: 10px; height: 10px; border-radius: 2px; background: var(--bg3); }
+/* 收听构成堆叠条 */
+.set-stats-stack { display: flex; height: 10px; border-radius: 999px; overflow: hidden;
+  background: var(--bg3); }
+.set-stats-seg { display: block; height: 100%; min-width: 0; transition: width .25s; }
+.set-stats-kind-leg { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px;
+  font-size: 12px; color: var(--dim); }
+.set-stats-kind-item { display: inline-flex; align-items: center; gap: 6px; }
+.set-stats-kind-item b { color: var(--text); font-weight: 600; }
+.set-stats-kind-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* 曲风/年度水平条形行 */
+.set-stats-bar-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; }
+.set-stats-bar-name { width: 150px; flex: none; color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.set-stats-bar-row.is-year .set-stats-bar-name { width: 64px; }
+.set-stats-bar-track { flex: 1; height: 6px; border-radius: 999px; background: rgba(255,255,255,.07);
+  overflow: hidden; min-width: 40px; }
+.set-stats-bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent);
+  transition: width .25s; }
+.set-stats-bar-val { flex: none; width: 132px; text-align: right; font-size: 11px; color: var(--dim);
+  font-variant-numeric: tabular-nums; }
+/* 操作按钮行 */
+.set-stats-actions { display: flex; gap: 8px; flex-wrap: wrap; flex: none; }
+.set-stats-actions .btn-ghost { width: auto; padding: 6px 16px; font-size: 12px; }
+
 /* ---- V3.5.19：智能歌单生成器表单 ---- */
 .sls-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
 .sls-field { display: flex; align-items: center; gap: 10px; }

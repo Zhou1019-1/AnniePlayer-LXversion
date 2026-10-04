@@ -37,6 +37,8 @@
   function allTracks() { return (typeof state !== 'undefined' && state.library && state.library.tracks) || []; }
 
   function stopPlayback(msg) {
+    // V4.3.24：定时停止=播放会话终结，给当前曲目会话定性（暂停按钮不走这里）
+    if (window.annieListenStats) window.annieListenStats.endSession();
     window.mine.engine('pause').catch(function () { });
     if (msg) toast(msg);
   }

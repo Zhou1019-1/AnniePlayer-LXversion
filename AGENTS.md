@@ -69,7 +69,22 @@
 
 > **不要**走本地 `scripts/release.js`（gh CLI 方案仅作备用）。标准发版 = tag 推送触发云端 workflow。
 
-## 四、常用命令
+## 四、dev 开发调试
+
+- **启动 dev**：`npm start`（即 `electron .`）。代码内判断 dev 环境用 `app.isPackaged === false`（如 `app:checkUpdate` 在 dev 下返回 `{dev:true}` 跳过更新检查）。
+- **改动生效方式**：
+  - 渲染层（`annie/renderer/` 的 js/css/html）：窗口内 **Ctrl+R 刷新即生效**，无需重启。
+  - 主进程（`annie/main/`）、`preload.js`：**必须退出重开**才生效。
+  - 涉及 ffmpeg 写标签/工具路径的改动：必须在 dev 环境验证真实落盘（见开发规范第 5 条）。
+- **日志排查**：主进程日志（`console.log`、各模块 `[qobuz]` 等前缀日志）看启动终端；渲染层用 DevTools Console。首次 `devices.list` 约 20s 是 WASAPI 枚举正常现象（启动时已后台预热）。
+- **用户侧问题排查**：让用户从应用内导出**诊断包**（含版本/日志/音频设备信息），先看诊断包再动手。
+- **网络调试**：Qobuz 等网络请求走 Electron `net.fetch` 自动跟随系统代理；dev 下开着 Clash 等代理软件即为真实用户环境，别再切回 Node 原生 fetch。
+- **已知良性现象**（不要当 bug 排查）：
+  - dev 重启偶发退出：旧进程缓存目录未释放，等其退净重启即自愈。
+  - 提交时 `annie/main/qobuz ignored` 警告：历史已追踪文件，修改照常进 commit，忽略即可。
+- 改完代码必跑 `node scripts/check-syntax.js`（150+ 文件应 0 失败），再 Ctrl+R / 重启验证。
+
+## 五、常用命令
 
 ```bash
 node scripts/check-syntax.js   # 全量语法检查（改完代码必跑，150+ 文件应 0 失败）
@@ -77,7 +92,7 @@ npm run gen:help               # 说明书三件套
 npm run dist:setup             # 本地安装包
 ```
 
-## 五、用户偏好
+## 六、用户偏好
 
 - 中文交流，混合英文技术术语（dev、tag、fpl 等）。
 - 美术风格与现有 AM 设计保持统一。

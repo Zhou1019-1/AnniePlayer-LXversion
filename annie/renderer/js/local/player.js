@@ -1199,6 +1199,8 @@ window.mine.onEngineEvent((event, d) => {
       if (d.state === 'ended') window.mine.playerProgress({ ratio: -1, playing: false });
       else window.mine.playerProgress({ ratio: state.duration > 0 ? state.position / state.duration : -1, playing: state.playing });
       if (d.state === 'ended') {
+        // V4.3.24：自然播完=会话终结（判定完整播放）；若下一曲开播会另开新会话，不重复计数
+        if (window.annieListenStats) window.annieListenStats.endSession();
         if (state.currentStream && window.annieStream) window.annieStream.playNext();
         else if (window.annieAutoNext && window.annieAutoNext()) { /* 播放模式/定时已接管（仅本地） */ }
         else playAt(state.index + 1);

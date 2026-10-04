@@ -157,6 +157,7 @@
   var currentPage = 'general';
   var pageEls = {};      // pageId → .set-page
   var onOpenHooks = [];  // 每次打开面板时刷新（如媒体库文件夹列表）
+  var pageShowHooks = {}; // V4.3.24：每次切到该页时刷新（听歌统计实时数据）
 
   // 左导航九页（顺序即定案）
   var PAGES = [
@@ -168,6 +169,7 @@
     ['visual', '视觉舞台'],
     ['library', '媒体库'],
     ['tools', '曲库工具'],
+    ['stats', '听歌统计'],
     ['download', '下载'],
     ['update', '更新与关于'],
     ['ext', '扩展'],
@@ -328,6 +330,7 @@
         b.classList.toggle('active', b.dataset.page === id);
       });
     }
+    if (pageShowHooks[id]) { try { pageShowHooks[id](); } catch (e) { } }
   }
 
   function applySearch(q) {
@@ -405,6 +408,7 @@
       pgFx = pageEls.fx,
       pgLyrics = pageEls.lyrics, pgVisual = pageEls.visual, pgLibrary = pageEls.library,
       pgTools = pageEls.tools,
+      pgStats = pageEls.stats,
       pgDownload = pageEls.download, pgUpdate = pageEls.update, pgExt = pageEls.ext;
 
     /* ================= 常规 ================= */
@@ -2150,6 +2154,12 @@
     function lsrText(r) {
       var L = ['🎵 我的安妮播放器听歌报告', '累计收听 ' + lsrFmtDur(r.totalSec) + ' · 播放 ' + r.totalPlays + ' 次'];
       if (r.favHour >= 0) L.push('最爱时段：' + r.favHour + ' 点');
+      // V4.3.24 新维度：完整率/跳过率 + 常听曲风
+      var judged = r.totalSkip + r.totalComplete + r.totalPartial;
+      if (judged > 0) {
+        L.push('完整听完 ' + (r.completeRate * 100).toFixed(1) + '% · 跳过 ' + (r.skipRate * 100).toFixed(1) + '%（完整 ' + r.totalComplete + ' / 跳过 ' + r.totalSkip + ' / 部分 ' + r.totalPartial + ' 次）');
+      }
+      if (r.genres.length) L.push('常听曲风：' + r.genres.slice(0, 3).map(function (g) { return g.name; }).join(' / '));
       if (r.topSongs.length) {
         L.push('', '【Top 歌曲】');
         r.topSongs.slice(0, 5).forEach(function (s, i) { L.push((i + 1) + '. ' + s.title + (s.artist ? ' — ' + s.artist : '') + '（' + s.plays + ' 次）'); });
@@ -2194,6 +2204,12 @@
         ctx.fillStyle = '#8a90a3'; ctx.font = '13px ' + FONT; ctx.fillText(s[0], x + 18, 172);
         ctx.fillStyle = accent; ctx.font = '700 26px ' + FONT; ctx.fillText(s[1], x + 18, 212);
       });
+      // V4.3.24：完整率/跳过率一行（夹在数字卡片与 Top 歌曲之间）
+      var lsrJudged = r.totalSkip + r.totalComplete + r.totalPartial;
+      if (lsrJudged > 0) {
+        ctx.fillStyle = '#8a90a3'; ctx.font = '13px ' + FONT;
+        ctx.fillText('完整听完 ' + (r.completeRate * 100).toFixed(1) + '%  ·  跳过 ' + (r.skipRate * 100).toFixed(1) + '%', 48, 262);
+      }
       // Top 歌曲
       var y = 286;
       ctx.fillStyle = accent; ctx.font = '600 17px ' + FONT; ctx.fillText('TOP 歌曲', 48, y); y += 14;
@@ -2230,26 +2246,48 @@
       ctx.fillText('—— 安妮播放器融合版 · 本地统计，仅自己可见', 48, H - 52);
       return new Promise(function (res, rej) { cv.toBlob(function (b) { b ? res(b) : rej(new Error('toBlob failed')); }, 'image/png'); });
     }
-    function openListenReport() {
-      var st = window.annieListenStats; if (!st) return;
-      var r = st.report();
-      var mask = el('div', 'lsr-mask');
-      var panel = el('div', 'lsr-panel');
-      panel.appendChild(el('div', 'lsr-title', '我的听歌报告'));
-      panel.appendChild(el('div', 'lsr-summary', r.totalPlays > 0
-        ? '累计收听 ' + lsrFmtDur(r.totalSec) + ' · 共播放 ' + r.totalPlays + ' 次' + (r.favHour >= 0 ? ' · 最爱在 ' + r.favHour + ' 点听歌' : '')
-        : '还没有统计数据——去播放几首歌吧！'));
-      // —— 收听热力图（V3.5.19：近 26 周，GitHub 风格，跟随强调色） ——
-      (function () {
-        var days = r.days || {};
+    /* —— 听歌统计（V4.3.24：原「听歌报告」弹窗升级为设置中心独立分页，
+     * 复用上方 lsrFmtDur/lsrList/lsrText/lsrDrawCard；新增收听构成/曲风/年度维度。
+     * 切到本页即刷新，停留期间每 4s 按数据签名差量重绘（无变化不重绘，保持滚动位置）。） —— */
+    (function buildStatsPage() {
+      var mount = el('div', 'set-stats');
+      pgStats.appendChild(mount);
+      var lastSig = '';
+
+      // 水平条形行（曲风/年度用）：name + 轨道 + 值，fillWidth 0-100
+      function barRow(name, ratio, valText, yearMod) {
+        var row = el('div', 'set-stats-bar-row' + (yearMod ? ' is-year' : ''));
+        row.appendChild(el('span', 'set-stats-bar-name', name));
+        var track = el('span', 'set-stats-bar-track');
+        var fill = el('i', 'set-stats-bar-fill');
+        fill.style.width = Math.max(2, Math.round(ratio * 100)) + '%';
+        track.appendChild(fill);
+        row.appendChild(track);
+        row.appendChild(el('span', 'set-stats-bar-val', valText));
+        return row;
+      }
+
+      // 收听热力图（近 26 周，GitHub 风格，跟随强调色）
+      function heatBlock(days) {
+        var box = el('div', 'set-stats-box');
+        var top = el('div', 'set-stats-heat-top');
+        top.appendChild(el('span', 'set-hint', '颜色越深听得越久，悬停看当天分钟数'));
         var accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim() || '#fac900';
-        var wrap = el('div', 'lsr-heat-wrap');
-        wrap.appendChild(el('div', 'lsr-col-title', '收听热力图（近半年）'));
+        var opac = [0, 0.25, 0.45, 0.7, 1];
+        var lg = el('span', 'set-stats-lg');
+        lg.appendChild(el('span', '', '少'));
+        for (var li = 0; li < 5; li++) {
+          var lc = el('i', 'set-stats-lg-c');
+          if (li > 0) { lc.style.background = accent; lc.style.opacity = opac[li]; }
+          lg.appendChild(lc);
+        }
+        lg.appendChild(el('span', '', '多'));
+        top.appendChild(lg);
+        box.appendChild(top);
         var grid = el('div', 'lsr-heat');
         var today = new Date(); today.setHours(0, 0, 0, 0);
         var start = new Date(today.getTime() - (25 * 7 + ((today.getDay() + 6) % 7)) * 86400000); // 对齐到周一
         var ymd = function (d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
-        var opac = [0, 0.25, 0.45, 0.7, 1];
         for (var w = 0; w < 26; w++) for (var d = 0; d < 7; d++) {
           var day = new Date(start.getTime() + (w * 7 + d) * 86400000);
           if (day > today) continue;
@@ -2261,50 +2299,164 @@
           if (lv > 0) { cell.style.background = accent; cell.style.opacity = opac[lv]; }
           grid.appendChild(cell);
         }
-        wrap.appendChild(grid);
-        panel.appendChild(wrap);
-      })();
-      var cols = el('div', 'lsr-cols');
-      cols.appendChild(lsrList('Top 歌曲', r.topSongs, function (s) { return s.title + (s.artist ? ' — ' + s.artist : ''); }));
-      cols.appendChild(lsrList('Top 艺术家', r.topArtists, function (s) { return s.name; }));
-      cols.appendChild(lsrList('Top 专辑', r.topAlbums, function (s) { return s.name; }));
-      panel.appendChild(cols);
-      var btns = el('div', 'lsr-btns');
-      var btnImg = el('button', 'btn-ghost', '生成分享图');
-      btnImg.onclick = function () {
-        btnImg.disabled = true;
-        lsrDrawCard(r).then(function (blob) {
-          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        }).then(function () { btnImg.textContent = '已复制 ✓ 直接粘贴发群'; })
-          .catch(function () { btnImg.textContent = '生成失败'; })
-          .finally(function () { btnImg.disabled = false; setTimeout(function () { btnImg.textContent = '生成分享图'; }, 3000); });
-      };
-      var btnCopy = el('button', 'btn-ghost', '复制报告');
-      btnCopy.onclick = function () {
-        navigator.clipboard.writeText(lsrText(r)).then(function () { btnCopy.textContent = '已复制 ✓'; })
-          .catch(function () { btnCopy.textContent = '复制失败'; })
-          .finally(function () { setTimeout(function () { btnCopy.textContent = '复制报告'; }, 3000); });
-      };
-      var btnClear = el('button', 'btn-ghost', '清空统计');
-      btnClear.onclick = function () {
-        if (!confirm('确定清空全部听歌统计？此操作不可恢复。')) return;
-        st.clear(); mask.remove();
-      };
-      var btnClose = el('button', 'btn-ghost', '关闭');
-      btnClose.onclick = function () { mask.remove(); };
-      btns.appendChild(btnImg); btns.appendChild(btnCopy); btns.appendChild(btnClear); btns.appendChild(btnClose);
-      panel.appendChild(btns);
-      mask.onclick = function (e) { if (e.target === mask) mask.remove(); };
-      mask.appendChild(panel);
-      document.body.appendChild(mask);
-    }
-    var lsrRow = markItem(el('div', 'set-row'), '听歌报告 统计 Top 歌曲 艺术家 专辑 时长');
-    var lsrLab = el('div'); lsrLab.appendChild(el('div', '', '听歌报告'));
-    lsrLab.appendChild(el('div', 'set-hint', '本地统计你的播放记录：Top 歌曲/艺术家/专辑、累计时长、最爱时段，可一键复制分享'));
-    var lsrBtn = el('button', 'btn-ghost', '查看报告');
-    lsrBtn.onclick = openListenReport;
-    lsrRow.appendChild(lsrLab); lsrRow.appendChild(lsrBtn);
-    sFk.appendChild(lsrRow);
+        box.appendChild(grid);
+        return box;
+      }
+
+      function card(k, v, sub) {
+        var c = el('div', 'set-stats-card');
+        c.appendChild(el('div', 'set-stats-k', k));
+        c.appendChild(el('div', 'set-stats-v', v));
+        if (sub) c.appendChild(el('div', 'set-stats-sub', sub));
+        return c;
+      }
+
+      function render() {
+        var st = window.annieListenStats;
+        if (!st) return;
+        var r = st.report();
+        // 数据签名：无变化跳过重绘（保留滚动位置/悬停态）
+        var sig = [r.totalSec, r.totalPlays, r.totalSkip, r.totalComplete, r.totalPartial,
+          r.genres.length, r.years.length, Object.keys(r.days).length].join('|');
+        if (sig === lastSig && mount.childNodes.length) return;
+        lastSig = sig;
+        var scrollTop = contentEl ? contentEl.scrollTop : 0;
+        mount.innerHTML = '';
+        var judged = r.totalSkip + r.totalComplete + r.totalPartial;
+        var pct = function (x) { return (x * 100).toFixed(1) + '%'; };
+
+        // —— 总览：六张数字卡片 ——
+        var sOv = section(mount, '总览');
+        sOv.appendChild(el('div', 'set-stats-summary', r.totalPlays > 0
+          ? '累计收听 ' + lsrFmtDur(r.totalSec) + ' · 共播放 ' + r.totalPlays + ' 次' + (r.favHour >= 0 ? ' · 最爱在 ' + r.favHour + ' 点听歌' : '')
+          : '还没有统计数据——去播放几首歌吧！'));
+        var cards = el('div', 'set-stats-cards');
+        cards.appendChild(card('累计收听', lsrFmtDur(r.totalSec)));
+        cards.appendChild(card('播放次数', String(r.totalPlays)));
+        cards.appendChild(card('最爱时段', r.favHour >= 0 ? r.favHour + ' 点' : '—'));
+        cards.appendChild(card('完整播放', r.totalComplete + ' 次', judged ? '占比 ' + pct(r.completeRate) : '暂无判定'));
+        cards.appendChild(card('跳过', r.totalSkip + ' 次', judged ? '跳过率 ' + pct(r.skipRate) : '暂无判定'));
+        cards.appendChild(card('部分收听', r.totalPartial + ' 次', judged ? '占比 ' + pct(judged ? r.totalPartial / judged : 0) : '暂无判定'));
+        sOv.appendChild(cards);
+
+        // —— 收听热力图（近半年） ——
+        var sHeat = section(mount, '收听热力图（近半年）');
+        sHeat.appendChild(heatBlock(r.days || {}));
+
+        // —— 收听构成：完整/部分/跳过 堆叠条 + 图注 ——
+        var sKind = section(mount, '收听构成');
+        var kBox = el('div', 'set-stats-box');
+        var stack = el('div', 'set-stats-stack');
+        var segs = [
+          ['完整听完', r.completeRate, r.totalComplete, 'var(--accent)'],
+          ['部分收听', judged ? r.totalPartial / judged : 0, r.totalPartial, '#8a90a3'],
+          ['跳过', r.skipRate, r.totalSkip, '#fa2d55']
+        ];
+        segs.forEach(function (g) {
+          var seg = el('i', 'set-stats-seg');
+          seg.style.width = (g[1] * 100) + '%';
+          seg.style.background = g[3];
+          seg.title = g[0] + ' ' + g[2] + ' 次 · ' + pct(g[1]);
+          stack.appendChild(seg);
+        });
+        kBox.appendChild(stack);
+        if (judged > 0) {
+          var leg = el('div', 'set-stats-kind-leg');
+          segs.forEach(function (g) {
+            var item = el('span', 'set-stats-kind-item');
+            var dot = el('i', 'set-stats-kind-dot'); dot.style.background = g[3];
+            item.appendChild(dot);
+            item.appendChild(document.createTextNode(g[0] + ' '));
+            item.appendChild(el('b', '', g[2] + ' 次'));
+            item.appendChild(document.createTextNode(' · ' + pct(g[1])));
+            leg.appendChild(item);
+          });
+          kBox.appendChild(leg);
+        } else {
+          kBox.appendChild(el('div', 'lsr-empty', '播放几首歌并切歌后开始判定：听到 80% 或末尾算完整，不足 1/3 算跳过，之间算部分'));
+        }
+        sKind.appendChild(kBox);
+
+        // —— 曲风分布 Top 8 ——
+        var sGenre = section(mount, '曲风分布 Top 8');
+        var gBox = el('div', 'set-stats-box');
+        if (!r.genres.length) {
+          gBox.appendChild(el('div', 'lsr-empty', '暂无数据——歌曲标签含「流派」字段后自动统计（支持 ; ； 、 / | 分隔，每首最多取 3 项）'));
+        } else {
+          var gMax = Math.max.apply(null, r.genres.map(function (g) { return g.sec; }));
+          r.genres.forEach(function (g) {
+            gBox.appendChild(barRow(g.name, gMax > 0 ? g.sec / gMax : 0, g.plays + ' 次 · ' + lsrFmtDur(g.sec)));
+          });
+        }
+        sGenre.appendChild(gBox);
+
+        // —— 年度统计 ——
+        var sYear = section(mount, '年度统计');
+        var yBox = el('div', 'set-stats-box');
+        if (!r.years.length) {
+          yBox.appendChild(el('div', 'lsr-empty', '暂无数据'));
+        } else {
+          var yMax = Math.max.apply(null, r.years.map(function (y) { return y.sec; }));
+          r.years.forEach(function (y) {
+            yBox.appendChild(barRow(y.name + ' 年', yMax > 0 ? y.sec / yMax : 0, y.plays + ' 次 · ' + lsrFmtDur(y.sec), true));
+          });
+        }
+        sYear.appendChild(yBox);
+
+        // —— Top 三榜（Top 8） ——
+        var sTop = section(mount, 'Top 榜单');
+        var cols = el('div', 'lsr-cols');
+        cols.appendChild(lsrList('Top 歌曲', r.topSongs, function (s) { return s.title + (s.artist ? ' — ' + s.artist : ''); }));
+        cols.appendChild(lsrList('Top 艺术家', r.topArtists, function (s) { return s.name; }));
+        cols.appendChild(lsrList('Top 专辑', r.topAlbums, function (s) { return s.name; }));
+        sTop.appendChild(cols);
+
+        // —— 数据与分享：复制报告 / 生成分享图 / 清空统计 ——
+        var sAct = section(mount, '数据与分享');
+        var actRow = markItem(el('div', 'set-row'), '复制报告 生成分享图 清空统计 听歌统计 数据');
+        var actLab = el('div');
+        actLab.appendChild(el('div', '', '统计数据'));
+        actLab.appendChild(el('div', 'set-hint', '数据仅保存在本机不上传；「复制报告」生成文本，「生成分享图」复制 PNG 后可直接粘贴发群'));
+        actRow.appendChild(actLab);
+        var btnWrap = el('div', 'set-stats-actions');
+        var btnImg = el('button', 'btn-ghost', '生成分享图');
+        btnImg.onclick = function () {
+          btnImg.disabled = true;
+          lsrDrawCard(r).then(function (blob) {
+            return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          }).then(function () { btnImg.textContent = '已复制 ✓ 直接粘贴发群'; })
+            .catch(function () { btnImg.textContent = '生成失败'; })
+            .finally(function () { btnImg.disabled = false; setTimeout(function () { btnImg.textContent = '生成分享图'; }, 3000); });
+        };
+        var btnCopy = el('button', 'btn-ghost', '复制报告');
+        btnCopy.onclick = function () {
+          navigator.clipboard.writeText(lsrText(r)).then(function () { btnCopy.textContent = '已复制 ✓'; })
+            .catch(function () { btnCopy.textContent = '复制失败'; })
+            .finally(function () { setTimeout(function () { btnCopy.textContent = '复制报告'; }, 3000); });
+        };
+        var btnClear = el('button', 'btn-ghost', '清空统计');
+        btnClear.onclick = function () {
+          if (!confirm('确定清空全部听歌统计？此操作不可恢复。')) return;
+          st.clear();
+          lastSig = '';
+          render();
+        };
+        btnWrap.appendChild(btnImg); btnWrap.appendChild(btnCopy); btnWrap.appendChild(btnClear);
+        actRow.appendChild(btnWrap);
+        sAct.appendChild(actRow);
+
+        if (contentEl) contentEl.scrollTop = scrollTop;
+      }
+
+      render(); // buildPanel 首建时即渲染（搜索索引/首次打开都有内容）
+      onOpenHooks.push(function () { if (currentPage === 'stats') render(); });
+      pageShowHooks.stats = render;
+      // 停留本页时 4s 轮询：播放中 totalSec 持续变化，签名不同才重绘
+      setInterval(function () {
+        if (searchEl && searchEl.value) return; // 搜索态不重绘，避免过滤结果被刷新
+        if (panel && panel.classList.contains('open') && currentPage === 'stats') render();
+      }, 4000);
+    })();
 
     // —— 智能歌单生成器（V3.5.19：规则筛选本地曲库 → 播放/存为播放列表） ——
     var slsRow = markItem(el('div', 'set-row'), '智能歌单 规则 筛选 生成 播放列表 smart playlist');

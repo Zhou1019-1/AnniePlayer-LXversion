@@ -793,6 +793,158 @@ function registerIpc() {
     return { canceled: false, results, playlists: loadStore().playlists };
   });
 
+  /* V4.3.25：自建歌单导出 / 导入（换机复现；导出 .anniepl——JSON 载体，
+   * 每首带多指纹：绝对路径、相对媒体库根路径、文件名、大小、时长、标题/艺人。
+   * 导入在目标机曲库内 5 级降级匹配，未命中曲目随结果返回，前端列清单告知。） */
+  const normPlPath = (s) => String(s == null ? '' : s).replace(/\//g, '\\').replace(/\\+$/g, '').toLowerCase();
+  const normPlText = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
+  // 在目标机曲库 tracks + metaCache 上建索引，逐条 5 级匹配；返回 {matched:[path], missing:[指纹]}
+  const matchImportedTracks = (pkg, store) => {
+    const tracks = store.tracks || [];
+    const metas = store.metaCache || {};
+    const folders = (store.folders || []).map(f => normPlPath(f));
+    const pushList = (mp, k, v) => { const a = mp.get(k); if (a) a.push(v); else mp.set(k, [v]); };
+    const byPath = new Map(), byBaseSize = new Map(), byBase = new Map(), byTA = new Map();
+    for (const t of tracks) {
+      const p = t && t.path;
+      if (typeof p !== 'string') continue;
+      const n = normPlPath(p);
+      const base = n.split('\\').pop();
+      byPath.set(n, p);
+      const m = metas[p] || {};
+      if (m.fileSize) pushList(byBaseSize, base + '|' + m.fileSize, p);
+      pushList(byBase, base, p);
+      if (m.title) pushList(byTA, normPlText(m.title) + '|' + normPlText(m.artist || ''), p);
+    }
+    // 从候选里挑未占用、时长最接近的；无时长线索时仅候选唯一才采信（避免误配同名文件）
+    const pick = (cands, srcDur, tol) => {
+      let best = null, bd = tol;
+      for (const p of cands) {
+        if (used.has(p)) continue;
+        const d = (metas[p] || {}).duration || 0;
+        if (srcDur && d) {
+          const df = Math.abs(d - srcDur);
+          if (df <= tol && df < bd) { bd = df; best = p; }
+        } else if (!srcDur) {
+          const avail = cands.filter(x => !used.has(x));
+          if (avail.length === 1) best = avail[0]; // 双方都无时长可比，仅一个可用候选才采信
+        }
+      }
+      return best;
+    };
+    const used = new Set();
+    const matched = [], missing = [];
+    for (const it of (pkg.tracks || [])) {
+      let cand = null;
+      const n = normPlPath(it.path || '');
+      // ① 绝对路径直配
+      if (n) { const x = byPath.get(n); if (x && !used.has(x)) cand = x; }
+      // ② 相对媒体库根拼接（盘符/用户名/目录结构不同，只要相对后缀一致即可）
+      if (!cand && it.rel) {
+        for (const f of folders) {
+          const x = byPath.get(f + '\\' + normPlPath(it.rel));
+          if (x && !used.has(x)) { cand = x; break; }
+        }
+      }
+      const baseRaw = String(it.file || '').replace(/#(cue|iso)\d+$/i, '');
+      const base = normPlPath(baseRaw).split('\\').pop() || n.split('\\').pop();
+      // ③ 文件名 + 大小
+      if (!cand && base && it.size) {
+        const a = byBaseSize.get(base + '|' + it.size);
+        if (a) cand = a.find(x => !used.has(x)) || null;
+      }
+      // ④ 同名文件 + 时长近邻（容差 1.5s）
+      if (!cand && base) {
+        const a = byBase.get(base);
+        if (a) cand = pick(a, it.duration || 0, 1.5);
+      }
+      // ⑤ 标题 + 艺人 + 时长近邻（容差 2s；目录/文件名全变、标签还在时兜底）
+      if (!cand && it.title) {
+        const a = byTA.get(normPlText(it.title) + '|' + normPlText(it.artist || ''));
+        if (a) cand = pick(a, it.duration || 0, 2);
+      }
+      if (cand) { used.add(cand); matched.push(cand); }
+      else missing.push({ file: it.file || it.path || '', title: it.title || '', artist: it.artist || '' });
+    }
+    return { matched, missing };
+  };
+
+  ipcMain.handle('lib:playlist:exportFile', async (_e, id) => {
+    const store = loadStore();
+    const pl = (store.playlists || []).find(p => p.id === id);
+    if (!pl) return { ok: false, reason: '播放列表不存在' };
+    const safeName = (pl.name || 'playlist').replace(/[\\/:*?"<>|]/g, '_');
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '导出播放列表「' + pl.name + '」',
+      defaultPath: safeName + '.anniepl',
+      filters: [{ name: '安妮播放列表', extensions: ['anniepl'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
+    try {
+      const folders = (store.folders || []).map(f => String(f || '').replace(/[\\/]+$/, ''));
+      const metas = store.metaCache || {};
+      const tracks = [];
+      for (const p0 of (pl.paths || [])) {
+        if (typeof p0 !== 'string') continue;
+        let rel = '';
+        const np = normPlPath(p0);
+        for (const f0 of folders) {
+          if (np.indexOf(normPlPath(f0) + '\\') === 0) { rel = p0.slice(f0.length).replace(/^[\\/]+/, ''); break; }
+        }
+        const m = metas[p0] || {};
+        tracks.push({
+          path: p0,
+          file: path.basename(p0.replace(/#(cue|iso)\d+$/i, '')),
+          rel,
+          title: m.title || '', artist: m.artist || '', album: m.album || '',
+          duration: m.duration || 0, size: m.fileSize || 0
+        });
+      }
+      fs.writeFileSync(r.filePath, JSON.stringify({
+        kind: 'annie-playlist', version: 1, name: pl.name,
+        app: app.getName(), appVer: app.getVersion(), time: new Date().toISOString(),
+        folders, tracks
+      }, null, 2), 'utf8');
+      return { ok: true, path: r.filePath, count: tracks.length };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
+
+  ipcMain.handle('lib:playlist:importFile', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '导入安妮播放列表',
+      filters: [{ name: '安妮播放列表', extensions: ['anniepl'] }],
+      properties: ['openFile', 'multiSelections']
+    });
+    if (r.canceled || !r.filePaths.length) return { canceled: true };
+    const store = loadStore();
+    const names = new Set((store.playlists || []).map(p => p.name));
+    const results = [];
+    for (const fp of r.filePaths) {
+      let pkg;
+      try { pkg = JSON.parse(fs.readFileSync(fp, 'utf8')); }
+      catch (e) { results.push({ file: fp, ok: false, error: '文件解析失败：' + e.message }); continue; }
+      if (!pkg || pkg.kind !== 'annie-playlist' || !Array.isArray(pkg.tracks)) {
+        results.push({ file: fp, ok: false, error: '不是有效的安妮播放列表文件（.anniepl）' }); continue;
+      }
+      const mr = matchImportedTracks(pkg, store);
+      let name = String(pkg.name || path.basename(fp).replace(/\.anniepl$/i, '') || '').trim() || '导入的播放列表';
+      const base = name; let n = 2;
+      while (names.has(name)) name = base + ' (' + (n++) + ')';
+      names.add(name);
+      const npl = {
+        id: 'pl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        name, paths: mr.matched, created: Date.now(), importedFrom: fp
+      };
+      store.playlists.push(npl);
+      results.push({
+        id: npl.id, file: fp, ok: true, name,
+        total: pkg.tracks.length, matched: mr.matched.length, missing: mr.missing
+      });
+    }
+    saveStore({ playlists: store.playlists });
+    return { canceled: false, results, playlists: loadStore().playlists };
+  });
+
   // V4.3.5：在线歌单（流媒体收藏）——items 存 {provider, song, addedAt}；
   // song 为洛雪 lx-sdk 原始曲目对象（含平台 ID/meta），播放地址每次现解析，不落盘 URL
   const splItemKey = (it) => {

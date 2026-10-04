@@ -280,6 +280,84 @@
   }
 
   /* ---------------- 侧栏 ---------------- */
+
+  // V4.3.25：自建歌单导出 .anniepl（换机复现；主进程按多指纹在目标机曲库匹配）
+  function exportPlaylistFile(pl) {
+    window.mine.playlistExportFile(pl.id).then(function (r) {
+      if (!r || r.reason === 'canceled') return;
+      if (r.ok) {
+        try { if (typeof proToast === 'function') proToast('📤 已导出 ' + r.count + ' 首到：' + r.path); } catch (e) { }
+      } else alert('导出失败：' + (r.reason || '未知错误'));
+    }).catch(function () { });
+  }
+  function removeSidePlaylist(pl) {
+    if (!confirm('删除播放列表「' + pl.name + '」？')) return;
+    window.mine.playlistDelete(pl.id).then(function (pls) {
+      S.playlists = pls;
+      if (S.view === 'pl:' + pl.id) S.view = 'songs';
+      renderSidebar(); renderView();
+    });
+  }
+  // 侧栏歌单行右键菜单（复用共享弹层 R.pop；外点关闭由初始化时注册的全局监听负责）
+  function openPlSideMenu(x, y, pl) {
+    var pop = R.pop;
+    pop.innerHTML = '';
+    var t = el('div', 'am-pop-item', pl.name); t.style.fontWeight = '600';
+    pop.appendChild(t);
+    pop.appendChild(el('div', 'am-pop-sep'));
+    var ex = el('button', 'am-pop-item', '📤 导出歌单文件…');
+    ex.title = '导出为 .anniepl，可发给另一台电脑的安妮播放器导入复现';
+    ex.onclick = function () { pop.classList.remove('on'); exportPlaylistFile(pl); };
+    pop.appendChild(ex);
+    var dl = el('button', 'am-pop-item', '🗑 删除播放列表');
+    dl.onclick = function () { pop.classList.remove('on'); removeSidePlaylist(pl); };
+    pop.appendChild(dl);
+    pop.classList.add('on');
+    var w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
+    pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
+  }
+  // 导入 .anniepl：主进程完成匹配并建表，这里汇报匹配结果；未命中曲目清单 alert 列出
+  function importPlaylistFiles() {
+    window.mine.playlistImportFile().then(function (r) {
+      if (!r || r.canceled) return;
+      if (r.playlists) S.playlists = r.playlists;
+      var oks = (r.results || []).filter(function (x) { return x.ok; });
+      var bads = (r.results || []).filter(function (x) { return !x.ok; });
+      if (!oks.length) {
+        alert('导入失败：\n' + bads.map(function (x) { return x.file + '：' + x.error; }).join('\n'));
+        renderSidebar(); return;
+      }
+      renderSidebar();
+      var totalMiss = oks.reduce(function (s, x) { return s + (x.total - x.matched); }, 0);
+      var totalMatched = oks.reduce(function (s, x) { return s + x.matched; }, 0);
+      try {
+        if (typeof proToast === 'function')
+          proToast('📥 已导入 ' + oks.length + ' 个歌单，匹配 ' + totalMatched + ' 首' + (totalMiss ? '，' + totalMiss + ' 首未找到' : ''));
+      } catch (e) { }
+      if (oks.length === 1 && oks[0].id) { S.view = 'pl:' + oks[0].id; renderSidebar(); renderView(); }
+      if (totalMiss || bads.length) {
+        var lines = [];
+        if (totalMiss) {
+          lines.push('以下 ' + totalMiss + ' 首未在本机曲库找到（本机未收录、文件名/标签不同或源文件缺失）：');
+          var shown = 0;
+          oks.forEach(function (x) {
+            (x.missing || []).forEach(function (m) {
+              if (shown++ >= 50) return;
+              var label = m.title || m.file || '未知曲目';
+              if (m.artist) label += ' — ' + m.artist;
+              if (m.file && m.title && m.file !== m.title) label += '（' + String(m.file).split('\\').pop() + '）';
+              lines.push('· [' + x.name + '] ' + label);
+            });
+          });
+          if (shown > 50) lines.push('…（仅显示前 50 首）');
+        }
+        if (bads.length) lines.push('', '以下文件解析失败：', bads.map(function (x) { return '· ' + x.file + '：' + x.error; }).join('\n'));
+        alert(lines.join('\n'));
+      }
+    }).catch(function () { });
+  }
+
   function renderSidebar() {
     if (!R.sidebar) return;
     var sb = R.sidebar;
@@ -320,17 +398,17 @@
     S.playlists.forEach(function (pl) {
       var b = nav('🎧', pl.name, 'pl:' + pl.id);
       var del = el('button', 'am-nav-del', '✕');
-      del.title = '删除播放列表';
+      del.title = '删除播放列表（右键歌单可导出 .anniepl 换机复现）';
       del.onclick = function (e) {
         e.stopPropagation();
-        if (!confirm('删除播放列表「' + pl.name + '」？')) return;
-        window.mine.playlistDelete(pl.id).then(function (pls) {
-          S.playlists = pls;
-          if (S.view === 'pl:' + pl.id) S.view = 'songs';
-          renderSidebar(); renderView();
-        });
+        removeSidePlaylist(pl);
       };
       b.appendChild(del);
+      // V4.3.25：右键歌单——导出 .anniepl / 删除
+      b.oncontextmenu = function (e) {
+        e.preventDefault(); e.stopPropagation();
+        openPlSideMenu(e.clientX, e.clientY, pl);
+      };
       sb.appendChild(b);
     });
     var add = el('button', 'am-nav am-new');
@@ -383,6 +461,14 @@
       }).catch(function () { });
     };
     sb.appendChild(impFpl);
+
+    // V4.3.25：导入安妮歌单文件（.anniepl，另一台电脑导出；主进程按多指纹匹配本机歌曲）
+    var impPl = el('button', 'am-nav am-new');
+    impPl.appendChild(el('span', 'am-nav-ico', '📦'));
+    impPl.appendChild(el('span', 'am-nav-name', '导入安妮歌单…'));
+    impPl.title = '导入 .anniepl 歌单文件（另一台电脑的安妮播放器导出）；按路径/文件名/标签智能匹配本机歌曲，可多选批量导入';
+    impPl.onclick = function () { importPlaylistFiles(); };
+    sb.appendChild(impPl);
 
     // V4.3.5：在线歌单（流媒体收藏；与本地播放列表并列但互不相混）
     sb.appendChild(el('div', 'am-side-h', '在线歌单'));
@@ -453,20 +539,27 @@
     sch.appendChild(el('span', null, '⌕'));
     var inp = document.createElement('input');
     inp.placeholder = '搜索歌曲、艺人、专辑'; inp.value = S.search;
-    inp.oninput = function () {
+    // V4.3.24：IME 组词期间不切视图/不重绘（renderSidebar 会重建本框，同样打断中文输入）
+    function commitSideSearch() {
       S.search = inp.value.trim();
       if (S.search) {
         // 搜索是全库行为：专辑网格/文件夹列表/在线搜索里输入时切回歌曲列表
         if (S.view === 'stream' || (S.view === 'albums' && !S.albumKey) || (S.view === 'folders' && !S.folderPath)) {
           S.view = 'songs'; S.albumKey = null; S.folderPath = null;
-          renderSidebar();
+          var pos = inp.selectionStart;
+          renderSidebar(); // 侧栏重建会换新搜索框——恢复焦点与光标，保证连续输入
+          var ni = R.sidebar && R.sidebar.querySelector('.am-search input');
+          if (ni) { ni.focus(); try { ni.setSelectionRange(pos, pos); } catch (e) { } }
         }
         ensureMetaDeep(); // 后台分块补齐全库标签（metaCache 持久化，仅首次有成本）
       }
       // 防抖：打字过程中不整表重绘，150ms 静默后一次性渲染
       clearTimeout(S._schT);
       S._schT = setTimeout(renderView, 150);
-    };
+    }
+    inp.addEventListener('compositionstart', function () { inp._ime = true; });
+    inp.addEventListener('compositionend', function () { inp._ime = false; commitSideSearch(); });
+    inp.oninput = function () { if (inp._ime) return; commitSideSearch(); };
     sch.appendChild(inp); sb.appendChild(sch);
   }
 
@@ -478,25 +571,44 @@
     ['mtimeDesc', '修改时间 · 新→旧'], ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']];
   var ALBUM_SORT_OPTS = [['az', '名称 A–Z'], ['azArtist', '艺人 A–Z'], ['countDesc', '曲目数 · 多→少'], ['countAsc', '曲目数 · 少→多']];
   function viewQuery(view) { return (S.viewQuery && S.viewQuery[view]) || ''; }
+  /* V4.3.24：带搜索框三视图的头部身份键（视图 + 排序）。同键重绘复用旧头部 DOM——
+     搜索框不被重建，中文 IME 组词会话/焦点/光标原位保留；排序切换后键变化，头部按新配置重建。
+     （教训：曾在 oninput 防抖后 innerHTML 整体重绘，英文直接上屏无感，中文 composition 被掐断，
+      表现为只能逐字母上屏、无法选字。） */
+  function headKeyFor() {
+    if (S.view === 'songs' && AM.songSortMode) return 'songs#' + AM.songSortMode();
+    if (S.view === 'favorites' && AM.favSortMode) return 'favorites#' + AM.favSortMode();
+    if (S.view === 'albums' && !S.albumKey && AM.albumSortMode) return 'albums#' + AM.albumSortMode();
+    return null;
+  }
   function buildViewHead(title, cfg) {
     var head = el('div', 'am-view-head');
+    head.dataset.hkey = cfg.view + '#' + (cfg.sort ? cfg.sort.value : '');
     head.appendChild(el('div', 'am-view-h', title));
     if (cfg.search) {
       var inp = document.createElement('input');
       inp.className = 'am-view-search';
       inp.placeholder = cfg.search.placeholder;
       inp.value = viewQuery(cfg.view);
-      inp.oninput = function () {
+      // IME 组词期间（compositionstart→compositionend）不索引、不重绘；
+      // 汉字上屏 compositionend 后再提交过滤，避免组词过程被重绘打断
+      function commitSearch() {
         S.viewQuery = S.viewQuery || {};
         S.viewQuery[cfg.view] = inp.value.trim();
+        var pos = inp.selectionStart;
         clearTimeout(S._vqT);
         S._vqT = setTimeout(function () {
           renderView();
-          // 重绘会重建输入框——恢复焦点并把光标移到末尾，保证连续输入不中断
-          var el2 = R.content && R.content.querySelector('.am-view-search');
-          if (el2) { el2.focus(); try { el2.setSelectionRange(el2.value.length, el2.value.length); } catch (e) { } }
+          // 头部复用时 inp 原位保留、焦点不动；仅头部被重建（切排序/切视图）时恢复焦点与光标
+          if (!inp.isConnected) {
+            var el2 = R.content && R.content.querySelector('.am-view-search');
+            if (el2) { el2.focus(); try { el2.setSelectionRange(pos, pos); } catch (e) { } }
+          }
         }, 150);
-      };
+      }
+      inp.addEventListener('compositionstart', function () { inp._ime = true; });
+      inp.addEventListener('compositionend', function () { inp._ime = false; commitSearch(); });
+      inp.oninput = function () { if (inp._ime) return; commitSearch(); };
       head.appendChild(inp);
     }
     if (cfg.sort) {
@@ -525,7 +637,21 @@
   function renderView() {
     if (!R.content || (window.annieTheme && annieTheme.current !== 'am')) return;
     var c = R.content;
-    c.innerHTML = '';
+    // V4.3.24：同视图同排序重绘时复用旧头部（搜索框），只删头部以外的子节点。
+    // 头部绝不 remove/重插——脱离文档会丢焦点并取消 IME 组词，中文就没法选字
+    var hk = headKeyFor();
+    var reuseHead = null;
+    if (hk) {
+      var exHead = c.querySelector('.am-view-head[data-hkey]');
+      if (exHead && exHead.dataset.hkey === hk) reuseHead = exHead;
+    }
+    if (reuseHead) {
+      for (var ci = c.children.length - 1; ci >= 0; ci--) {
+        if (c.children[ci] !== reuseHead) c.children[ci].remove();
+      }
+    } else {
+      c.innerHTML = '';
+    }
     // V4.3.8：A–Z 索引栏挂在 .am-body 上（不随 content 清空），非歌曲视图需主动移除
     var oldAz = c.parentElement && c.parentElement.querySelector('.am-az');
     if (oldAz) oldAz.remove();
@@ -551,7 +677,7 @@
 
     var tracks = currentTracks();
 
-    if (S.view === 'albums' && !S.albumKey) { renderAlbumGrid(c); return; }
+    if (S.view === 'albums' && !S.albumKey) { renderAlbumGrid(c, reuseHead); return; }
     if (S.view === 'folders' && !S.folderPath) { renderFolderRoots(c); return; }
 
     var folderKids = null;
@@ -585,7 +711,9 @@
       renderPlaylistHead(c);
     } else if (S.view === 'favorites') {
       // V4.3.22：喜爱歌曲头部——视图内搜索 + 排序下拉（同歌曲视图）
-      c.appendChild(buildViewHead('喜爱歌曲', {
+      // 复用的 head 已在 c 的首位，绝不能再 appendChild——同一父节点内 append 已存在节点
+      // 也会先摘后插，导致输入框失焦（表现为每上屏/删一个字就得重新点搜索框）
+      if (!reuseHead) c.appendChild(buildViewHead('喜爱歌曲', {
         view: 'favorites',
         search: { placeholder: songSearchPh(AM.favSortMode()) },
         sort: { opts: SONG_SORT_OPTS, value: AM.favSortMode(), key: 'amFavSort' }
@@ -593,7 +721,8 @@
     } else {
       // V4.3.15：歌曲视图标题行——右侧排序下拉（首字母/文件名/修改时间/大小）
       // V4.3.22：加视图内搜索框，匹配字段跟随排序方式
-      c.appendChild(buildViewHead('歌曲', {
+      // 复用 head 零操作（同上：append 已存在节点会移动位置并抢走焦点）
+      if (!reuseHead) c.appendChild(buildViewHead('歌曲', {
         view: 'songs',
         search: { placeholder: songSearchPh(AM.songSortMode()) },
         sort: { opts: SONG_SORT_OPTS, value: AM.songSortMode(), key: 'amSongSort' }
@@ -637,10 +766,11 @@
     });
   }
 
-  function renderAlbumGrid(c) {
+  function renderAlbumGrid(c, reuseHead) {
     // V4.3.22：专辑视图头部——视图内搜索 + 排序下拉（名称/艺人/曲目数）
     var amode = AM.albumSortMode ? AM.albumSortMode() : 'az';
-    c.appendChild(buildViewHead('专辑', {
+    // 复用 head 已在 c 首位，不再 append（移动已存在节点会使搜索框失焦）
+    if (!reuseHead) c.appendChild(buildViewHead('专辑', {
       view: 'albums',
       search: { placeholder: amode === 'azArtist' ? '搜索艺人' : '搜索专辑名' },
       sort: { opts: ALBUM_SORT_OPTS, value: amode, key: 'amAlbumSort' }

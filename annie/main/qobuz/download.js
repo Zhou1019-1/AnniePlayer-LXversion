@@ -6,6 +6,10 @@
 const fs = require('fs');
 const path = require('path');
 
+/* V4.3.22 修复：HTTP 层可注入（Electron net.fetch 走系统代理），同 api.js */
+let httpFetch = globalThis.fetch;
+function setHttpFetch(fn) { if (typeof fn === 'function') httpFetch = fn; }
+
 const CONCURRENCY = 3;
 const MAX_ATTEMPT = 3; // 每首最多尝试次数（每次重新签名取新 URL，防 URL 过期）
 
@@ -45,7 +49,7 @@ async function downloadOne(client, quality, item, baseDir, isCanceled, emit) {
     const offset = fs.existsSync(part) ? fs.statSync(part).size : 0;
     const headers = offset > 0 ? { Range: 'bytes=' + offset + '-' } : {};
     try {
-      const resp = await fetch(f.url, { headers });
+      const resp = await httpFetch(f.url, { headers });
       if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
       // 服务器忽略 Range 回 200 → 从头重写
       const resume = offset > 0 && resp.status === 206;
@@ -103,4 +107,4 @@ async function runQueue(client, quality, items, baseDir, isCanceled, emit) {
   return stat;
 }
 
-module.exports = { runQueue, downloadOne, destOf, sanitize };
+module.exports = { runQueue, downloadOne, destOf, sanitize, setHttpFetch };

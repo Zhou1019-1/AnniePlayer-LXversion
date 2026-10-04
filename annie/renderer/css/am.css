@@ -734,7 +734,18 @@ html[data-motion="off"] #am-root::before {
   box-shadow: 0 4px 14px rgba(0,0,0,.3);
   transition: opacity var(--dur-micro);
 }
-.am-vol:hover input[type="range"], .am-vol input[type="range"]:focus { opacity: 1; pointer-events: auto; }
+.am-vol:hover input[type="range"], .am-vol input[type="range"]:focus,
+.am-vol.vol-open input[type="range"] { opacity: 1; pointer-events: auto; }
+/* V4.3.22 修复：图标与音量条间有 2px 空隙，鼠标经过空隙时 :hover 断裂、音量条瞬间
+ * pointer-events:none（该属性不参与过渡），导致音量条没等鼠标移到就消失。
+ * 用仅悬停时生效的隐形桥覆盖图标右缘→音量条整片区域，保持 hover 链路不断。
+ * pointer-events:none 默认态保证常态不遮挡右侧独占/定位按钮。 */
+.am-vol::after {
+  content: ''; position: absolute;
+  left: 30px; top: -8px; bottom: -8px; width: 118px;
+  z-index: 5; pointer-events: none;
+}
+.am-vol:hover::after, .am-vol:focus-within::after, .am-vol.vol-open::after { pointer-events: auto; }
 /* 行内迷你按钮/弹层项补齐按压反馈 */
 .am-mini-btn { transition: opacity .12s, color .12s, transform .1s; }
 .am-mini-btn:active { transform: scale(.88); }

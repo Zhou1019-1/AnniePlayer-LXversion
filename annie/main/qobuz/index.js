@@ -3,10 +3,28 @@
  * 与 QBDLX 同模式：每个用户登录自己的 Qobuz 付费账号（邮箱+密码 或 user_auth_token）。
  * 凭据用 Electron safeStorage 加密存 store.qobuzExp；token 失效自动重登一次。
  * 应用级 app_id/secret 默认用 Qobuz 安卓客户端公开对（见 api.js 注释），可手工覆盖。 */
-const { ipcMain, safeStorage, dialog, BrowserWindow } = require('electron');
+const { ipcMain, safeStorage, dialog, BrowserWindow, net } = require('electron');
 const api = require('./api');
 const dl = require('./download');
 const streaming = require('../streaming'); // Qobuz 无歌词 API：借 LX 五源按标题+艺人兜底匹配；下载目录复用其 downloadDir
+
+/* V4.3.22 修复：Qobuz 统一走 net.fetch —— 自动跟随 Windows 系统代理
+ *（Node 全局 fetch 不读系统代理，挂 Clash 的用户照样连不上）。
+ * 20s 连接/响应头超时；响应头一到达即清除计时，不限制大文件传输。 */
+function qzFetch(url, opts) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 20000);
+  return net.fetch(url, Object.assign({}, opts, { signal: ctl.signal })).then(
+    function (r) { clearTimeout(timer); return r; },
+    function (e) {
+      clearTimeout(timer);
+      if (e && e.name === 'AbortError')
+        throw new Error('连接 Qobuz 超时（20 秒无响应）：检查网络或代理软件是否正常运行');
+      const code = (e && (e.code || (e.cause && e.cause.code))) || '';
+      throw new Error('无法连接 Qobuz 服务器' + (code ? '（' + code + '）' : '') +
+        '：请检查网络，若使用代理请确认系统代理已开启');
+    });
+}
 
 let loadStore = null, flushStore = null, touchStore = null;
 let client = null;          // QobuzClient 登录态
@@ -152,6 +170,8 @@ const dlState = { running: false, canceled: false };
 
 function init(ctx) {
   loadStore = ctx.loadStore; flushStore = ctx.flushStore; touchStore = ctx.touchStore;
+  api.setHttpFetch(qzFetch); // V4.3.22：API/下载全链路走 net.fetch（系统代理）
+  dl.setHttpFetch(qzFetch);
 
   ipcMain.handle('qobuz:status', () => {
     const inf = info();
@@ -164,10 +184,15 @@ function init(ctx) {
     const opts = {};
     if (payload.appId) opts.appId = String(payload.appId).trim();
     if (payload.secret) opts.secret = String(payload.secret).trim();
-    return doLogin(
-      payload.token ? { userId: String(payload.userId), token: String(payload.token) }
-                    : { email: String(payload.email), password: String(payload.password) },
-      (opts.appId || opts.secret) ? opts : null);
+    try {
+      return await doLogin(
+        payload.token ? { userId: String(payload.userId), token: String(payload.token) }
+                      : { email: String(payload.email), password: String(payload.password) },
+        (opts.appId || opts.secret) ? opts : null);
+    } catch (e) {
+      console.error('[qobuz] 登录失败:', e && e.code, e && e.message); // 诊断包无主进程日志时难排查
+      throw e;
+    }
   });
   ipcMain.handle('qobuz:logout', () => { client = null; clearCreds(); return info(); });
 

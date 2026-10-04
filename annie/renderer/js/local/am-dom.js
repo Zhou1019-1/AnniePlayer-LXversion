@@ -101,6 +101,25 @@
       if (legacyVol) legacyVol.value = R.vol.value; // 与粒子舞台底栏音量保持同步
     };
     vol.appendChild(R.vol);
+    // V4.3.22：音量条关闭延迟——离开悬停区后保持 600ms，给鼠标移过去的余量；
+    // 期间重新进入立即取消隐藏（隐形桥 ::after 是 vol 子元素，移到桥上不触发 mouseleave）
+    var volHideT = null;
+    function volKeep() { clearTimeout(volHideT); vol.classList.add('vol-open'); }
+    function volScheduleHide() {
+      clearTimeout(volHideT);
+      volHideT = setTimeout(function () { vol.classList.remove('vol-open'); }, 600);
+    }
+    vol.addEventListener('mouseenter', volKeep);
+    vol.addEventListener('mouseleave', volScheduleHide);
+    R.vol.addEventListener('focus', volKeep); // 键盘 Tab 聚焦也保持
+    // V4.3.22 修复：指针拖动结束后输入框仍持有 :focus，音量条卡在不消失。
+    // 指针交互结束（change）即 blur；鼠标若还悬停区域上，:hover 会继续保持音量条。
+    // volFromPtr 标记保证键盘方向键调节时不抢焦点。
+    var volFromPtr = false;
+    R.vol.addEventListener('pointerdown', function () { volFromPtr = true; });
+    R.vol.addEventListener('change', function () {
+      if (volFromPtr) { volFromPtr = false; R.vol.blur(); }
+    });
     right.appendChild(vol);
     R.btnExcl = el('button', 'am-tbtn', (window.annieIsExclusive ? window.annieIsExclusive() : true) ? '🔒' : '🔓');
     R.btnExcl.title = 'WASAPI 独占/共享输出（独占 = bit-perfect）';

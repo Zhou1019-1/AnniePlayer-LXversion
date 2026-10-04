@@ -32,8 +32,13 @@ const RE_SEED = /[a-z]\.initialSeed\("(?<seed>[\w=]+)",window\.utimezone\.(?<tim
 
 function md5(s) { return crypto.createHash('md5').update(s, 'utf8').digest('hex'); }
 
+/* V4.3.22 修复：HTTP 层可注入。默认全局 fetch 不走 Windows 系统代理，
+ * 由 index.js 注入 Electron net.fetch（跟随系统代理）。 */
+let httpFetch = globalThis.fetch;
+function setHttpFetch(fn) { if (typeof fn === 'function') httpFetch = fn; }
+
 async function fetchText(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
+  const r = await httpFetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
   if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
   return r.text();
 }
@@ -112,7 +117,7 @@ class QobuzClient {
     const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
     if (this.appId) headers['X-App-Id'] = this.appId;
     if (this.token) headers['X-User-Auth-Token'] = this.token;
-    const r = await fetch(BASE + '/' + epoint + '?' + qs, { headers });
+    const r = await httpFetch(BASE + '/' + epoint + '?' + qs, { headers });
     let body = null;
     try { body = await r.json(); } catch { /* 非 JSON */ }
     return { status: r.status, body };
@@ -247,4 +252,4 @@ async function login(creds) {
   return c;
 }
 
-module.exports = { login, QobuzClient, getAppIdAndSecrets, QUALITY_MAP, DEFAULT_APP_ID, DEFAULT_APP_SECRET };
+module.exports = { login, QobuzClient, getAppIdAndSecrets, QUALITY_MAP, DEFAULT_APP_ID, DEFAULT_APP_SECRET, setHttpFetch };

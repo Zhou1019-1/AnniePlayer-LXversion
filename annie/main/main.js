@@ -719,6 +719,19 @@ function registerIpc() {
     if (pl && Array.isArray(paths)) { pl.paths = paths.slice(); saveStore({ playlists: store.playlists }); }
     return store.playlists;
   });
+  // V4.3.26：侧栏自建歌单长按拖拽排序——按 id 数组重排 playlists 顺序
+  ipcMain.handle('lib:playlist:reorderList', (_e, ids) => {
+    const store = loadStore();
+    if (Array.isArray(ids)) {
+      const byId = new Map(store.playlists.map(p => [p.id, p]));
+      const next = [];
+      ids.forEach(id => { if (byId.has(id)) { next.push(byId.get(id)); byId.delete(id); } });
+      byId.forEach(p => next.push(p)); // 兜底：不在 ids 里的排末尾（防数据丢失）
+      store.playlists = next;
+      saveStore({ playlists: store.playlists });
+    }
+    return store.playlists;
+  });
   // SVLX 1.3.0：自建播放列表（Apple Music 主题使用；{id, name, paths[], created}）
   ipcMain.handle('lib:playlists', () => loadStore().playlists);
   ipcMain.handle('lib:playlist:create', (_e, name) => {
@@ -943,6 +956,72 @@ function registerIpc() {
     }
     saveStore({ playlists: store.playlists });
     return { canceled: false, results, playlists: loadStore().playlists };
+  });
+
+  /* V4.3.26：在线歌单导出 / 导入（.anniespl——JSON 载体，存 {provider, song 快照, addedAt}）。
+   * 流媒体曲目不依赖本地文件：provider + 平台 ID（songmid/hash/trackId）跨机直接有效，
+   * 导入即原样灌回，联网拉源即可播放，无需匹配本机曲库。 */
+  ipcMain.handle('spl:exportFile', async (_e, id) => {
+    const store = loadStore();
+    const pl = (store.streamPlaylists || []).find(p => p.id === id);
+    if (!pl) return { ok: false, reason: '在线歌单不存在' };
+    const safeName = (pl.name || 'playlist').replace(/[\\/:*?"<>|]/g, '_');
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '导出在线歌单「' + pl.name + '」',
+      defaultPath: safeName + '.anniespl',
+      filters: [{ name: '安妮在线歌单', extensions: ['anniespl'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
+    try {
+      fs.writeFileSync(r.filePath, JSON.stringify({
+        kind: 'annie-stream-playlist', version: 1, name: pl.name,
+        app: app.getName(), appVer: app.getVersion(), time: new Date().toISOString(),
+        items: (pl.items || []).map(it => ({ provider: it.provider, song: it.song, addedAt: it.addedAt }))
+      }, null, 2), 'utf8');
+      return { ok: true, path: r.filePath, count: (pl.items || []).length };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
+
+  ipcMain.handle('spl:importFile', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '导入安妮在线歌单',
+      filters: [{ name: '安妮在线歌单', extensions: ['anniespl'] }],
+      properties: ['openFile', 'multiSelections']
+    });
+    if (r.canceled || !r.filePaths.length) return { canceled: true };
+    const store = loadStore();
+    const names = new Set((store.streamPlaylists || []).map(p => p.name));
+    const results = [];
+    for (const fp of r.filePaths) {
+      let pkg;
+      try { pkg = JSON.parse(fs.readFileSync(fp, 'utf8')); }
+      catch (e) { results.push({ file: fp, ok: false, error: '文件解析失败：' + e.message }); continue; }
+      if (!pkg || pkg.kind !== 'annie-stream-playlist' || !Array.isArray(pkg.items)) {
+        results.push({ file: fp, ok: false, error: '不是有效的安妮在线歌单文件（.anniespl）' }); continue;
+      }
+      let name = String(pkg.name || path.basename(fp).replace(/\.anniespl$/i, '') || '').trim() || '导入的在线歌单';
+      const base = name; let n = 2;
+      while (names.has(name)) name = base + ' (' + (n++) + ')';
+      names.add(name);
+      // 逐条过 splNormalize 校验 + 同歌单内去重
+      const seen = new Set(); const items = [];
+      for (const raw of pkg.items) {
+        const it = splNormalize(raw && raw.song ? Object.assign({}, raw.song, { provider: raw.provider || raw.song.provider }) : raw);
+        if (!it) continue;
+        if (raw && raw.addedAt) it.addedAt = raw.addedAt;
+        const k = splItemKey(it);
+        if (seen.has(k)) continue;
+        seen.add(k); items.push(it);
+      }
+      const npl = {
+        id: 'spl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        name, items, created: Date.now(), importedFrom: fp
+      };
+      store.streamPlaylists.push(npl);
+      results.push({ id: npl.id, file: fp, ok: true, name, total: pkg.items.length, imported: items.length });
+    }
+    saveStore({ streamPlaylists: store.streamPlaylists });
+    return { canceled: false, results, playlists: loadStore().streamPlaylists };
   });
 
   // V4.3.5：在线歌单（流媒体收藏）——items 存 {provider, song, addedAt}；

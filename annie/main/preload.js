@@ -47,6 +47,11 @@ contextBridge.exposeInMainWorld('mine', {
   // V4.3.25：自建歌单导出（.anniepl）/ 导入换机复现（多指纹匹配）
   playlistExportFile: (id) => ipcRenderer.invoke('lib:playlist:exportFile', id),
   playlistImportFile: () => ipcRenderer.invoke('lib:playlist:importFile'),
+  // V4.3.26：在线歌单导出（.anniespl）/ 导入换机复现（流媒体 provider+ID 快照，无需本地文件）
+  splExportFile: (id) => ipcRenderer.invoke('spl:exportFile', id),
+  splImportFile: () => ipcRenderer.invoke('spl:importFile'),
+  // V4.3.26：侧栏自建歌单长按拖拽排序
+  playlistReorderList: (ids) => ipcRenderer.invoke('lib:playlist:reorderList', ids),
   // V4.3.5：在线歌单（流媒体收藏）
   splList: () => ipcRenderer.invoke('spl:list'),
   splCreate: (name) => ipcRenderer.invoke('spl:create', name),

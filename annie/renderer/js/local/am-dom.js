@@ -220,6 +220,43 @@
     // V4.3.22：面板顶部封面（绝对定位叠加在歌词滚动区上方；无封面/开关关闭时隐藏）
     R.lyrCover = el('img', 'am-lyr-cover'); R.lyrCover.alt = '';
     lyr.appendChild(R.lyrCover);
+    // V4.3.26：封面大小可拖拽调节（右下角把手对角拖拽 140–280px，CSS 变量驱动，localStorage 记忆）。
+    // 把手挂 .am-lyrics（封面同容器）——overflow:hidden 不影响内部正坐标子元素。
+    (function () {
+      var CV_KEY = 'annieplayer.am.lyrcoversize';
+      var size = 200;
+      try { size = Math.min(280, Math.max(140, parseInt(localStorage.getItem(CV_KEY), 10) || 200)); } catch (e) { }
+      var rootEl = document.getElementById('am-root');
+      function apply() {
+        if (rootEl) rootEl.style.setProperty('--am-lyrcover-size', size + 'px');
+        try { localStorage.setItem(CV_KEY, String(size)); } catch (e) { }
+      }
+      apply();
+      var grip = el('div', 'am-lyr-cover-grip'); grip.title = '拖拽调节封面大小';
+      grip.addEventListener('pointerdown', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        var sx = e.clientX, sy = e.clientY, s0 = size;
+        grip.setPointerCapture(e.pointerId);
+        grip.classList.add('on');
+        function mv(ev) {
+          var d = (ev.clientX - sx) + (ev.clientY - sy);
+          size = Math.min(280, Math.max(140, Math.round(s0 + d * 0.7)));
+          if (rootEl) rootEl.style.setProperty('--am-lyrcover-size', size + 'px');
+        }
+        function up(ev) {
+          grip.releasePointerCapture(ev.pointerId);
+          grip.classList.remove('on');
+          apply();
+          grip.removeEventListener('pointermove', mv);
+          grip.removeEventListener('pointerup', up);
+          grip.removeEventListener('pointercancel', up);
+        }
+        grip.addEventListener('pointermove', mv);
+        grip.addEventListener('pointerup', up);
+        grip.addEventListener('pointercancel', up);
+      });
+      lyr.appendChild(grip);
+    })();
     R.lyrScroll = el('div', 'am-lyr-scroll');
     lyr.appendChild(R.lyrScroll);
     // 歌词外观设置入口（悬浮 ⚙，hover 面板显现）
@@ -317,6 +354,68 @@
     pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
     pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
   }
+
+  /* V4.3.26：侧栏自建歌单长按拖拽排序（Pointer 事件手动实现，与单击进歌单/右键菜单共存）。
+   * 400ms 长按进入拖拽（此时抑制 click），拖动经过目标歌单时按上半/下半决定插前/插后（落点高亮），
+   * 松手后按新顺序调 playlistReorderList 持久化并重渲侧栏。 */
+  function attachPlDragSort(btn, pl) {
+    var pressTimer = 0, dragging = false, startY = 0, pid = 0;
+    btn.style.touchAction = 'none'; // 触屏/触控板也走 pointer 流
+    btn.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return; // 右键交给 oncontextmenu
+      pid = e.pointerId; startY = e.clientY; dragging = false;
+      clearTimeout(pressTimer);
+      pressTimer = setTimeout(function () {
+        dragging = true;
+        btn.classList.add('pl-drag-src');
+        try { btn.setPointerCapture(pid); } catch (err) { }
+      }, 400);
+    });
+    btn.addEventListener('pointermove', function (e) {
+      if (!pressTimer && !dragging) return;
+      if (!dragging && Math.abs(e.clientY - startY) > 8) { clearTimeout(pressTimer); pressTimer = 0; return; } // 移动过早=取消长按
+      if (!dragging) return;
+      // 找当前悬停的歌单按钮
+      var over = document.elementFromPoint(e.clientX, e.clientY);
+      var target = over && over.closest ? over.closest('.am-nav[data-plid]') : null;
+      sb_clearPlDrop();
+      if (target && target !== btn && target.dataset.plid) {
+        var r = target.getBoundingClientRect();
+        var before = (e.clientY - r.top) < r.height / 2;
+        target.classList.add(before ? 'pl-drop-before' : 'pl-drop-after');
+        btn._dropTarget = target; btn._dropBefore = before;
+      } else { btn._dropTarget = null; }
+    });
+    function endDrag(e) {
+      clearTimeout(pressTimer); pressTimer = 0;
+      if (!dragging) return; // 未达到长按阈值=正常点击，放行
+      dragging = false;
+      btn.classList.remove('pl-drag-src');
+      var target = btn._dropTarget, before = btn._dropBefore;
+      btn._dropTarget = null;
+      sb_clearPlDrop();
+      try { btn.releasePointerCapture(pid); } catch (err) { }
+      btn._suppressClick = true;
+      setTimeout(function () { btn._suppressClick = false; }, 50);
+      if (!target || !target.dataset.plid || target.dataset.plid === pl.id) return;
+      // 计算新顺序：把 pl 移到 target 前/后
+      var ids = S.playlists.map(function (p) { return p.id; });
+      var from = ids.indexOf(pl.id), to = ids.indexOf(target.dataset.plid);
+      if (from < 0 || to < 0) return;
+      ids.splice(from, 1);
+      to = ids.indexOf(target.dataset.plid);
+      ids.splice(before ? to : to + 1, 0, pl.id);
+      window.mine.playlistReorderList(ids).then(function (pls) { S.playlists = pls; renderSidebar(); }).catch(function () { });
+    }
+    btn.addEventListener('pointerup', endDrag);
+    btn.addEventListener('pointercancel', endDrag);
+    // 拖拽后抑制紧随的 click（避免误进歌单）
+    btn.addEventListener('click', function (e) { if (btn._suppressClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+  }
+  function sb_clearPlDrop() {
+    if (!R.sidebar) return;
+    R.sidebar.querySelectorAll('.pl-drop-before, .pl-drop-after').forEach(function (x) { x.classList.remove('pl-drop-before'); x.classList.remove('pl-drop-after'); });
+  }
   // 导入 .anniepl：主进程完成匹配并建表，这里汇报匹配结果；未命中曲目清单 alert 列出
   function importPlaylistFiles() {
     window.mine.playlistImportFile().then(function (r) {
@@ -358,6 +457,65 @@
     }).catch(function () { });
   }
 
+  // V4.3.26：在线歌单导出 .anniespl（流媒体 provider+平台 ID 快照，跨机无需本地文件，联网即播）
+  function exportSplFile(pl) {
+    window.mine.splExportFile(pl.id).then(function (r) {
+      if (!r || r.reason === 'canceled') return;
+      if (r.ok) {
+        try { if (typeof proToast === 'function') proToast('📤 已导出在线歌单 ' + r.count + ' 首到：' + r.path); } catch (e) { }
+      } else alert('导出失败：' + (r.reason || '未知错误'));
+    }).catch(function () { });
+  }
+  function removeSideSpl(pl) {
+    if (!confirm('删除在线歌单「' + pl.name + '」？（不影响任何本地文件）')) return;
+    window.mine.splDelete(pl.id).then(function (pls) {
+      S.streamPlaylists = pls;
+      if (S.view === 'spl:' + pl.id) S.view = 'stream';
+      renderSidebar(); renderView();
+    });
+  }
+  // 在线歌单右键菜单（复用 R.pop）
+  function openSplSideMenu(x, y, pl) {
+    var pop = R.pop;
+    pop.innerHTML = '';
+    var t = el('div', 'am-pop-item', pl.name); t.style.fontWeight = '600';
+    pop.appendChild(t);
+    pop.appendChild(el('div', 'am-pop-sep'));
+    var ex = el('button', 'am-pop-item', '📤 导出在线歌单…');
+    ex.title = '导出为 .anniespl，可发给另一台电脑导入（流媒体曲目联网即可播放，无需本地文件）';
+    ex.onclick = function () { pop.classList.remove('on'); exportSplFile(pl); };
+    pop.appendChild(ex);
+    var dl = el('button', 'am-pop-item', '🗑 删除在线歌单');
+    dl.onclick = function () { pop.classList.remove('on'); removeSideSpl(pl); };
+    pop.appendChild(dl);
+    pop.classList.add('on');
+    var w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
+    pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
+  }
+  // 导入 .anniespl
+  function importSplFiles() {
+    window.mine.splImportFile().then(function (r) {
+      if (!r || r.canceled) return;
+      if (r.playlists) S.streamPlaylists = r.playlists;
+      var oks = (r.results || []).filter(function (x) { return x.ok; });
+      var bads = (r.results || []).filter(function (x) { return !x.ok; });
+      if (!oks.length) {
+        alert('导入失败：\n' + bads.map(function (x) { return x.file + '：' + x.error; }).join('\n'));
+        renderSidebar(); return;
+      }
+      renderSidebar();
+      var totalImp = oks.reduce(function (s, x) { return s + x.imported; }, 0);
+      var totalSkip = oks.reduce(function (s, x) { return s + (x.total - x.imported); }, 0);
+      try {
+        if (typeof proToast === 'function')
+          proToast('📥 已导入 ' + oks.length + ' 个在线歌单，共 ' + totalImp + ' 首' + (totalSkip ? '，' + totalSkip + ' 首无效/重复已跳过' : ''));
+      } catch (e) { }
+      if (oks.length === 1 && oks[0].id) { S.view = 'spl:' + oks[0].id; renderSidebar(); renderView(); }
+      if (bads.length) alert('以下文件解析失败：\n' + bads.map(function (x) { return '· ' + x.file + '：' + x.error; }).join('\n'));
+    }).catch(function () { });
+  }
+
   function renderSidebar() {
     if (!R.sidebar) return;
     var sb = R.sidebar;
@@ -395,8 +553,14 @@
     sb.appendChild(nav('❤️', '喜爱歌曲', 'favorites'));
 
     sb.appendChild(el('div', 'am-side-h', '播放列表'));
+    // V4.3.26：图标位换首曲封面（批量 metaFullBatch 异步取，无封面保留 🎧）+ 长按拖拽排序
+    var plFirstPaths = [];
     S.playlists.forEach(function (pl) {
       var b = nav('🎧', pl.name, 'pl:' + pl.id);
+      b.dataset.plid = pl.id;
+      // 首曲封面占位（异步回填）
+      var firstPath = (pl.paths || [])[0];
+      if (firstPath) plFirstPaths.push([pl.id, firstPath, b]);
       var del = el('button', 'am-nav-del', '✕');
       del.title = '删除播放列表（右键歌单可导出 .anniepl 换机复现）';
       del.onclick = function (e) {
@@ -409,8 +573,25 @@
         e.preventDefault(); e.stopPropagation();
         openPlSideMenu(e.clientX, e.clientY, pl);
       };
+      // V4.3.26：长按拖拽排序（400ms 长按进入拖拽，拖到目标位置松手插入；与单击/右键共存）
+      attachPlDragSort(b, pl);
       sb.appendChild(b);
     });
+    // 批量回填首曲封面
+    if (plFirstPaths.length && window.mine.metaFullBatch) {
+      window.mine.metaFullBatch(plFirstPaths.map(function (x) { return x[1]; })).then(function (map) {
+        plFirstPaths.forEach(function (x) {
+          var cover = map && map[x[1]] && map[x[1]].cover;
+          if (!cover) return;
+          var ico = x[2].querySelector('.am-nav-ico');
+          if (!ico) return;
+          var cv = el('img'); cv.alt = ''; cv.loading = 'lazy'; cv.draggable = false;
+          cv.style.cssText = 'width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none';
+          cv.src = cover; cv.onerror = function () { cv.style.visibility = 'hidden'; };
+          ico.textContent = ''; ico.appendChild(cv);
+        });
+      }).catch(function () { });
+    }
     var add = el('button', 'am-nav am-new');
     add.appendChild(el('span', 'am-nav-ico', '＋'));
     add.appendChild(el('span', 'am-nav-name', '新建播放列表'));
@@ -484,17 +665,17 @@
         ico.textContent = ''; ico.appendChild(cv);
       }
       var del = el('button', 'am-nav-del', '✕');
-      del.title = '删除在线歌单';
+      del.title = '删除在线歌单（右键可导出 .anniespl 换机复现）';
       del.onclick = function (e) {
         e.stopPropagation();
-        if (!confirm('删除在线歌单「' + pl.name + '」？（不影响任何本地文件）')) return;
-        window.mine.splDelete(pl.id).then(function (pls) {
-          S.streamPlaylists = pls;
-          if (S.view === 'spl:' + pl.id) S.view = 'stream';
-          renderSidebar(); renderView();
-        });
+        removeSideSpl(pl);
       };
       b.appendChild(del);
+      // V4.3.26：右键在线歌单——导出 .anniespl / 删除
+      b.oncontextmenu = function (e) {
+        e.preventDefault(); e.stopPropagation();
+        openSplSideMenu(e.clientX, e.clientY, pl);
+      };
       sb.appendChild(b);
     });
     var addSpl = el('button', 'am-nav am-new');
@@ -510,6 +691,13 @@
       });
     };
     sb.appendChild(addSpl);
+    // V4.3.26：导入在线歌单文件（.anniespl，另一台电脑导出；流媒体曲目联网即可播放）
+    var impSpl = el('button', 'am-nav am-new');
+    impSpl.appendChild(el('span', 'am-nav-ico', '📥'));
+    impSpl.appendChild(el('span', 'am-nav-name', '导入在线歌单…'));
+    impSpl.title = '导入 .anniespl 在线歌单（另一台电脑导出）；流媒体曲目存平台 ID，联网即可播放，无需本地文件，可多选批量导入';
+    impSpl.onclick = function () { importSplFiles(); };
+    sb.appendChild(impSpl);
 
     // 收藏的平台歌单（歌单广场 ☆ 收藏歌单 的来源；localStorage，am-stream 片提供存取与跳转）
     var slFavs = AM.slFavs ? AM.slFavs() : [];
@@ -1181,6 +1369,50 @@
   }
   window.anniePrompt = amPrompt;
 
+  /* V4.3.26：弹出菜单二级浮层（歌单太多把右键菜单顶出屏幕的修复）。
+   * 二级层挂在 pop 内部（外点关闭监听只认 pop 节点，独立浮层会被瞬间点掉——AGENTS.md 规范第 2 条），
+   * 用 position:fixed 摆脱父级 overflow；右侧放不下自动翻左，上下避让。 */
+  function buildPopSubMenu(parentPop, label, list, onPick) {
+    var btn = el('button', 'am-pop-item am-pop-sub', label + '（' + list.length + ' 个）');
+    var arrow = el('span', 'am-pop-sub-arrow', '▸');
+    btn.appendChild(arrow);
+    var sub = el('div', 'am-pop-sub-panel');
+    list.forEach(function (item) {
+      var it = el('button', 'am-pop-item', item.label);
+      it.onclick = function () { parentPop.classList.remove('on'); onPick(item); };
+      sub.appendChild(it);
+    });
+    function place() {
+      sub.classList.add('on');
+      var br = btn.getBoundingClientRect();
+      var sw = sub.offsetWidth, sh = sub.offsetHeight;
+      var sx = br.right + 4;
+      if (sx + sw > window.innerWidth - 8) sx = br.left - sw - 4; // 右侧放不下翻左
+      if (sx < 8) sx = Math.max(8, window.innerWidth - sw - 8);
+      var sy = br.top - 4;
+      sy = Math.max(8, Math.min(sy, window.innerHeight - sh - 8));
+      sub.style.left = sx + 'px';
+      sub.style.top = sy + 'px';
+    }
+    function hide() { sub.classList.remove('on'); }
+    btn.onmouseenter = place;
+    btn.onclick = function (e) { e.stopPropagation(); if (!sub.classList.contains('on')) place(); };
+    btn.onmouseleave = function (e) {
+      var to = e.relatedTarget;
+      if (to && (to === sub || sub.contains(to))) return;
+      hide();
+    };
+    sub.onmouseleave = function (e) {
+      var to = e.relatedTarget;
+      if (to && to === btn) return;
+      hide();
+    };
+    btn.appendChild(sub);
+    parentPop.appendChild(btn);
+    return btn;
+  }
+  AM.buildPopSubMenu = buildPopSubMenu;
+
   /* "添加到播放列表"菜单 */
   function openAddMenu(x, y, trackPath) {
     var pop = R.pop;
@@ -1252,17 +1484,24 @@
       }
     } catch (e) { }
     pop.appendChild(el('div', 'am-pop-sep'));
-    S.playlists.forEach(function (pl) {
-      var it = el('button', 'am-pop-item', pl.name);
-      it.onclick = function () {
-        pop.classList.remove('on');
-        window.mine.playlistAdd(pl.id, [trackPath]).then(function (pls) {
-          S.playlists = pls;
-          if (S.view === 'pl:' + pl.id) renderView();
-        });
-      };
-      pop.appendChild(it);
-    });
+    // V4.3.26：歌单 >8 个收敛为二级浮层，避免右键菜单被歌单列表顶出屏幕
+    function doAddToPl(pl) {
+      window.mine.playlistAdd(pl.id, [trackPath]).then(function (pls) {
+        S.playlists = pls;
+        if (S.view === 'pl:' + pl.id) renderView();
+      });
+    }
+    if (S.playlists.length > 8) {
+      buildPopSubMenu(pop, '📁 加入播放列表…', S.playlists.map(function (pl) {
+        return { label: pl.name + '（' + (pl.paths || []).length + ' 首）', pl: pl };
+      }), function (item) { doAddToPl(item.pl); });
+    } else {
+      S.playlists.forEach(function (pl) {
+        var it = el('button', 'am-pop-item', pl.name);
+        it.onclick = function () { pop.classList.remove('on'); doAddToPl(pl); };
+        pop.appendChild(it);
+      });
+    }
     if (S.playlists.length) pop.appendChild(el('div', 'am-pop-sep'));
     var nw = el('button', 'am-pop-item', '＋ 新建播放列表…');
     nw.onclick = function () {

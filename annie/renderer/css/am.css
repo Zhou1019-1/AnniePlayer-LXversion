@@ -185,6 +185,10 @@ html[data-theme="am"] #titlebar { display: none !important; }
 .am-nav:hover .am-nav-del { opacity: 1; }
 .am-nav .am-nav-del:hover { color: var(--am-accent); }
 .am-nav.am-new { color: var(--am-text-2); }
+/* V4.3.26：侧栏歌单长按拖拽排序 */
+.am-nav.pl-drag-src { opacity: .45; cursor: grabbing; background: var(--am-hover); }
+.am-nav.pl-drop-before { box-shadow: inset 0 2px 0 0 var(--am-accent); }
+.am-nav.pl-drop-after { box-shadow: inset 0 -2px 0 0 var(--am-accent); }
 
 /* 内容区 */
 .am-content { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 28px 40px; overflow-anchor: none; /* 禁滚动锚定：窗口化重建表格时浏览器异步挪 scrollTop，与可视区脱节（切歌后列表空白） */ }
@@ -320,14 +324,33 @@ html[data-theme="am"] #titlebar { display: none !important; }
 }
 .am-lyr-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 40vh 26px; scroll-behavior: smooth; transition: top .25s ease; }
 /* V4.3.22：面板顶部封面——绝对定位叠加在歌词区上方；有封面且开关打开时歌词滚动区顶部让位 */
+/* V4.3.26：封面尺寸改为 CSS 变量 --am-lyrcover-size 驱动，歌词区让位随变量联动，右下角把手可拖拽调节 */
 .am-lyr-cover {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 4;
-  width: 200px; aspect-ratio: 1; object-fit: cover; border-radius: 12px;
+  width: var(--am-lyrcover-size, 200px); aspect-ratio: 1; object-fit: cover; border-radius: 12px;
   background: var(--am-glass-2); box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+  transition: width .15s ease;
 }
 .am-lyr-cover:not([src]) { display: none; }
 #am-root.am-lyrcover-off .am-lyr-cover { display: none; }
-#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyr-scroll { top: 228px; padding-top: 20px; }
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyr-scroll { top: calc(var(--am-lyrcover-size, 200px) + 28px); padding-top: 20px; }
+/* 封面大小拖拽把手（右下角，hover 封面/把手显现） */
+.am-lyr-cover-grip {
+  position: absolute; top: calc(14px + var(--am-lyrcover-size, 200px) - 22px); left: 50%;
+  transform: translateX(calc(-50% + var(--am-lyrcover-size, 200px) / 2 - 22px));
+  width: 22px; height: 22px; z-index: 5; cursor: nwse-resize;
+  border-radius: 6px; opacity: 0; transition: opacity .2s;
+  background: rgba(0,0,0,.42);
+  backdrop-filter: blur(2px);
+}
+.am-lyr-cover-grip::before {
+  content: ''; position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px;
+  border-right: 2px solid #fff; border-bottom: 2px solid #fff; border-radius: 1px;
+}
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyrics:hover .am-lyr-cover-grip,
+.am-lyr-cover-grip.on { opacity: 1; }
+#am-root.am-lyrcover-off .am-lyr-cover-grip,
+#am-root:not(.am-lyrcover-has) .am-lyr-cover-grip { display: none; }
 .am-lyr-line {
   font-size: calc(22px * var(--am-lyr-scale, 1)); font-weight: 700; line-height: var(--am-lyr-lh, 1.45); letter-spacing: -.01em;
   padding: 7px 0; cursor: pointer;
@@ -400,6 +423,34 @@ html[data-theme="am"] #titlebar { display: none !important; }
 }
 .am-pop-item:hover { background: var(--am-accent); color: #fff; }
 .am-pop-sep { height: 1px; background: var(--am-sep); margin: 5px 8px; }
+
+/* V4.3.26：弹出菜单二级浮层（歌单太多时右键菜单收敛） */
+.am-pop-sub { position: relative; }
+.am-pop-sub-arrow { margin-left: auto; font-size: 11px; opacity: .65; }
+.am-pop-sub:hover { background: var(--am-accent); color: #fff; }
+.am-pop-sub-panel {
+  position: fixed; z-index: 91; min-width: 170px; max-width: 260px;
+  max-height: min(360px, 60vh); overflow-y: auto;
+  background: var(--am-glass); border: 1px solid var(--am-sep); border-radius: 10px;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: var(--am-shadow); padding: 6px; display: none;
+}
+.am-pop-sub-panel.on { display: block; }
+.am-pop-sub-panel::-webkit-scrollbar { width: 8px; }
+.am-pop-sub-panel::-webkit-scrollbar-thumb { background: var(--am-sep); border-radius: 4px; }
+.am-pop-sub-panel .am-pop-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-align: left; }
+
+/* V4.3.26：歌单内搜索框 / 列表内筛选框（在线歌单 + 发现音乐/榜单/收藏歌单/专辑曲目共用） */
+.am-spl-search {
+  width: 100%; box-sizing: border-box; margin-top: 8px;
+  padding: 7px 11px; border-radius: 8px; font: 13px var(--am-font);
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  outline: none; transition: border-color .2s;
+}
+.am-spl-search:focus { border-color: var(--am-accent); }
+.am-spl-search::placeholder { color: var(--am-text-3); }
+.am-st-filterbar { margin-bottom: 8px; }
+.am-pl-head .am-spl-search { margin-top: 10px; }
 
 /* ---------- 在线搜索视图（洛雪，AM 外观） ---------- */
 .am-st-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -518,8 +569,10 @@ html[data-theme="am"] #titlebar { display: none !important; }
 }
 .am-imm-closebar .am-tbtn { color: #fff; }
 .am-imm-closebar .am-tbtn:hover { background: rgba(255,255,255,.16); color: #fff; }
-.am-imm-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 72px; padding: 56px 72px 40px; }
-.am-imm-left { width: min(44vh, 480px); flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+/* V4.3.26：沉浸布局整体居中——两栏改为等分 grid，各自以屏幕左右半区中轴对称。
+   旧版 flex+justify-center 把「固定宽封面列 + 46% 歌词列」整体居中，两栏宽度不等导致视觉左重右轻。 */
+.am-imm-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 56px 40px 40px; }
+.am-imm-left { width: min(44vh, 480px); flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; justify-self: center; }
 .am-imm-cover {
   width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
   box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);
@@ -556,8 +609,8 @@ html[data-theme="am"] #titlebar { display: none !important; }
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line { color: var(--am-text-3); }
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.near { color: var(--am-text-2); }
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.cur { color: var(--am-text); }
-/* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词） */
-.am-imm-lyr { display: none; width: 46%; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
+/* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词）；V4.3.26：占满右半区并向中轴靠拢，与左栏对称 */
+.am-imm-lyr { display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
 .am-imm-lyr .am-lyr-line { font-size: calc(26px * var(--am-lyr-scale, 1)); font-weight: 700; padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
 .am-imm-lyr .am-lyr-line .tly { font-size: calc(16px * var(--am-tly-scale, 1)); }

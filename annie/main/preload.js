@@ -6,6 +6,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('mine', {
   // 窗口
   winMin: () => ipcRenderer.invoke('win:min'),
+  winFullScreen: (v) => ipcRenderer.invoke('win:fullscreen', !!v), // V4.4：沉浸模式真全屏
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),
 

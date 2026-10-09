@@ -87,7 +87,12 @@
       d.appendChild(document.createTextNode(l.text));
     }
     if (l.tly) d.appendChild(el('span', 'tly', l.tly));
-    d.onclick = function () { seek(l.t); };
+    d.onclick = function () {
+      var from = S.pos;
+      seek(l.t);
+      // V4.4：彩胶表把联动——歌词点跳也触发甩碟（AM.vinylCrownSeek 由 am-render 片注册，无彩胶时内部空转）
+      try { if (AM.vinylCrownSeek) AM.vinylCrownSeek(from, l.t); } catch (e) { }
+    };
     d._idx = i;
     d._kt = l.text || ''; // 自适应行宽测量用
     return d;
@@ -183,10 +188,13 @@
     }).catch(function () { renderLyrics(); });
   }
   var _lyrManualScrollUntil = 0;
+  /* V4.4：彩胶沉浸模式歌词常驻（💬 开关隐藏不用），更新链路的 immLyrOn 判据要带上它。
+     AM.immIsVinyl 由后加载的 am-render 片注册，调用时才取值（前向引用惯例） */
+  function immLyrActive() { return !!(S.immLyrOn || (AM.immIsVinyl && AM.immIsVinyl())); }
   function renderLyrics() {
     _lyrManualScrollUntil = 0;
     // 沉浸/迷你里打开的歌词容器同步刷新
-    if (R.imm && S.imm && S.immLyrOn) buildLyrInto(R.immLyrBox);
+    if (R.imm && S.imm && immLyrActive()) buildLyrInto(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
     var box = R.lyrScroll;
     box.innerHTML = '';
@@ -215,7 +223,7 @@
     // 逐字扫过：每 tick 更新当前行（不吃下方 line-change 早退）
     paintKara(R.lyrScroll, cur, epos);
     // 沉浸/迷你歌词容器同样每 tick 平滑扫过（否则只在行切换时跳变）
-    if (R.imm && S.imm && S.immLyrOn) paintKara(R.immLyrBox, cur, epos);
+    if (R.imm && S.imm && immLyrActive()) paintKara(R.immLyrBox, cur, epos);
     if (R.mini && S.mini && S.miniLyrOn) paintKara(R.miniLyr, cur, epos);
     if (cur === S.lyrCur) return;
     S.lyrCur = cur;
@@ -232,7 +240,7 @@
       R.lyrScroll.scrollTop = nodes[cur].offsetTop - R.lyrScroll.clientHeight * 0.42;
     }
     // 沉浸/迷你歌词容器跟随同一 S.lyrCur
-    if (R.imm && S.imm && S.immLyrOn) paintLyrBox(R.immLyrBox, cur, 0.35);
+    if (R.imm && S.imm && immLyrActive()) paintLyrBox(R.immLyrBox, cur, 0.35);
     if (R.mini && S.mini && S.miniLyrOn) paintLyrBox(R.miniLyr, cur, 0.40);
   }
 
@@ -267,7 +275,7 @@
   }
   function refitAllLyr() {
     fitLyrLines(R.lyrScroll);
-    if (R.imm && S.imm && S.immLyrOn) fitLyrLines(R.immLyrBox);
+    if (R.imm && S.imm && immLyrActive()) fitLyrLines(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) fitLyrLines(R.miniLyr);
   }
   /* 滚动条仅滚动时出现（停滚 800ms 后隐藏） */
@@ -308,7 +316,7 @@
   /* 结构级变更（每行词数）后重建三处歌词容器 */
   function rerenderAllLyr() {
     renderLyrics();
-    if (R.imm && S.imm && S.immLyrOn) buildLyrInto(R.immLyrBox);
+    if (R.imm && S.imm && immLyrActive()) buildLyrInto(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
   }
   /* V4.4：支持沉浸模式锚点——同一弹层可从主面板 ⚙ 或沉浸右上角 ⚙ 打开；

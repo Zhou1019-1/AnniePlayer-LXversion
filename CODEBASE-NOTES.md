@@ -170,8 +170,16 @@
 ### 设置中心主题专属页（V4.4）
 - PAGES 新增 `ui-am`/`ui-fb2k`，`visual` 改名「粒子舞台」；构建点在 settings.js 歌词页块之后（sAmI/sAmLyr/sF2）。
 - **AM 顶栏置底**：ui.amTopbarBottom → applyInterface 给 #am-root 加 `.am-topbar-bottom`，am.css 用 order:99 把 .am-topbar 移底（vizbar order:98 贴其上）。
+- **AM 沉浸真全屏**（V4.4）：ui.amImmFullscreen → `window.mine.winFullScreen(v)` → 主进程 `win:fullscreen`（setFullScreen，重复调用幂等守卫）。挂在 am-render.js `toggleImmersive` 进出点；所有沉浸出口（⤡/迷你互斥/切主题）都汇聚该函数，不会残留全屏。
+- **AM 沉浸样式双模式**（V4.4）：ui.amImmMode = classic|vinyl。am-render.js `buildImmersive` 按 `immMode()` 分支布局（classic 原样；vinyl = 左大歌词常驻 + 右旋转彩胶 + 底部全宽功能栏），传输/进度控件抽成 `buildImmControls`/`buildImmProg` 两模式共用（R.immPlay 等引用不变）。彩胶取色 `paintVinyl()` 在 syncAuxViews 切歌点调 `amVizColor.analyze` 注入 `--vinyl-c1/--vinyl-c2`（黑白封面回落 --am-accent）；旋转纯 CSS `amVinylSpin`，暂停停转靠 refreshAuxProgress 里 `am-vinyl-paused` 类。设置里切换经 `AM.refreshImmMode()` 原地重建（不退出沉浸）。
+- **彩胶外观自定义**（V4.4）：沉浸 closebar 💿 → `R.vinylSetPop`（am-render.js buildVinylSetPop，沿用 lyrSetPop 独立弹层模式，外点关闭在 am-dom.js 统一注册）。四项存 localStorage `annieplayer.am.vinyl.*`（cover 50–86 / scale 0.55–1.15 / op 0.25–1 / pos center|corner），经 `applyVinylStyle()` 写 CSS 变量 `--am-vinyl-cover/scale/op` 到 documentElement + `am-pos-corner` 类到 R.imm。纹路随机化：`_vinylGrooves` 缓存一组随机刻纹（宽度幂分布 0.2–2.1%、明暗纹随机混排——亮纹=封面色 26–54%、暗纹=纯黑压纹 alpha .10–.34、12% 哑光圈），`paintVinylTexture()` 生成 radial-gradient 多停止点内联 backgroundImage（引 `var(--vc1)`+`calc(a% * var(--am-vinyl-op))`）；🎲 重新摇号，封面占比变化按新起点重铺同组纹路。
+- ⚠️ **沉浸歌词更新链路的判据是 `S.immLyrOn`**（💬 开关）——彩胶模式歌词常驻但 immLyrOn=false，曾导致歌词不跟随/不高亮。现统一走 am-lyrics.js `immLyrActive()`（immLyrOn || AM.immIsVinyl()），改沉浸歌词相关代码时注意。
 - AM 歌词三件套（am.lyrscale/lyrlh/lyrwordlimit）从歌词页迁入 AM 界面页。
 - **FB2K 暗色 LS 是 JSON（true/false），与 settings lsCheckRow 的 '1'/'0' 不兼容**——FB2K 页暗色开关是自定义行（JSON 读写 + annieFb2k.setDark + annie-f2-dark-changed 回同步）。
+
+### 拖文件入歌单 + 打开文件位置（V4.4）✅
+- 「📂 打开文件位置」复用粒子舞台已有 IPC `window.mine.showItemInFolder`（`shell:showItem`）：AM 在 openAddMenu（am-dom.js，本地行右键/⊕ 菜单全视图生效）、FB2K 在 rowCtxMenu 本地分支（「在文件夹中显示」）。
+- 拖外部文件入歌单：am-dom.js `plDroppedPaths`/`addDroppedToPlaylist`（getPathForFile + 扩展名白名单含 cue；playlistAdd 主进程按 path 去重，toast 报实际新增数）。落点两处：① 侧栏歌单 nav 按钮（HTML5 drag，`plDropHasFiles` 判 `Files` 类型——内部行长按排序用 Pointer 事件、行排序拖拽无 Files 类型，互不干扰）；② 歌单视图容器 R.content（`_plDropBound` 标记只挂一次，行内 reorder drop 冒泡到容器同样生效）。高亮样式 `.am-nav.am-nav-drop`（am.css）。
 
 ---
 

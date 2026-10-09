@@ -20,6 +20,8 @@
     particlesEnabled: true, albumBg: true, albumBgBlur: 120,
     sortMode: 'name', sidebarCollapsed: false, viewMode: 'tree',
     amTopbarBottom: false, // V4.4：AM 顶栏置底（AM 界面页开关）
+    amImmFullscreen: false, // V4.4：沉浸模式真全屏（隐藏任务栏；默认关=窗口最大化）
+    amImmMode: 'classic',   // V4.4：沉浸模式样式 classic 经典双栏 | vinyl 彩胶唱片
     amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
     amFavSort: 'az',        // V4.3.22：AM 喜爱歌曲视图排序（选项同歌曲视图）
     amAlbumSort: 'az',      // V4.3.22：AM 专辑视图排序 az|azArtist|countDesc|countAsc
@@ -1693,6 +1695,30 @@
     tbSel.onchange = function () { ui.amTopbarBottom = tbSel.value === 'bottom'; applyInterface(); save(); };
     tbRow.appendChild(tbLab); tbRow.appendChild(tbSel);
     sAmI.appendChild(tbRow);
+    // —— 沉浸模式真全屏（隐藏任务栏；沉浸中切换立即生效） ——
+    checkRow(sAmI, '沉浸模式真全屏（隐藏任务栏）', 'amImmFullscreen', function () {
+      try {
+        var amRoot2 = document.getElementById('am-root');
+        var immOn = !!(amRoot2 && amRoot2.classList.contains('am-imm-on'));
+        if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(!!ui.amImmFullscreen && immOn);
+      } catch (e) { }
+    }, '沉浸模式 全屏 任务栏 隐藏 fullscreen immersive');
+    // —— 沉浸模式样式（经典双栏 / 彩胶唱片；沉浸中切换立即重建生效） ——
+    var imRow = markItem(el('div', 'set-row'), '沉浸模式 样式 彩胶 黑胶 唱片 经典 vinyl immersive style');
+    var imLab = el('div'); imLab.appendChild(el('div', '', '沉浸模式样式'));
+    imLab.appendChild(el('div', 'set-hint', '经典双栏：左封面右歌词；彩胶唱片：右侧旋转彩胶（颜色跟随封面）+ 左侧大歌词 + 底部功能栏'));
+    var imSel = document.createElement('select');
+    [['classic', '经典双栏（默认）'], ['vinyl', '彩胶唱片']].forEach(function (kv) {
+      var op = document.createElement('option'); op.value = kv[0]; op.textContent = kv[1];
+      imSel.appendChild(op);
+    });
+    imSel.value = ui.amImmMode || 'classic';
+    imSel.onchange = function () {
+      ui.amImmMode = imSel.value; save();
+      if (window.__annieAMInternal && __annieAMInternal.refreshImmMode) __annieAMInternal.refreshImmMode();
+    };
+    imRow.appendChild(imLab); imRow.appendChild(imSel);
+    sAmI.appendChild(imRow);
     // —— AM 歌词样式（自「歌词」页迁入本页，V4.4） ——
     var sAmLyr = section(pgUiAm, '歌词样式');
     lsSliderRow(sAmLyr, 'AM 歌词字号', 'annieplayer.am.lyrscale', 0.7, 1.6, 0.05, 1, fmt2, function () {

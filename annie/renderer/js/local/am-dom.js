@@ -318,6 +318,8 @@
       if (R.timerPop.classList.contains('on') && !R.timerPop.contains(e.target) && e.target !== R.btnTimer) R.timerPop.classList.remove('on');
       if (R.lyrSetPop && R.lyrSetPop.classList.contains('on') && !R.lyrSetPop.contains(e.target)
           && e.target !== R.btnLyrSet && e.target !== R.immBtnLyrSet) R.lyrSetPop.classList.remove('on'); // V4.4：沉浸 ⚙ 也是合法锚点
+      if (R.vinylSetPop && R.vinylSetPop.classList.contains('on') && !R.vinylSetPop.contains(e.target)
+          && e.target !== R.immBtnVinyl) R.vinylSetPop.classList.remove('on'); // V4.4：彩胶外观弹层
     });
 
     renderSidebar();
@@ -600,6 +602,18 @@
       };
       // V4.3.26：长按拖拽排序（400ms 长按进入拖拽，拖到目标位置松手插入；与单击/右键共存）
       attachPlDragSort(b, pl);
+      // V4.4：拖外部音频文件到侧栏歌单直接加入
+      b.addEventListener('dragover', function (e) {
+        if (!plDropHasFiles(e)) return;
+        e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch (er) { }
+        b.classList.add('am-nav-drop');
+      });
+      b.addEventListener('dragleave', function () { b.classList.remove('am-nav-drop'); });
+      b.addEventListener('drop', function (e) {
+        if (!plDropHasFiles(e)) return;
+        e.preventDefault(); b.classList.remove('am-nav-drop');
+        addDroppedToPlaylist(pl.id, plDroppedPaths(e));
+      });
       sb.appendChild(b);
     });
     // 批量回填首曲封面（仅未命中缓存的；结果写缓存，无论有无封面——'' 表示「查过，无封面」）
@@ -863,6 +877,19 @@
   function renderView() {
     if (!R.content || (window.annieTheme && annieTheme.current !== 'am')) return;
     var c = R.content;
+    // V4.4：歌单视图整体作为拖放落点（R.content 常驻，监听只挂一次；拖到行上经冒泡同样生效）
+    if (!c._plDropBound) {
+      c._plDropBound = true;
+      c.addEventListener('dragover', function (e) {
+        if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
+        e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch (er) { }
+      });
+      c.addEventListener('drop', function (e) {
+        if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
+        e.preventDefault();
+        addDroppedToPlaylist(S.view.slice(3), plDroppedPaths(e));
+      });
+    }
     // V4.3.24：同视图同排序重绘时复用旧头部（搜索框），只删头部以外的子节点。
     // 头部绝不 remove/重插——脱离文档会丢焦点并取消 IME 组词，中文就没法选字
     var hk = headKeyFor();
@@ -1456,6 +1483,37 @@
   AM.buildPopSubMenu = buildPopSubMenu;
 
   /* "添加到播放列表"菜单 */
+  /* V4.4：拖外部音频文件加入播放列表（侧栏歌单 / 歌单视图均可作落点；内部行拖拽不带 Files 类型，互不干扰） */
+  var PL_DROP_RE = /\.(flac|wav|ape|aiff?|alac|tta|wv|dsf|dff|m4a|mp3|aac|ogg|opus|wma|cue)$/i;
+  function plDropHasFiles(e) {
+    try { return !!(e.dataTransfer && [].indexOf.call(e.dataTransfer.types, 'Files') >= 0); } catch (er) { return false; }
+  }
+  function plDroppedPaths(e) {
+    try {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return [];
+      var out = [];
+      for (var i = 0; i < e.dataTransfer.files.length; i++) {
+        var p = window.mine.getPathForFile(e.dataTransfer.files[i]);
+        if (p && PL_DROP_RE.test(p)) out.push(p);
+      }
+      return out;
+    } catch (er) { return []; }
+  }
+  function addDroppedToPlaylist(plId, paths) {
+    if (!paths.length) { try { if (typeof proToast === 'function') proToast('没有可识别的音频文件'); } catch (e) { } return; }
+    var pl0 = S.playlists.find(function (p) { return p.id === plId; });
+    var oldLen = pl0 ? pl0.paths.length : 0;
+    window.mine.playlistAdd(plId, paths).then(function (pls) { // 主进程按 path 去重
+      S.playlists = pls; renderSidebar();
+      if (S.view === 'pl:' + plId) renderView();
+      var pl1 = pls.find(function (p) { return p.id === plId; });
+      var added = pl1 ? pl1.paths.length - oldLen : paths.length;
+      try {
+        if (typeof proToast === 'function') proToast(added > 0 ? '📥 已加入 ' + added + ' 首到歌单' : '这些歌曲已在歌单中');
+      } catch (e) { }
+    }).catch(function () { });
+  }
+
   function openAddMenu(x, y, trackPath) {
     var pop = R.pop;
     pop.innerHTML = '';
@@ -1484,6 +1542,13 @@
       renderSidebar(); renderView();
     };
     pop.appendChild(mal);
+    // V4.4：打开文件位置（资源管理器定位并选中该文件）
+    var mof = el('button', 'am-pop-item', '📂 打开文件位置');
+    mof.onclick = function () {
+      pop.classList.remove('on');
+      if (window.mine.showItemInFolder) window.mine.showItemInFolder(trackPath);
+    };
+    pop.appendChild(mof);
     // V4.3.16：相似歌曲推荐（零云端本地打分）
     var msr = el('button', 'am-pop-item', '✨ 找相似歌曲…');
     msr.onclick = function () {

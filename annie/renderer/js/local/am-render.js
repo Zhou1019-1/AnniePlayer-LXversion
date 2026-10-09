@@ -300,46 +300,13 @@
   }
 
   /* ================= 沉浸式播放界面 ================= */
-  function buildImmersive() {
-    if (R.imm) return;
-    var root = document.getElementById('am-root');
-    var ov = el('div', 'am-imm');
-    ov.appendChild(el('div', 'am-imm-bg'));
-    var cb = el('div', 'am-imm-closebar');
-    // V4.4：沉浸模式歌词外观入口（与主面板 ⚙ 同一弹层，锚点换成这里）
-    R.immBtnLyrSet = el('button', 'am-tbtn', '⚙');
-    R.immBtnLyrSet.title = '歌词外观（字号 / 行距 / 偏移）';
-    R.immBtnLyrSet.onclick = function (e) {
-      e.stopPropagation();
-      if (AM.toggleLyrSetPop) AM.toggleLyrSetPop(R.immBtnLyrSet);
-    };
-    cb.appendChild(R.immBtnLyrSet);
-    var bExit = el('button', 'am-tbtn', '⤡');
-    bExit.title = '退出沉浸模式';
-    bExit.onclick = function () { toggleImmersive(false); };
-    cb.appendChild(bExit);
-    ov.appendChild(cb);
-
-    var main = el('div', 'am-imm-main');
-    var left = el('div', 'am-imm-left');
-    R.immCover = document.createElement('img');
-    R.immCover.className = 'am-imm-cover'; R.immCover.alt = ''; R.immCover.draggable = false;
-    R.immTitle = el('div', 'am-imm-title');
-    R.immSub = el('div', 'am-imm-sub');
-    R.immFmt = el('div', 'am-imm-fmt');
-    left.appendChild(R.immCover); left.appendChild(R.immTitle);
-    left.appendChild(R.immSub); left.appendChild(R.immFmt);
-
-    var prog = el('div', 'am-imm-prog');
-    R.immCur = el('span', 'am-imm-time', '0:00');
-    var bar = el('div', 'am-imm-bar');
-    R.immFill = el('div', 'am-imm-fill');
-    bar.appendChild(R.immFill);
-    bindProgDrag(bar, R.immFill, R.immCur); // V4.3.16：可拖动（原仅点击）
-    R.immRemain = el('span', 'am-imm-time', '-0:00');
-    prog.appendChild(R.immCur); prog.appendChild(bar); prog.appendChild(R.immRemain);
-    left.appendChild(prog);
-
+  /* V4.4：沉浸样式双模式——classic 经典双栏 | vinyl 彩胶唱片（仿 QQ 音乐：封面圆盘 + 封面取色刻纹 + 旋转） */
+  function immMode() {
+    try { return (window.annieSettings && annieSettings.ui && annieSettings.ui.amImmMode) || 'classic'; } catch (e) { return 'classic'; }
+  }
+  AM.immIsVinyl = function () { return immMode() === 'vinyl'; }; // 供 am-lyrics 更新链路判「歌词常驻」
+  AM.vinylCrownSeek = function (from, to) { vinylCrownSeek(from, to); }; // 歌词点跳等其它 seek 入口也甩碟（无彩胶时内部空转）
+  function buildImmControls() { // 两种布局共用的传输/音量/队列按钮（引用挂 R 上供 syncAux/refreshAux 用）
     var ctl = el('div', 'am-imm-ctl');
     var vol = el('span', 'am-imm-vol');
     vol.appendChild(el('span', null, '🔊'));
@@ -357,31 +324,334 @@
     R.immBtnQ = el('button', 'am-imm-btn', '☰'); R.immBtnQ.title = '待播清单 / 历史记录';
     R.immBtnQ.onclick = function () { setImmQueue(!S.immQOn); };
     ctl.appendChild(R.immBtnLyr); ctl.appendChild(R.immBtnQ);
-    left.appendChild(ctl);
+    return ctl;
+  }
+  function buildImmProg() {
+    var prog = el('div', 'am-imm-prog');
+    R.immCur = el('span', 'am-imm-time', '0:00');
+    var bar = el('div', 'am-imm-bar');
+    R.immFill = el('div', 'am-imm-fill');
+    bar.appendChild(R.immFill);
+    // V4.4：彩胶表把联动钩子（经典模式无 R.immVinyl，钩子内部空转）
+    bindProgDrag(bar, R.immFill, R.immCur, { onPreview: vinylCrownPreview, onSeek: vinylCrownSeek });
+    R.immRemain = el('span', 'am-imm-time', '-0:00');
+    prog.appendChild(R.immCur); prog.appendChild(bar); prog.appendChild(R.immRemain);
+    return prog;
+  }
+  /* ---------- 彩胶表把联动：附加旋转走 CSS rotate 属性（与 CSS 动画的 transform 天然叠加） ----------
+     拖动进度条 = 表把：按 scrub 的秒数比例跟手转（前顺时针/后逆时针，暂停时也生效）；
+     松手跳转 = 先朝跳转方向甩一段（转幅随跳转距离），到位后按整圈归一（无回卷视觉残留），底盘转速动画照常。 */
+  var _crownOffset = 0, _crownDragBase = null, _crownT = 0;
+  var CROWN_DEG_PER_SEC = 6; // 表把手感：每 scrub 1 秒音频转 6°（一分钟音频=一整圈）
+  function vinylCrownApply(deg, transition) {
+    if (!R.immVinyl) return;
+    R.immVinyl.style.transition = transition || 'none';
+    R.immVinyl.style.rotate = deg + 'deg';
+  }
+  function vinylCrownPreview(sec) {
+    if (!R.immVinyl) return;
+    if (_crownDragBase == null) _crownDragBase = { sec: sec, offset: _crownOffset };
+    clearTimeout(_crownT);
+    _crownOffset = _crownDragBase.offset + (sec - _crownDragBase.sec) * CROWN_DEG_PER_SEC;
+    vinylCrownApply(_crownOffset);
+  }
+  function vinylCrownSeek(from, to) {
+    if (!R.immVinyl) { _crownDragBase = null; return; }
+    _crownDragBase = null;
+    var dir = to >= from ? 1 : -1;
+    var burst = dir * Math.min(540, 120 + Math.abs(to - from) * 8); // 跳得越远甩得越多，上限一圈半
+    _crownOffset += burst;
+    // 加速段：快甩到位（transition 接管，从当前角度平滑加速）
+    vinylCrownApply(_crownOffset, 'rotate .55s cubic-bezier(.2,.7,.25,1)');
+    clearTimeout(_crownT);
+    _crownT = setTimeout(function () {
+      if (!R.immVinyl) return;
+      // 归一段：去掉整圈（视觉原位），后续增量从干净角度继续累积——不做反向回卷
+      var norm = ((_crownOffset % 360) + 360) % 360;
+      _crownOffset = norm;
+      vinylCrownApply(norm);
+    }, 580);
+  }
+  function buildImmersive() {
+    if (R.imm) return;
+    var vinyl = immMode() === 'vinyl';
+    var root = document.getElementById('am-root');
+    var ov = el('div', vinyl ? 'am-imm am-imm-vinyl' : 'am-imm');
+    ov.appendChild(el('div', 'am-imm-bg'));
+    var cb = el('div', 'am-imm-closebar');
+    // V4.4：沉浸模式歌词外观入口（与主面板 ⚙ 同一弹层，锚点换成这里）
+    R.immBtnLyrSet = el('button', 'am-tbtn', '⚙');
+    R.immBtnLyrSet.title = '歌词外观（字号 / 行距 / 偏移）';
+    R.immBtnLyrSet.onclick = function (e) {
+      e.stopPropagation();
+      if (AM.toggleLyrSetPop) AM.toggleLyrSetPop(R.immBtnLyrSet);
+    };
+    cb.appendChild(R.immBtnLyrSet);
+    // V4.4：彩胶模式专属——💿 彩胶外观弹层（封面大小/盘体大小/透明度/位置/纹路摇号）
+    if (vinyl) {
+      R.immBtnVinyl = el('button', 'am-tbtn', '💿');
+      R.immBtnVinyl.title = '彩胶外观（封面大小 / 盘体大小 / 透明度 / 位置 / 纹路）';
+      R.immBtnVinyl.onclick = function (e) { e.stopPropagation(); openVinylSetPop(R.immBtnVinyl); };
+      cb.insertBefore(R.immBtnVinyl, R.immBtnLyrSet);
+    } else R.immBtnVinyl = null;
+    var bExit = el('button', 'am-tbtn', '⤡');
+    bExit.title = '退出沉浸模式';
+    bExit.onclick = function () { toggleImmersive(false); };
+    cb.appendChild(bExit);
+    ov.appendChild(cb);
 
-    main.appendChild(left);
-    R.immLyrBox = el('div', 'am-imm-lyr');
-    autoHideScrollbar(R.immLyrBox);
-    main.appendChild(R.immLyrBox);
-    ov.appendChild(main);
+    R.immCover = document.createElement('img');
+    R.immCover.alt = ''; R.immCover.draggable = false;
+    R.immTitle = el('div', 'am-imm-title');
+    R.immSub = el('div', 'am-imm-sub');
+    R.immFmt = el('div', 'am-imm-fmt');
+
+    if (!vinyl) {
+      var main = el('div', 'am-imm-main');
+      var left = el('div', 'am-imm-left');
+      R.immCover.className = 'am-imm-cover';
+      left.appendChild(R.immCover); left.appendChild(R.immTitle);
+      left.appendChild(R.immSub); left.appendChild(R.immFmt);
+      left.appendChild(buildImmProg());
+      left.appendChild(buildImmControls());
+      main.appendChild(left);
+      R.immLyrBox = el('div', 'am-imm-lyr');
+      autoHideScrollbar(R.immLyrBox);
+      main.appendChild(R.immLyrBox);
+      ov.appendChild(main);
+    } else {
+      /* 彩胶布局：左 = 大标题 + 常驻大歌词；右 = 旋转彩胶（圆形封面标签）；底 = 全宽进度条 + 传输栏 */
+      var vmain = el('div', 'am-imm-main am-imm-vmain');
+      var vleft = el('div', 'am-imm-vleft');
+      vleft.appendChild(R.immTitle); vleft.appendChild(R.immSub); vleft.appendChild(R.immFmt);
+      R.immLyrBox = el('div', 'am-imm-lyr');
+      autoHideScrollbar(R.immLyrBox);
+      vleft.appendChild(R.immLyrBox);
+      var vright = el('div', 'am-imm-vright');
+      R.immVinyl = el('div', 'am-vinyl');
+      var label = el('div', 'am-vinyl-label');
+      R.immCover.className = 'am-vinyl-cover';
+      label.appendChild(R.immCover);
+      R.immVinyl.appendChild(label);
+      vright.appendChild(R.immVinyl);
+      vmain.appendChild(vleft); vmain.appendChild(vright);
+      ov.appendChild(vmain);
+      var vbar = el('div', 'am-imm-vbar');
+      vbar.appendChild(buildImmProg());
+      var vctl = buildImmControls();
+      R.immBtnLyr.style.display = 'none'; // 彩胶模式歌词常驻，无收起需求
+      vbar.appendChild(vctl);
+      ov.appendChild(vbar);
+      _crownOffset = 0; _crownDragBase = null; clearTimeout(_crownT); // 重建盘面清零表把状态
+      applyVinylStyle(); // 应用自定义（封面占比/盘体大小/透明度/位置/转速）并铺随机纹路
+    }
     R.immQ = el('div', 'am-imm-queue');
     ov.appendChild(R.immQ);
     root.appendChild(ov);
     R.imm = ov;
   }
+  /* 彩胶取色：复用频谱条的封面调色板分析（主色=胶片刻纹基色，强调色=标签圈描边），黑白封面回落主题强调色 */
+  var _vinylUrl = undefined;
+  function paintVinyl(url) {
+    if (!R.immVinyl) return;
+    if (url === _vinylUrl) return;
+    _vinylUrl = url;
+    if (!url || !window.amVizColor) {
+      R.immVinyl.style.removeProperty('--vinyl-c1'); R.immVinyl.style.removeProperty('--vinyl-c2');
+      return;
+    }
+    window.amVizColor.analyze(url, function (pal) {
+      if (!R.immVinyl || url !== _vinylUrl) return; // 慢回调回来时已经切歌
+      if (pal) {
+        R.immVinyl.style.setProperty('--vinyl-c1', pal.primary);
+        R.immVinyl.style.setProperty('--vinyl-c2', pal.accent);
+      } else {
+        R.immVinyl.style.removeProperty('--vinyl-c1'); R.immVinyl.style.removeProperty('--vinyl-c2');
+      }
+    });
+  }
+  /* ---------- 彩胶外观自定义（沉浸界面 💿 弹层；localStorage 持久化 + CSS 变量即时生效） ---------- */
+  var VINYL_LS = {
+    cover: 'annieplayer.am.vinyl.cover',  // 封面圆直径占盘体 %（50–90，胶圈宽度随之一增一减）
+    scale: 'annieplayer.am.vinyl.scale',  // 盘体整体大小倍率（0.55–1.60）
+    op: 'annieplayer.am.vinyl.op',        // 盘体不透明度（0.25–1，越低越透）
+    pos: 'annieplayer.am.vinyl.pos',      // 唱片位置：center 居中 | corner 右上悬挂（QQ 音乐式，探出屏幕右上）
+    hole: 'annieplayer.am.vinyl.hole',    // 轴心孔：'1' 开（默认）| '0' 关
+    speed: 'annieplayer.am.vinyl.speed'   // 转速：秒/圈（4–60，默认 18）
+  };
+  function vinylLsNum(key, def) { try { var v = parseFloat(localStorage.getItem(key)); return isFinite(v) ? v : def; } catch (e) { return def; } }
+  /* 纹路随机化：缓存一组随机刻纹——宽度幂分布（细多粗少）、明暗纹随机混排
+     （亮纹=封面色，暗纹=纯黑压纹，对比才看得出来）、12% 概率哑光圈（仿真唱片分轨间隙）；
+     🎲 重新摇号。纹路从固定半径起铺（不再从封面边缘起——封面调大会把纹路整个挤出盘面） */
+  var _vinylGrooves = null;
+  function genVinylGrooves() {
+    var gs = [], p = 0;
+    while (p < 78) { // 覆盖 22%→100% 半径（纹路固定起点 22%，标签圈盖住的部分自然隐藏）
+      var w = 0.2 + Math.pow(Math.random(), 1.4) * 1.9; // 0.2–2.1%，细纹多粗纹少
+      // 负值=暗纹（纯黑压纹，alpha 取绝对值）；亮纹=封面色高浓度
+      var a = Math.random() < 0.42 ? -(0.10 + Math.random() * 0.24) : (26 + Math.random() * 28);
+      var gap = Math.random() < 0.12 ? 0.6 + Math.random() * 1.6 : 0;
+      gs.push({ w: w, a: a, gap: gap });
+      p += w + gap;
+    }
+    _vinylGrooves = gs;
+  }
+  var VINYL_SHEEN = 'conic-gradient(from 210deg, transparent 0deg, rgba(255,255,255,.18) 16deg, transparent 38deg, transparent 168deg, rgba(255,255,255,.10) 192deg, transparent 218deg)';
+  var VINYL_GROOVE_START = 22; // 纹路固定起点（%半径，标签圈之下；封面大小只决定露多少，不再推走纹路）
+  function paintVinylTexture() {
+    if (!R.immVinyl) return;
+    if (!_vinylGrooves) genVinylGrooves();
+    var start = VINYL_GROOVE_START;
+    var stops = ['transparent 0% ' + start.toFixed(2) + '%'];
+    var p = start;
+    for (var i = 0; i < _vinylGrooves.length && p < 100; i++) {
+      var g = _vinylGrooves[i];
+      var p2 = Math.min(100, p + g.w);
+      var c = g.a >= 0
+        ? 'color-mix(in srgb, var(--vc1) calc(' + g.a.toFixed(1) + '% * var(--am-vinyl-op, 1)), transparent)'
+        : 'rgba(0,0,0, calc(' + (-g.a).toFixed(3) + ' * var(--am-vinyl-op, 1)))';
+      stops.push(c + ' ' + p.toFixed(2) + '% ' + p2.toFixed(2) + '%');
+      p = p2;
+      if (g.gap) { var g2 = Math.min(100, p + g.gap); stops.push('transparent ' + p.toFixed(2) + '% ' + g2.toFixed(2) + '%'); p = g2; }
+    }
+    R.immVinyl.style.backgroundImage = VINYL_SHEEN + ', radial-gradient(circle, ' + stops.join(',') + ')';
+    // 亚克力底：大幅减淡（不透明度滑杆仍有 0.25–1 全程可调）
+    R.immVinyl.style.backgroundColor = 'color-mix(in srgb, var(--vc1) calc(9% * var(--am-vinyl-op, 1)), rgba(16,16,22, calc(.16 * var(--am-vinyl-op, 1))))';
+  }
+  function applyVinylStyle() {
+    try {
+      var rs = document.documentElement.style;
+      rs.setProperty('--am-vinyl-cover', vinylLsNum(VINYL_LS.cover, 73) + '%');
+      rs.setProperty('--am-vinyl-scale', String(vinylLsNum(VINYL_LS.scale, 1)));
+      rs.setProperty('--am-vinyl-op', String(vinylLsNum(VINYL_LS.op, 1)));
+      rs.setProperty('--am-vinyl-speed', String(vinylLsNum(VINYL_LS.speed, 18)));
+    } catch (e) { }
+    if (R.imm) {
+      var corner = false, holeOff = false;
+      try {
+        corner = (localStorage.getItem(VINYL_LS.pos) || 'center') === 'corner';
+        holeOff = localStorage.getItem(VINYL_LS.hole) === '0';
+      } catch (e) { }
+      R.imm.classList.toggle('am-pos-corner', corner);
+      R.imm.classList.toggle('am-vinyl-nohole', holeOff);
+      paintVinylTexture();
+    }
+  }
+  function buildVinylSetPop() {
+    var pop = el('div', 'am-pop am-lyrset-pop');
+    pop.appendChild(el('div', 'am-pop-h', '彩胶外观'));
+    var sliders = [];
+    function sRow(label, key, min, max, step, def, fmt) {
+      var row = el('div', 'am-pop-row');
+      row.appendChild(el('span', null, label));
+      var sl = document.createElement('input');
+      sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step;
+      sl.className = 'am-lyrset-slider';
+      var v = el('span', 'am-lyrset-v', '');
+      function sync() { sl.value = vinylLsNum(key, def); v.textContent = fmt(parseFloat(sl.value)); }
+      sl._sync = sync;
+      sl.oninput = function () {
+        try { localStorage.setItem(key, String(sl.value)); } catch (e) { }
+        v.textContent = fmt(parseFloat(sl.value));
+        applyVinylStyle();
+      };
+      sync(); sliders.push(sl);
+      row.appendChild(sl); row.appendChild(v);
+      pop.appendChild(row);
+    }
+    sRow('封面大小', VINYL_LS.cover, 50, 90, 1, 73, function (v) { return Math.round(v) + '%'; });
+    sRow('盘体大小', VINYL_LS.scale, 0.55, 1.6, 0.01, 1, function (v) { return Math.round(v * 100) + '%'; });
+    sRow('盘体不透明', VINYL_LS.op, 0.25, 1, 0.01, 1, function (v) { return Math.round(v * 100) + '%'; });
+    sRow('转速', VINYL_LS.speed, 4, 60, 1, 18, function (v) { return Math.round(v) + '秒/圈'; });
+    // 唱片位置（居中 / 右上悬挂）
+    var prow = el('div', 'am-pop-row');
+    prow.appendChild(el('span', null, '唱片位置'));
+    var seg = el('div', 'am-vinylset-seg');
+    var bC = el('button', 'am-vinylset-segbtn', '居中');
+    var bR = el('button', 'am-vinylset-segbtn', '右上悬挂');
+    function curPos() { try { return localStorage.getItem(VINYL_LS.pos) || 'center'; } catch (e) { return 'center'; } }
+    function syncSeg() { var p = curPos(); bC.classList.toggle('on', p === 'center'); bR.classList.toggle('on', p !== 'center'); }
+    bC.onclick = function () { try { localStorage.setItem(VINYL_LS.pos, 'center'); } catch (e) { } syncSeg(); applyVinylStyle(); };
+    bR.onclick = function () { try { localStorage.setItem(VINYL_LS.pos, 'corner'); } catch (e) { } syncSeg(); applyVinylStyle(); };
+    syncSeg();
+    seg.appendChild(bC); seg.appendChild(bR);
+    prow.appendChild(seg); pop.appendChild(prow);
+    // 轴心孔开关
+    var hrow = el('div', 'am-pop-row');
+    hrow.appendChild(el('span', null, '轴心孔'));
+    var hseg = el('div', 'am-vinylset-seg');
+    var bHOn = el('button', 'am-vinylset-segbtn', '开');
+    var bHOff = el('button', 'am-vinylset-segbtn', '关');
+    function holeOffNow() { try { return localStorage.getItem(VINYL_LS.hole) === '0'; } catch (e) { return false; } }
+    function syncHole() { var off = holeOffNow(); bHOn.classList.toggle('on', !off); bHOff.classList.toggle('on', off); }
+    bHOn.onclick = function () { try { localStorage.setItem(VINYL_LS.hole, '1'); } catch (e) { } syncHole(); applyVinylStyle(); };
+    bHOff.onclick = function () { try { localStorage.setItem(VINYL_LS.hole, '0'); } catch (e) { } syncHole(); applyVinylStyle(); };
+    syncHole();
+    hseg.appendChild(bHOn); hseg.appendChild(bHOff);
+    hrow.appendChild(hseg); pop.appendChild(hrow);
+    pop._syncSegs = function () { syncSeg(); syncHole(); };
+    // 纹路摇号 / 恢复默认
+    var arow = el('div', 'am-pop-row');
+    var aseg = el('div', 'am-vinylset-seg');
+    var bDice = el('button', 'am-vinylset-segbtn', '🎲 换一组纹路');
+    bDice.onclick = function () { genVinylGrooves(); paintVinylTexture(); };
+    var bReset = el('button', 'am-vinylset-segbtn', '↺ 恢复默认');
+    bReset.onclick = function () {
+      try {
+        localStorage.removeItem(VINYL_LS.cover); localStorage.removeItem(VINYL_LS.scale);
+        localStorage.removeItem(VINYL_LS.op); localStorage.removeItem(VINYL_LS.pos);
+        localStorage.removeItem(VINYL_LS.hole); localStorage.removeItem(VINYL_LS.speed);
+      } catch (e) { }
+      sliders.forEach(function (sl) { sl._sync(); });
+      syncSeg(); syncHole(); genVinylGrooves(); applyVinylStyle();
+    };
+    aseg.appendChild(bDice); aseg.appendChild(bReset);
+    arow.appendChild(aseg); pop.appendChild(arow);
+    document.getElementById('am-root').appendChild(pop);
+    R.vinylSetPop = pop;
+  }
+  function openVinylSetPop(anchor) {
+    if (!R.vinylSetPop) buildVinylSetPop();
+    var pop = R.vinylSetPop;
+    if (pop.classList.contains('on')) { pop.classList.remove('on'); return; }
+    pop.querySelectorAll('input[type=range]').forEach(function (sl) { if (sl._sync) sl._sync(); });
+    var r = anchor.getBoundingClientRect();
+    pop.style.left = Math.max(8, r.right - 260) + 'px';
+    pop.style.top = (r.bottom + 8) + 'px';
+    pop.classList.add('on');
+  }
+  /* 设置里切换沉浸样式：沉浸中立即重建布局（不退出沉浸，不打断播放） */
+  AM.refreshImmMode = function () {
+    if (!R.imm) return;
+    R.imm.remove(); R.imm = null; R.immVinyl = null; _vinylUrl = undefined;
+    buildImmersive();
+    var root = document.getElementById('am-root');
+    root.classList.toggle('am-imm-lyr-on', S.imm && !!S.immLyrOn);
+    root.classList.toggle('am-imm-q-on', S.imm && !!S.immQOn);
+    if (S.imm) {
+      syncAuxViews(); refreshAuxProgress();
+      if (S.immLyrOn || immMode() === 'vinyl') buildLyrInto(R.immLyrBox);
+      if (S.immQOn) renderQueuePanel(R.immQ);
+    }
+  };
   function toggleImmersive(force) {
     var want = force !== undefined ? force : !S.imm;
     if (want === !!S.imm) return;
     if (want && S.mini) { exitMini(); } // 沉浸与迷你互斥
     buildImmersive();
     S.imm = want;
+    // V4.4：沉浸模式真全屏（设置 → AM 界面 开关；退出沉浸无条件复位，非全屏时为无害空操作）
+    try {
+      var fsOn = !!(window.annieSettings && annieSettings.ui && annieSettings.ui.amImmFullscreen);
+      if (window.mine && window.mine.winFullScreen && (want ? fsOn : true)) window.mine.winFullScreen(want && fsOn);
+    } catch (e) { }
     var root = document.getElementById('am-root');
     root.classList.toggle('am-imm-on', want);
     root.classList.toggle('am-imm-lyr-on', want && !!S.immLyrOn);
     root.classList.toggle('am-imm-q-on', want && !!S.immQOn);
     if (want) {
       syncAuxViews(); refreshAuxProgress();
-      if (S.immLyrOn) buildLyrInto(R.immLyrBox);
+      if (S.immLyrOn || immMode() === 'vinyl') buildLyrInto(R.immLyrBox); // 彩胶模式歌词常驻
       if (S.immQOn) renderQueuePanel(R.immQ);
     }
   }
@@ -538,6 +808,7 @@
     var cover = R.npCover && R.npCover.getAttribute('src');
     if (R.imm) {
       swapCover(R.immCover, cover || null);
+      if (R.immVinyl) paintVinyl(cover || null); // 彩胶颜色跟随封面
       R.immTitle.textContent = R.npTitle.textContent;
       R.immSub.textContent = R.npSub.textContent;
       R.immFmt.textContent = S.fmt || '';
@@ -560,6 +831,7 @@
       R.immCur.textContent = cur; R.immRemain.textContent = rem;
       R.immFill.style.width = (pct * 100) + '%';
       setPlayIcon(R.immPlay);
+      if (R.immVinyl) R.imm.classList.toggle('am-vinyl-paused', !state.playing); // 暂停时唱片停转
     }
     if (R.mini && S.mini) {
       R.miniCur.textContent = cur; R.miniRemain.textContent = rem;

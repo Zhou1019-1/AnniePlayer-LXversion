@@ -217,6 +217,8 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 .am-nav.pl-drag-src { opacity: .45; cursor: grabbing; background: var(--am-hover); }
 .am-nav.pl-drop-before { box-shadow: inset 0 2px 0 0 var(--am-accent); }
 .am-nav.pl-drop-after { box-shadow: inset 0 -2px 0 0 var(--am-accent); }
+/* V4.4：拖外部文件到侧栏歌单的落点高亮 */
+.am-nav.am-nav-drop { outline: 2px dashed var(--am-accent); outline-offset: -2px; }
 
 /* 内容区 */
 .am-content { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 28px 40px; overflow-anchor: none; /* 禁滚动锚定：窗口化重建表格时浏览器异步挪 scrollTop，与可视区脱节（切歌后列表空白） */ }
@@ -661,6 +663,85 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 .am-imm-lyr .am-lyr-line.near { color: rgba(255,255,255,.65); }
 .am-imm-lyr .am-lyr-line.cur { color: #fff; transform: scale(1.03); filter: none; }
 .am-imm-lyr .am-lyr-empty { color: rgba(255,255,255,.5); }
+
+/* ================= V4.4：沉浸模式 · 彩胶唱片（仿 QQ 音乐） =================
+   左 = 大标题 + 常驻大歌词；右 = 旋转彩胶（圆形封面标签 + 封面取色刻纹）；底 = 全宽进度 + 传输栏。
+   颜色变量 --vinyl-c1/--vinyl-c2 由 amVizColor 封面取色注入（黑白封面回落主题强调色）；
+   背景仍走 .am-imm-bg（封面氛围 / 自定义壁纸 wp-on wp-imm 规则照常生效）。 */
+.am-imm-vinyl .am-imm-vmain { align-items: stretch; padding-bottom: 12px; }
+/* 压过「未开歌词时单列居中」规则：彩胶歌词常驻，恒双列 */
+#am-root.am-imm-on .am-imm-vinyl .am-imm-main { grid-template-columns: 1fr 1fr; }
+.am-imm-vinyl .am-imm-vleft {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  justify-content: center; padding: 0 44px;
+}
+.am-imm-vinyl .am-imm-title { text-align: left; font-size: 30px; margin-top: 0; }
+.am-imm-vinyl .am-imm-sub { text-align: left; font-size: 17px; }
+.am-imm-vinyl .am-imm-fmt { text-align: left; }
+.am-imm-vinyl .am-imm-lyr {
+  display: block; width: 100%; max-width: none; justify-self: stretch;
+  flex: 1; min-height: 0; margin-top: 16px; padding: 24px 8px;
+  mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
+}
+.am-imm-vinyl .am-imm-vright { display: flex; align-items: center; justify-content: center; min-height: 0; min-width: 0; }
+/* 彩胶盘体：磨砂亚克力质感——半透明盘体 backdrop-filter 磨砂透出背景，
+   刻纹 = 主色半透明同心圆交替，外加两道高光扫过（亚克力边缘反光） */
+.am-vinyl {
+  --vc1: var(--vinyl-c1, var(--am-accent));
+  --vc2: var(--vinyl-c2, var(--vc1));
+  position: relative; flex: none;
+  width: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1)); aspect-ratio: 1; border-radius: 50%;
+  background:
+    conic-gradient(from 210deg, transparent 0deg, rgba(255,255,255,.18) 16deg, transparent 38deg,
+      transparent 168deg, rgba(255,255,255,.10) 192deg, transparent 218deg),
+    color-mix(in srgb, var(--vc1) 9%, rgba(16,16,22,.16));
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid color-mix(in srgb, var(--vc1) 32%, rgba(255,255,255,.18));
+  box-shadow: 0 30px 90px rgba(0,0,0,.45),
+    inset 0 0 70px color-mix(in srgb, var(--vc1) 16%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.25);
+  animation: amVinylSpin calc(var(--am-vinyl-speed, 18) * 1s) linear infinite; /* 💿 弹层「转速」秒/圈 */
+  will-change: transform;
+}
+@keyframes amVinylSpin { to { transform: rotate(360deg); } }
+.am-imm.am-vinyl-paused .am-vinyl { animation-play-state: paused; }
+/* 标签圈（圆形封面区，随盘一起转）：占比由 💿 弹层「封面大小」控制（胶圈宽度随之反向） */
+.am-vinyl-label {
+  position: absolute; inset: calc((100% - var(--am-vinyl-cover, 73%)) / 2); border-radius: 50%; overflow: hidden;
+  border: 5px solid color-mix(in srgb, var(--vc2) 45%, rgba(21,21,28,.6));
+  box-shadow: 0 0 0 2px rgba(255,255,255,.10), inset 0 0 30px rgba(0,0,0,.35);
+  background: #15151c;
+}
+.am-vinyl-cover { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 轴心孔 */
+.am-vinyl::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 2.6%; aspect-ratio: 1;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  background: rgba(12,12,18,.85); box-shadow: 0 0 0 3px rgba(255,255,255,.18);
+}
+.am-imm.am-vinyl-nohole .am-vinyl::after { display: none; } /* 💿 弹层「轴心孔」关 */
+/* 底部功能栏：全宽进度条 + 传输/音量/队列 */
+.am-imm-vbar {
+  position: relative; z-index: 1; flex: none;
+  display: flex; align-items: center; gap: 28px;
+  padding: 12px 44px 24px;
+}
+.am-imm-vbar .am-imm-prog { flex: 1; }
+.am-imm-vbar .am-imm-ctl { margin-top: 0; gap: 14px; }
+/* 浅色 + 无封面回落：彩胶盘体保持深色，仅文字走既有浅色规则（已在上方统一处理） */
+/* 唱片位置 · 右上悬挂（QQ 音乐式：盘体探出屏幕右上，由 .am-imm 的 overflow:hidden 裁边） */
+.am-imm-vinyl.am-pos-corner .am-imm-vright { align-items: flex-start; justify-content: flex-end; overflow: visible; }
+.am-imm-vinyl.am-pos-corner .am-vinyl { margin-top: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.24); margin-right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.16); }
+/* 彩胶外观弹层分段按钮（💿） */
+.am-vinylset-seg { display: flex; gap: 6px; flex: 1; }
+.am-vinylset-segbtn {
+  flex: 1; border: 1px solid var(--am-border, rgba(255,255,255,.16)); border-radius: 6px;
+  background: transparent; color: var(--am-text); font-size: 12px; padding: 4px 8px; cursor: pointer;
+}
+.am-vinylset-segbtn:hover { background: var(--am-hover, rgba(255,255,255,.08)); }
+.am-vinylset-segbtn.on { border-color: var(--am-accent); color: var(--am-accent); }
 /* 沉浸队列抽屉（右侧滑出） */
 .am-imm-queue {
   position: absolute; top: 0; right: 0; bottom: 0; width: 340px; z-index: 2;

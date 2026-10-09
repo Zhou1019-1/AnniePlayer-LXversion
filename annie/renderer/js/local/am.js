@@ -398,15 +398,17 @@
   }
   // V4.3.16：进度条拖动——pointerdown/move/up 全程本地预览（填充+时间跟手），松手才 seek。
   // 原三处进度条（顶栏/沉浸/迷你）只有 onclick，无法拖动；在线曲目引擎事件 10Hz 更显迟钝，预览期间以 state.seeking 屏蔽位置回写。
-  function bindProgDrag(bar, fillEl, curEl) {
+  function bindProgDrag(bar, fillEl, curEl, hooks) { // hooks（可选）：{ onPreview(秒), onSeek(从秒, 到秒) }——V4.4 彩胶表把联动用
     bar.addEventListener('pointerdown', function (e) {
       if (!state.currentPath || !(S.dur > 0)) return;
       e.preventDefault();
+      var fromPos = S.pos;
       var preview = function (ev) {
         var r = bar.getBoundingClientRect();
         var f = r.width > 0 ? Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)) : 0;
         fillEl.style.width = (f * 100) + '%';
         if (curEl) curEl.textContent = fmtTime(f * S.dur);
+        if (hooks && hooks.onPreview) hooks.onPreview(f * S.dur);
         return f;
       };
       state.seeking = true;
@@ -417,6 +419,7 @@
         window.removeEventListener('pointerup', up);
         state.seeking = false;
         seek(frac * S.dur);
+        if (hooks && hooks.onSeek) hooks.onSeek(fromPos, frac * S.dur);
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);

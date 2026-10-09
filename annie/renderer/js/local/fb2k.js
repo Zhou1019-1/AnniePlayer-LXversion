@@ -1414,6 +1414,8 @@
     if (plItems.length > 8) items.push({ sub: '📁 加到播放列表…', items: plItems });
     else plItems.forEach(function (it) { items.push(it); });
     items.push(['查看属性', function () { showProps(t); }]);
+    // V4.4：打开文件位置（资源管理器定位并选中该文件）
+    items.push(['在文件夹中显示', function () { if (window.mine.showItemInFolder) window.mine.showItemInFolder(t.path); }]);
     items.push(['编辑标签…', function () {
       var paths = []; forEachSel(function (x) { paths.push(x.path); });
       if (window.annieTagEdit) window.annieTagEdit.open(paths.length > 1 ? { paths: paths } : { path: t.path });

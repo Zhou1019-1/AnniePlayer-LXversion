@@ -509,6 +509,12 @@ function registerIpc() {
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
   });
   ipcMain.handle('win:close', () => mainWindow?.close());
+  // V4.4：沉浸模式真全屏（隐藏任务栏）；退出全屏自动恢复之前的窗口边界
+  ipcMain.handle('win:fullscreen', (_e, v) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isFullScreen() === !!v) return;
+    mainWindow.setFullScreen(!!v);
+  });
 
   /* V4.4：AnnieFlyout 伴侣进程（任务栏小组件 + 切歌弹窗）。
    * 开关持久化在 store.ui.flyout；启动/停止即拉起/杀掉 AnnieFlyout.exe。

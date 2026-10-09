@@ -206,6 +206,14 @@
     var bClose = el('button', 'am-tbtn am-close', '✕'); bClose.title = '关闭'; bClose.onclick = function () { window.mine.winClose(); };
     wb.appendChild(bMin); wb.appendChild(bMax); wb.appendChild(bClose);
     right.appendChild(wb);
+    // V4.4：设置「顶栏置底」已开启时（AM build 晚于 settings hydrate），构建后立刻把三键挂到
+    // #am-root 下钉回右上角——顶栏 backdrop-filter 会创建包含块使 fixed 定位失效，不能纯 CSS 钉住
+    try {
+      if (window.annieSettings && annieSettings.ui && annieSettings.ui.amTopbarBottom) {
+        wb._homeParent = right; wb._homeNext = null;
+        document.getElementById('am-root').appendChild(wb);
+      }
+    } catch (e) { }
     top.appendChild(right);
 
     /* 主体 */
@@ -308,7 +316,8 @@
     document.addEventListener('click', function (e) {
       if (R.pop.classList.contains('on') && !R.pop.contains(e.target)) R.pop.classList.remove('on');
       if (R.timerPop.classList.contains('on') && !R.timerPop.contains(e.target) && e.target !== R.btnTimer) R.timerPop.classList.remove('on');
-      if (R.lyrSetPop && R.lyrSetPop.classList.contains('on') && !R.lyrSetPop.contains(e.target) && e.target !== R.btnLyrSet) R.lyrSetPop.classList.remove('on');
+      if (R.lyrSetPop && R.lyrSetPop.classList.contains('on') && !R.lyrSetPop.contains(e.target)
+          && e.target !== R.btnLyrSet && e.target !== R.immBtnLyrSet) R.lyrSetPop.classList.remove('on'); // V4.4：沉浸 ⚙ 也是合法锚点
     });
 
     renderSidebar();
@@ -339,7 +348,7 @@
   function openPlSideMenu(x, y, pl) {
     var pop = R.pop;
     pop.innerHTML = '';
-    var t = el('div', 'am-pop-item', pl.name); t.style.fontWeight = '600';
+    var t = el('div', 'am-pop-head', pl.name); // V4.4：标题改不可点样式
     pop.appendChild(t);
     pop.appendChild(el('div', 'am-pop-sep'));
     var ex = el('button', 'am-pop-item', '📤 导出歌单文件…');
@@ -358,23 +367,24 @@
   /* V4.3.26：侧栏自建歌单长按拖拽排序（Pointer 事件手动实现，与单击进歌单/右键菜单共存）。
    * 400ms 长按进入拖拽（此时抑制 click），拖动经过目标歌单时按上半/下半决定插前/插后（落点高亮），
    * 松手后按新顺序调 playlistReorderList 持久化并重渲侧栏。 */
+  /* V4.4：改为「位移阈值拖拽」——按下即准备，移动 >6px 立即进入拖拽；无位移松手=正常点击。
+   * 旧实现 400ms 长按 + 8px 早移取消：用户按下即拖（直觉操作）会在 400ms 内超 8px 被取消，
+   * 表现为「完全拖不动」（隔离环境验证原逻辑本身可用，纯属交互时机问题）。 */
   function attachPlDragSort(btn, pl) {
-    var pressTimer = 0, dragging = false, startY = 0, pid = 0;
+    var armed = false, dragging = false, startY = 0, pid = 0;
     btn.style.touchAction = 'none'; // 触屏/触控板也走 pointer 流
     btn.addEventListener('pointerdown', function (e) {
       if (e.button !== 0) return; // 右键交给 oncontextmenu
-      pid = e.pointerId; startY = e.clientY; dragging = false;
-      clearTimeout(pressTimer);
-      pressTimer = setTimeout(function () {
+      pid = e.pointerId; startY = e.clientY; dragging = false; armed = true;
+    });
+    btn.addEventListener('pointermove', function (e) {
+      if (!armed && !dragging) return;
+      if (!dragging) {
+        if (Math.abs(e.clientY - startY) <= 6) return; // 未过阈值：仍是潜在点击
         dragging = true;
         btn.classList.add('pl-drag-src');
         try { btn.setPointerCapture(pid); } catch (err) { }
-      }, 400);
-    });
-    btn.addEventListener('pointermove', function (e) {
-      if (!pressTimer && !dragging) return;
-      if (!dragging && Math.abs(e.clientY - startY) > 8) { clearTimeout(pressTimer); pressTimer = 0; return; } // 移动过早=取消长按
-      if (!dragging) return;
+      }
       // 找当前悬停的歌单按钮
       var over = document.elementFromPoint(e.clientX, e.clientY);
       var target = over && over.closest ? over.closest('.am-nav[data-plid]') : null;
@@ -387,8 +397,8 @@
       } else { btn._dropTarget = null; }
     });
     function endDrag(e) {
-      clearTimeout(pressTimer); pressTimer = 0;
-      if (!dragging) return; // 未达到长按阈值=正常点击，放行
+      armed = false;
+      if (!dragging) return; // 无位移=正常点击，放行
       dragging = false;
       btn.classList.remove('pl-drag-src');
       var target = btn._dropTarget, before = btn._dropBefore;
@@ -478,7 +488,7 @@
   function openSplSideMenu(x, y, pl) {
     var pop = R.pop;
     pop.innerHTML = '';
-    var t = el('div', 'am-pop-item', pl.name); t.style.fontWeight = '600';
+    var t = el('div', 'am-pop-head', pl.name); // V4.4：标题改不可点样式
     pop.appendChild(t);
     pop.appendChild(el('div', 'am-pop-sep'));
     var ex = el('button', 'am-pop-item', '📤 导出在线歌单…');
@@ -554,13 +564,28 @@
 
     sb.appendChild(el('div', 'am-side-h', '播放列表'));
     // V4.3.26：图标位换首曲封面（批量 metaFullBatch 异步取，无封面保留 🎧）+ 长按拖拽排序
+    // V4.4：封面缓存同步回填——切歌时 renderCurrentView 包装链会连带重建侧栏（am-render.js wrapGlobal），
+    // 旧实现每次重建都重新 metaFullBatch + 🎧占位→封面异步交换，侧栏每切一首歌就抽搐闪烁一次。
+    // 现按 歌单id+首曲path 缓存封面 dataURL，命中即同步渲染（浏览器内存缓存秒显，无占位交换）。
+    var plCoverCache = S.plCoverCache || (S.plCoverCache = {});
     var plFirstPaths = [];
     S.playlists.forEach(function (pl) {
       var b = nav('🎧', pl.name, 'pl:' + pl.id);
       b.dataset.plid = pl.id;
-      // 首曲封面占位（异步回填）
+      // 首曲封面：缓存命中同步渲染，未命中入批量回填队列
       var firstPath = (pl.paths || [])[0];
-      if (firstPath) plFirstPaths.push([pl.id, firstPath, b]);
+      if (firstPath) {
+        var ck = pl.id + '|' + firstPath;
+        if (plCoverCache[ck]) {
+          var ico0 = b.querySelector('.am-nav-ico');
+          if (ico0) {
+            var cv0 = el('img'); cv0.alt = ''; cv0.loading = 'lazy'; cv0.draggable = false;
+            cv0.style.cssText = 'width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none';
+            cv0.src = plCoverCache[ck];
+            ico0.textContent = ''; ico0.appendChild(cv0);
+          }
+        } else if (plCoverCache[ck] !== '') plFirstPaths.push([pl.id, firstPath, b, ck]);
+      }
       var del = el('button', 'am-nav-del', '✕');
       del.title = '删除播放列表（右键歌单可导出 .anniepl 换机复现）';
       del.onclick = function (e) {
@@ -577,11 +602,12 @@
       attachPlDragSort(b, pl);
       sb.appendChild(b);
     });
-    // 批量回填首曲封面
+    // 批量回填首曲封面（仅未命中缓存的；结果写缓存，无论有无封面——'' 表示「查过，无封面」）
     if (plFirstPaths.length && window.mine.metaFullBatch) {
       window.mine.metaFullBatch(plFirstPaths.map(function (x) { return x[1]; })).then(function (map) {
         plFirstPaths.forEach(function (x) {
           var cover = map && map[x[1]] && map[x[1]].cover;
+          plCoverCache[x[3]] = cover || '';
           if (!cover) return;
           var ico = x[2].querySelector('.am-nav-ico');
           if (!ico) return;
@@ -655,14 +681,18 @@
     sb.appendChild(el('div', 'am-side-h', '在线歌单'));
     (S.streamPlaylists || []).forEach(function (pl) {
       var b = nav('☁️', pl.name, 'spl:' + pl.id);
-      // 图标位换成第一首曲目的封面缩略图（整专收藏即专辑封面），无封面保留 ☁️
-      var fc = pl.items && pl.items.length && pl.items[0].song && pl.items[0].song.cover;
-      if (fc) {
+      // V4.4：图标位换「第一首有封面的曲目」小封面（对齐本地歌单）；http 图走主进程代理（酷我 CDN 证书/CSP 拦截）
+      var fc = '';
+      for (var fi = 0; pl.items && fi < pl.items.length; fi++) {
+        var sg = pl.items[fi] && pl.items[fi].song;
+        if (sg && sg.cover) { fc = sg.cover; break; }
+      }
+      if (fc && AM.setStreamImg) {
         var ico = b.querySelector('.am-nav-ico');
-        var cv = el('img'); cv.alt = ''; cv.loading = 'lazy';
+        var cv = el('img'); cv.alt = ''; cv.loading = 'lazy'; cv.draggable = false;
         cv.style.cssText = 'width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none';
-        cv.src = fc; cv.onerror = function () { cv.style.visibility = 'hidden'; };
         ico.textContent = ''; ico.appendChild(cv);
+        AM.setStreamImg(cv, fc, function () { if (ico.isConnected) ico.textContent = '☁️'; });
       }
       var del = el('button', 'am-nav-del', '✕');
       del.title = '删除在线歌单（右键可导出 .anniespl 换机复现）';
@@ -706,6 +736,14 @@
       slFavs.forEach(function (f) {
         var b = el('button', 'am-nav');
         b.appendChild(el('span', 'am-nav-ico', '🎵'));
+        // V4.4：图标位换歌单封面（收藏时存 f.img，详情加载自愈补齐；http 走代理）
+        if (f.img && AM.setStreamImg) {
+          var fico = b.querySelector('.am-nav-ico');
+          var fcv = el('img'); fcv.alt = ''; fcv.loading = 'lazy'; fcv.draggable = false;
+          fcv.style.cssText = 'width:18px;height:18px;border-radius:4px;object-fit:cover;flex:none';
+          fico.textContent = ''; fico.appendChild(fcv);
+          AM.setStreamImg(fcv, f.img, function () { if (fico.isConnected) fico.textContent = '🎵'; });
+        }
         var pf = (AM.PLATFORMS && AM.PLATFORMS[f.provider]) ? AM.PLATFORMS[f.provider].replace('音乐', '') : f.provider;
         b.appendChild(el('span', 'am-nav-name', pf + ' · ' + f.name));
         b.onclick = function () { if (AM.openFavSongList) AM.openFavSongList(f); };
@@ -1007,7 +1045,7 @@
         e.preventDefault();
         var pop = R.pop;
         pop.innerHTML = '';
-        pop.appendChild(el('div', 'am-pop-item', a.name)).style.fontWeight = '600';
+        pop.appendChild(el('div', 'am-pop-head', a.name)); // V4.4：标题改不可点样式
         pop.appendChild(el('div', 'am-pop-sep'));
         var md = el('button', 'am-pop-item', '🗑 删除该专辑（' + a.tracks.length + ' 首）…');
         md.onclick = function () { pop.classList.remove('on'); deleteTracks(a.tracks.map(function (t) { return t.path; })); };
@@ -1262,6 +1300,10 @@
   function renderAmWindow() {
     var win = S._tbl, c = R.content;
     if (!win || !c || !win.body.isConnected) { return; }
+    /* V4.4：隐藏中（迷你模式 .am-body display:none）不算窗口——
+     * clientHeight=0 会算出「顶部几行+巨大垫片」的假窗口，恢复显示后视口落在垫片上=列表空白。
+     * 标脏返回，保持现有 DOM；恢复可见后由 exitMini/滚动事件重开。 */
+    if (!c.clientHeight) { win.lastStart = -1; win.lastEnd = -1; return; }
     var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
     var base = win.tb.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop + headH;
     var st = c.scrollTop, h = c.clientHeight;
@@ -1417,7 +1459,7 @@
   function openAddMenu(x, y, trackPath) {
     var pop = R.pop;
     pop.innerHTML = '';
-    pop.appendChild(el('div', 'am-pop-item', '添加到播放列表')).style.fontWeight = '600';
+    pop.appendChild(el('div', 'am-pop-head', '添加到播放列表')); // V4.4：改不可点分组标题（原 .am-pop-item 可点样式无功能，误导点击）
     pop.appendChild(el('div', 'am-pop-sep'));
     var mte = el('button', 'am-pop-item', '✏️ 编辑标签…');
     mte.onclick = function () {

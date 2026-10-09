@@ -27,11 +27,17 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       # 必须与本地打包参数一致：win-x64 自包含单文件（用户机无 .NET 运行时也能跑）
       - name: 编译 AnnieEngine（.NET 9）
         run: dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo
+
+      # AnnieFlyout 伴侣进程（.NET 10）：单文件+压缩；禁用 IncludeNativeLibrariesForSelfExtract（会破坏 WPF pack URI 资源解析导致启动崩溃）
+      - name: 编译 AnnieFlyout（.NET 10）
+        run: dotnet publish flyout/FluentFlyoutWPF/FluentFlyout.csproj -c "GitHub Release" -p:Platform=x64 -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:DebugSymbols=false -o flyout/publish --nologo
 
       - name: 准备 ffmpeg / 校验工具链
         run: node scripts/setup-tools.js

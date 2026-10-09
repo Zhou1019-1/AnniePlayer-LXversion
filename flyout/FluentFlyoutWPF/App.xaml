@@ -1,0 +1,39 @@
+﻿<Application x:Class="FluentFlyoutWPF.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:FluentFlyoutWPF"
+             xmlns:classes="clr-namespace:FluentFlyout.Classes"
+             StartupUri="MainWindow.xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:mica="clr-namespace:MicaWPF.Styles;assembly=MicaWPF"
+             xmlns:converters="clr-namespace:FluentFlyoutWPF.Classes.Converters"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <mica:ThemeDictionary Theme="Auto" DesignModeTheme="Auto"/>
+                <mica:ControlsDictionary />
+                <ui:ThemesDictionary Theme="Unknown"/>
+                <ui:ControlsDictionary />
+                <ResourceDictionary Source="Resources/Styles/CustomToolTip.xaml"/>
+                <!-- default language en-US -->
+                <ResourceDictionary Source="Resources/Localization/Dictionary-en-US.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <FontFamily x:Key="SegoeFluentIcons">pack://application:,,,/;component/Fonts/#Segoe Fluent Icons</FontFamily>
+            
+            <!-- override default background colors -->
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+            <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+            
+            <!-- XAML utility resources -->
+            <converters:BoolToVisibleCollapsedConverter x:Key="BoolToVisibleCollapsedConverter"/>
+            <converters:BoolToVisibleCollapsedConverter x:Key="BoolToCollapsedVisibleConverter" TrueValue="Collapsed" FalseValue="Visible" />
+            <converters:BoolToEnabledDisabledConverter x:Key="BoolToEnabledDisabledConverter" />
+            <converters:BoolToFullHalfOpacityConverter x:Key="BoolToFullHalfOpacityConverter" />
+            <converters:BoolToFullHalfOpacityConverter x:Key="BoolToHalfFullOpacityConverter" TrueValue="0.5" FalseValue="1" />
+
+            <converters:NullToVisibilityConverter x:Key="NullToVisibleConverter" />
+            <converters:NullToVisibilityConverter x:Key="NullToCollapsedConverter" NullValue="Collapsed" NonNullValue="Visible" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

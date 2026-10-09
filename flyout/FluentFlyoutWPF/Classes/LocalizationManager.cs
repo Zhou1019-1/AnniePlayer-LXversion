@@ -1,0 +1,189 @@
+﻿// Copyright (c) 2024-2026 The FluentFlyout Authors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+using FluentFlyout.Classes.Settings;
+using FluentFlyout.Classes.Utils;
+using FluentFlyoutWPF;
+using System.Globalization;
+using System.Windows;
+
+namespace FluentFlyout.Classes;
+
+public static class LocalizationManager
+{
+    private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+
+    public static double maxLength = 0;
+
+    // current language code (first two letters) for easy access
+    public static string LanguageCode { get; set; } = string.Empty;
+
+    // dictionary of supported languages where key is the local language name and value is the language/culture code
+    // check https://simplelocalize.io/data/locales/ for additional language info
+    private static readonly Dictionary<string, string> _supportedLanguages = new()
+    {
+        { "System", "system" },
+        { "English", "en-US" },
+        { "العربية", "ar" },                // Arabic
+        { "català", "ca" },                 // Catalan
+        { "中文（简体）", "zh-CN" },          // Chinese (Simplified)
+        { "中文（繁體）", "zh-TW" },          // Chinese (Traditional)
+        { "hrvatski jezik", "hr" },         // Croatian
+        { "čeština", "cs" },                // Czech
+        { "Nederlands", "nl" },             // Dutch
+        { "suomi", "fi" },                  // Finnish
+        { "français", "fr" },               // French
+        { "Deutsch", "de" },                // German
+        { "עברית", "he" },                  // Hebrew
+        { "हिन्दी", "hi" },                    // Hindi
+        { "magyar", "hu" },                 // Hungarian
+        { "Bahasa Indonesia", "id" },       // Indonesian
+        { "Italiano", "it" },               // Italian
+        { "日本語", "ja" },                  // Japanese
+        { "한국어", "ko" },                  // Korean
+        { "polski", "pl" },                 // Polish
+        { "Português (Brasil)", "pt-BR" },  // Portuguese (Brazil)
+        { "Русский", "ru" },                // Russian
+        { "slovenčina", "sk" },             // Slovak
+        { "Español", "es" },                // Spanish
+        { "தமிழ்", "ta" },                  // Tamil
+        { "ไทย", "th" },                    // Thai
+        { "Türkçe", "tr" },                 // Turkish
+        { "Українська", "uk" },             // Ukrainian
+        { "Tiếng Việt", "vi" },             // Vietnamese
+    };
+
+    // dictionary of font families for specific languages, priorities are switched around
+    private static readonly Dictionary<string, string> _languageFontFamilies = new()
+    {
+        { "default", "Segoe UI Variable, Microsoft YaHei UI, Yu Gothic UI, Malgun Gothic" }, // default support for multiple languages
+        //{ "zh-CN", "Segoe UI Variable, Microsoft YaHei UI, Yu Gothic UI, Malgun Gothic" }, // same as default
+        { "zh-TW", "Segoe UI Variable, Microsoft JhengHei UI, Yu Gothic UI, Malgun Gothic" },
+        { "ja", "Segoe UI Variable, Yu Gothic UI, Microsoft YaHei UI, Malgun Gothic" },
+        { "ko", "Segoe UI Variable, Malgun Gothic, Microsoft YaHei UI, Yu Gothic UI" },
+    };
+
+    // right-to-left languages
+    private static readonly HashSet<string> _rtlLanguages = ["ar", "he"];
+
+    // readonly property to access supported languages
+    public static Dictionary<string, string> SupportedLanguages => _supportedLanguages;
+
+    public static void ApplyLocalization()
+    {
+        string culture;
+        if (SettingsManager.Current.AppLanguage == "system")
+        {
+            culture = CultureInfo.CurrentUICulture.Name;
+        }
+        else
+        {
+            culture = SettingsManager.Current.AppLanguage;
+        }
+
+        // extract only the language code (first two letters) from the culture
+        string languageCode = culture[..Math.Min(2, culture.Length)];
+        LanguageCode = languageCode;
+
+        // get current localization
+        var dictionaries = App.Current.Resources.MergedDictionaries;
+
+        // remove all localization dictionaries except the default one (en-US)
+        foreach (var dictionary in dictionaries.ToList())
+        {
+            if (dictionary.Source != null
+                && dictionary.Source.OriginalString.StartsWith("Resources/Localization/")
+                && !dictionary.Source.OriginalString.EndsWith("Dictionary-en-US.xaml"))
+            {
+                dictionaries.Remove(dictionary);
+            }
+        }
+
+        Logger.Info("Applying localization for language: " + culture);
+
+        // change flow direction of all windows
+        ApplyFlowDirection(languageCode);
+
+        ApplyFontFamily(culture);
+
+        // if English, the default (en-US) is already loaded, so no need to add another dictionary
+        if (languageCode == "en") return;
+
+        // find the localization file path based on the first two letters of the language code
+        string? localizationDictPath = $"Resources/Localization/Dictionary-{culture}.xaml";
+
+        var uri = new Uri(localizationDictPath, UriKind.Relative);
+
+        try
+        {
+            var resourceDict = new ResourceDictionary() { Source = uri };
+            dictionaries.Add(resourceDict);
+        }
+        catch (Exception)
+        {
+            // localization file not found, try simplified language code instead
+
+            try
+            {
+                localizationDictPath = $"Resources/Localization/Dictionary-{languageCode}.xaml";
+                uri = new Uri(localizationDictPath, UriKind.Relative);
+
+                var resourceDict = new ResourceDictionary() { Source = uri };
+                dictionaries.Add(resourceDict);
+            }
+            catch
+            {
+                // do nothing and keep the default (en-US)
+                Logger.Warn("Localization file not found for language: " + culture);
+            }
+        }
+
+        //Calculate the Lock Key Flyout text's Max Lenght
+        List<double> Lengths = new List<double>();
+
+        Lengths.Add(StringWidth.GetStringWidth(Application.Current.TryFindResource("LockWindow_InsertPressed").ToString() ?? string.Empty));
+
+        var On = Application.Current.TryFindResource("LockWindow_LockOn")?.ToString() ?? string.Empty;
+        var Off = Application.Current.TryFindResource("LockWindow_LockOff")?.ToString() ?? string.Empty;
+        var OnOffMax = On.Length >= Off.Length ? On + " " : Off + " ";
+
+        Lengths.Add(StringWidth.GetStringWidth(OnOffMax + Application.Current.TryFindResource("LockWindow_CapsLock").ToString() ?? string.Empty));
+        Lengths.Add(StringWidth.GetStringWidth(OnOffMax + Application.Current.TryFindResource("LockWindow_NumLock").ToString() ?? string.Empty));
+        Lengths.Add(StringWidth.GetStringWidth(OnOffMax + Application.Current.TryFindResource("LockWindow_ScrollLock").ToString() ?? string.Empty));
+
+        maxLength = Lengths.Max() + 8; // additional margin to avoid text clipping
+
+        // set minimum just in case if resources weren't loaded
+        if (maxLength < 20)
+            maxLength = 115; // 160 (default width) - 45 (estimated padding)
+    }
+
+    private static void ApplyFlowDirection(string languageCode)
+    {
+        SettingsManager.Current.FlowDirection = _rtlLanguages.Contains(languageCode)
+            ? FlowDirection.RightToLeft
+            : FlowDirection.LeftToRight;
+
+        Logger.Info("Applied flow direction: " + SettingsManager.Current.FlowDirection);
+    }
+
+    private static void ApplyFontFamily(string culture)
+    {
+        string fontFamily;
+        if (_languageFontFamilies.TryGetValue(culture, out string? value))
+        {
+            fontFamily = value;
+        }
+        else if (_languageFontFamilies.TryGetValue(LanguageCode, out string? value1))
+        {
+            fontFamily = value1;
+        }
+        else
+        {
+            fontFamily = _languageFontFamilies["default"];
+        }
+        SettingsManager.Current.FontFamily = fontFamily;
+
+        Logger.Debug("Applied font family: " + fontFamily);
+    }
+}

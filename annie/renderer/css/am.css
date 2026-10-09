@@ -78,6 +78,15 @@ html[data-theme="am"] #titlebar { display: none !important; }
 #am-root.am-light::before { filter: blur(90px) saturate(1.35) brightness(1.0); opacity: .42; }
 #am-root.am-nobg::before { opacity: 0; }
 
+/* ---------- V4.4：自定义壁纸（全局，wallpaper.js 注入 --wp-img；壁纸优先替代封面氛围） ---------- */
+html.wp-on #am-root::before {
+  background-image: var(--wp-img);
+  filter: blur(var(--wp-blur, 40px)) saturate(1.15) brightness(calc(1 - var(--wp-dim, .3)));
+  opacity: .55;
+}
+html.wp-on #am-root.am-nobg::before { opacity: .55; }        /* 压过「无封面隐藏氛围」规则 */
+html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 不对壁纸生效 */
+
 /* ---------- 顶部传输栏（磨砂） ---------- */
 .am-topbar {
   flex: none; height: 64px; display: flex; align-items: center; gap: 12px;
@@ -89,6 +98,25 @@ html[data-theme="am"] #titlebar { display: none !important; }
 }
 /* 拖拽区内所有可交互元素必须显式 no-drag，否则点击被窗口拖拽吞掉 */
 .am-topbar button, .am-topbar input, .am-topbar select, .am-np-prog { -webkit-app-region: no-drag; }
+/* V4.4：AM 顶栏置底（设置中心「AM 界面」页开关）——播放控制/进度/工具按钮整条移到窗口下方；
+ * vizbar 频谱条保持贴在顶栏上方；边框从上分割线换成下分割线 */
+#am-root.am-topbar-bottom .am-topbar { order: 99; border-bottom: 0; border-top: 1px solid var(--am-sep); }
+#am-root.am-topbar-bottom .am-vizbar { order: 98; }
+/* 窗口三键（— ▢ ✕）不随顶栏下沉，钉回右上角（操作直觉：关窗永远右上）。
+ * 注意：顶栏 backdrop-filter 会创建包含块使 fixed 失效，故置底时 JS 会把 .am-winbtns
+ * 物理移为 #am-root 直接子节点（settings.js applyInterface）；此处补挂出后的 no-drag。 */
+#am-root.am-topbar-bottom .am-winbtns {
+  position: fixed; top: 0; right: 0; z-index: 60;
+  padding: 6px 10px 8px 20px; -webkit-app-region: drag;
+  background: var(--am-glass-2); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-radius: 0 0 0 14px; /* 左下圆角玻璃角标，避免与内容区控件视觉打架 */
+}
+#am-root.am-topbar-bottom .am-winbtns button { -webkit-app-region: no-drag; }
+/* 顶栏下移后窗口顶部没有拖拽区了——补一条 10px 隐形拖拽边 */
+#am-root.am-topbar-bottom::after {
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 10px;
+  -webkit-app-region: drag; z-index: 55; pointer-events: auto;
+}
 .am-transport { display: flex; align-items: center; gap: 4px; }
 .am-tbtn {
   border: 0; background: transparent; color: var(--am-text-2); cursor: pointer;
@@ -293,14 +321,16 @@ html[data-theme="am"] #titlebar { display: none !important; }
   background: var(--am-bg-elev); box-shadow: var(--am-shadow);
   display: flex; align-items: center; justify-content: center; font-size: 44px; color: var(--am-text-3);
 }
-.am-pl-info { min-width: 0; }
+.am-pl-info { flex: 1; min-width: 0; }
 .am-pl-name { font-size: 24px; font-weight: 700; outline: none; border-radius: 6px; padding: 0 4px; margin-left: -4px; }
 .am-pl-name[contenteditable="true"]:hover { background: var(--am-hover); }
 .am-pl-meta { color: var(--am-text-2); font-size: 13px; margin: 4px 0 14px; }
-.am-pl-actions { display: flex; gap: 10px; }
+.am-pl-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.am-pl-actions .am-btn { flex: none; white-space: nowrap; } /* V4.4：防按钮文字被挤压成竖排 */
 .am-btn {
   border: 0; border-radius: 9px; cursor: pointer; font: 600 13px var(--am-font);
-  padding: 8px 18px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 18px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  white-space: nowrap; flex: none;
   background: var(--am-glass-2); color: var(--am-text);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   transition: background .15s, transform .1s;
@@ -422,6 +452,10 @@ html[data-theme="am"] #titlebar { display: none !important; }
   padding: 7px 10px; border-radius: 7px; font: 13px var(--am-font); text-align: left;
 }
 .am-pop-item:hover { background: var(--am-accent); color: #fff; }
+/* V4.4：菜单分组标题（不可点）——旧实现复用 .am-pop-item（cursor:pointer + hover 高亮），
+ * 用户点「添加到播放列表」标题无任何反应，误以为功能坏了 */
+.am-pop-head { padding: 6px 10px 2px; font: 600 11px var(--am-font); color: var(--am-text-3);
+  letter-spacing: .04em; cursor: default; user-select: none; }
 .am-pop-sep { height: 1px; background: var(--am-sep); margin: 5px 8px; }
 
 /* V4.3.26：弹出菜单二级浮层（歌单太多时右键菜单收敛） */
@@ -563,6 +597,12 @@ html[data-theme="am"] #titlebar { display: none !important; }
 /* 无封面时不显示背景图（否则残留上一首的模糊封面） */
 #am-root.am-nobg .am-imm-bg { opacity: 0; }
 #am-root.am-light .am-imm-bg { filter: blur(70px) saturate(1.35) brightness(.68); }
+/* V4.4：沉浸模式也使用自定义壁纸（wp-on + wp-imm 双类组合；替代封面氛围，吃同一组模糊/压暗参数） */
+html.wp-on.wp-imm #am-root .am-imm-bg {
+  background-image: var(--wp-img);
+  filter: blur(var(--wp-blur, 40px)) saturate(1.2) brightness(calc(1 - var(--wp-dim, .3)));
+}
+html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封面隐藏氛围」 */
 .am-imm-closebar {
   position: absolute; top: 14px; right: 16px; z-index: 3; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
@@ -612,6 +652,9 @@ html[data-theme="am"] #titlebar { display: none !important; }
 /* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词）；V4.3.26：占满右半区并向中轴靠拢，与左栏对称 */
 .am-imm-lyr { display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
+/* V4.4：沉浸模式未开歌词时，封面+信息+控制栏整体居中
+ *（.am-imm-main 恒为 1fr 1fr 双列，歌词隐藏后左列仍停在左半屏，右半全空） */
+#am-root.am-imm-on:not(.am-imm-lyr-on) .am-imm-main { grid-template-columns: 1fr; }
 .am-imm-lyr .am-lyr-line { font-size: calc(26px * var(--am-lyr-scale, 1)); font-weight: 700; padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
 .am-imm-lyr .am-lyr-line .tly { font-size: calc(16px * var(--am-tly-scale, 1)); }
 .am-imm-lyr .am-lyr-line.far { filter: blur(2px); opacity: .45; }

@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads'); // EXP 7.28：曲库扫描 Worker
 const { EngineClient } = require('./engineClient');
+const flyout = require('./flyout');
 const library = require('./library');
 const streaming = require('./streaming');
 const onlineMatch = require('./onlineMatch');
@@ -271,7 +272,11 @@ function flushStore() {
     const tmp = p + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(_storeMem), 'utf8'); // 不缩进，省体积和序列化时间
     fs.renameSync(tmp, p); // 原子替换，避免写一半损坏 library.json
-  } catch { }
+  } catch (e) {
+    // V4.4：写失败必须恢复脏标记——否则 before-quit 兜底也不会再写，改动只活在内存
+    _storeDirty = true;
+    console.error('[store] flushStore 写盘失败（改动保留待重试）:', e && e.message);
+  }
 }
 
 /* V4.3.10：直接改 store 对象后的落盘必须走 saveStore（置脏+防抖），
@@ -504,6 +509,25 @@ function registerIpc() {
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
   });
   ipcMain.handle('win:close', () => mainWindow?.close());
+
+  /* V4.4：AnnieFlyout 伴侣进程（任务栏小组件 + 切歌弹窗）。
+   * 开关持久化在 store.ui.flyout；启动/停止即拉起/杀掉 AnnieFlyout.exe。
+   * SMTC 桥：'flyout:push' 渲染层推曲目/状态 → stdin；按钮命令 → 'flyout:cmd' 回渲染层。 */
+  const startFlyout = () => flyout.start({
+    onCmd: (cmd) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('flyout:cmd', cmd); } catch { } },
+  });
+  global.__annieStartFlyout = startFlyout;
+  ipcMain.on('flyout:push', (_e, obj) => flyout.send(obj));
+  ipcMain.handle('flyout:get', () => {
+    const st = loadStore();
+    return { enabled: !!(st.ui && st.ui.flyout), available: !!flyout.resolveFlyout(), running: flyout.isRunning() };
+  });
+  ipcMain.handle('flyout:set', (_e, on) => {
+    const st = loadStore(); st.ui = st.ui || {}; st.ui.flyout = !!on; touchStore(); flushStore();
+    if (on) return startFlyout();
+    flyout.stop();
+    return true;
+  });
 
   // V3.5.8：全局快捷键开关（持久化在 store.globalHotkeys，默认开）
   ipcMain.handle('hotkeys:get', () => loadStore().globalHotkeys !== false);
@@ -1087,6 +1111,49 @@ function registerIpc() {
     return store.streamPlaylists;
   });
 
+  // V4.4：节拍分析落盘缓存（beat-cache.json，LRU 300 条，写 800ms 防抖合并）
+  // 键 = 曲路径（stage-adapter 传入 String(path)）；值 = {map, at}，map 为节拍图原始 JSON
+  let beatCache = null;
+  let beatCacheTimer = null;
+  const beatCacheFile = () => path.join(app.getPath('userData'), 'beat-cache.json');
+  function loadBeatCache() {
+    if (beatCache) return beatCache;
+    try { beatCache = JSON.parse(fs.readFileSync(beatCacheFile(), 'utf8')); } catch (e) { beatCache = {}; }
+    if (!beatCache || typeof beatCache !== 'object') beatCache = {};
+    return beatCache;
+  }
+  function saveBeatCache() {
+    clearTimeout(beatCacheTimer);
+    beatCacheTimer = setTimeout(() => {
+      try {
+        const c = loadBeatCache();
+        const keys = Object.keys(c);
+        if (keys.length > 300) { // LRU：按最后访问时间删最旧
+          keys.sort((a, b) => (c[a].at || 0) - (c[b].at || 0));
+          for (const k of keys.slice(0, keys.length - 300)) delete c[k];
+        }
+        fs.writeFileSync(beatCacheFile(), JSON.stringify(c));
+      } catch (e) { }
+    }, 800);
+  }
+  ipcMain.handle('beatCache:get', (_e, key) => {
+    const c = loadBeatCache();
+    const it = c[String(key || '')];
+    if (!it || !it.map) return { hit: false };
+    it.at = Date.now(); saveBeatCache();
+    return { hit: true, map: it.map };
+  });
+  ipcMain.handle('beatCache:set', (_e, key, map) => {
+    if (!key || !map) return { ok: false };
+    const c = loadBeatCache();
+    c[String(key)] = { map: map, at: Date.now() };
+    saveBeatCache();
+    return { ok: true };
+  });
+
+  // V4.4：在文件管理器中定位（粒子舞台曲目右键菜单）
+  ipcMain.handle('shell:showItem', (_e, p) => { try { shell.showItemInFolder(String(p || '')); } catch { } return { ok: true }; });
+
   // 批量读取标签（排序用），结果写入 metaCache 持久化，避免重复解析
   // EXP 7.28：解析移交 scanWorker 线程；Worker 不可用时降级为主进程异步解析
   ipcMain.handle('lib:metaBatch', async (_e, paths) => {
@@ -1320,7 +1387,9 @@ function registerIpc() {
   ipcMain.on('dlyrics:line', (_e, payload) => { try { dlyrWin?.webContents.send('dlyrics:line', payload); } catch { } });
   ipcMain.on('dlyrics:ctl', (_e, payload) => {
     if (!dlyrWin) return;
-    if (payload.lock != null) dlyrWin.setIgnoreMouseEvents(!!payload.lock, { forward: true });
+    if (payload.lock != null) {
+      dlyrWin.setIgnoreMouseEvents(!!payload.lock, { forward: true });
+    }
     // V4.3.13：兼容模式下禁用 setOpacity——它在 Windows 上同样通过 WS_EX_LAYERED 实现，
     // 会重新触发高 DPI 分层窗鼠标事件丢失 bug（实测 exstyle 0x00280108 仍带 LAYERED）
     if (payload.opacity != null && !dlyrCompatCur) dlyrWin.setOpacity(Math.max(0.2, Math.min(1, payload.opacity)));
@@ -1892,12 +1961,14 @@ function initRemote() {
 // SVLX 模式下跳过锁 + whenReady（已由 src/main.js 接管）
 if (global.__svlxBoot) {
   registerIpc();
+  startAwakeBlock(); // V4.4：防息屏此前只在非 SVLX 死分支调用，生产/dev 从未生效
   setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
   qobuz.init({ loadStore, flushStore, touchStore });
   initRemote(); // V4.3.12：手机遥控（两分支共用，勿漏——漏了就是"配对码显示正常但永远不对"）
   setupImageReferer();
   engine.start();
+  if ((loadStore().ui || {}).flyout && global.__annieStartFlyout) global.__annieStartFlyout(); // V4.4：伴侣进程随开关启动
   // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
   engine.call('devices.list', {}, 90000).catch(() => { });
   createWindow();

@@ -306,6 +306,14 @@
     var ov = el('div', 'am-imm');
     ov.appendChild(el('div', 'am-imm-bg'));
     var cb = el('div', 'am-imm-closebar');
+    // V4.4：沉浸模式歌词外观入口（与主面板 ⚙ 同一弹层，锚点换成这里）
+    R.immBtnLyrSet = el('button', 'am-tbtn', '⚙');
+    R.immBtnLyrSet.title = '歌词外观（字号 / 行距 / 偏移）';
+    R.immBtnLyrSet.onclick = function (e) {
+      e.stopPropagation();
+      if (AM.toggleLyrSetPop) AM.toggleLyrSetPop(R.immBtnLyrSet);
+    };
+    cb.appendChild(R.immBtnLyrSet);
     var bExit = el('button', 'am-tbtn', '⤡');
     bExit.title = '退出沉浸模式';
     bExit.onclick = function () { toggleImmersive(false); };
@@ -490,6 +498,13 @@
     S.mini = false;
     S.miniLyrOn = false; S.miniQOn = false;
     document.getElementById('am-root').classList.remove('am-mini-on', 'am-mini-lyr-on', 'am-mini-q-on');
+    /* V4.4：退出迷你强制重开窗格——迷你期间 .am-body display:none，
+     * 期间切歌/重建会以 clientHeight=0 算出错误窗口（只渲染顶部几行+巨大垫片），
+     * 回来后浏览器又可能把 scrollTop 恢复到旧位置 → 视口落在垫片上=整片空白，
+     * 直到下次轮询/切歌才自愈（用户回报「回主界面歌曲不显示，等一下就好」）。
+     * 两遍：rAF 补布局恢复后的当帧，300ms 补 OS 窗口尺寸还原落定后。 */
+    requestAnimationFrame(function () { if (S._tbl) { S._tbl.lastStart = -1; renderAmWindow(); } });
+    setTimeout(function () { if (S._tbl) { S._tbl.lastStart = -1; renderAmWindow(); } }, 300);
   }
   function miniResize() {
     var h = (S.miniLyrOn || S.miniQOn) ? 560 : 170;
@@ -749,6 +764,12 @@
             && !(S.view === 'albums' && !S.albumKey) && !(S.view === 'folders' && !S.folderPath)
             && currentTracks().some(function (t) { return t.path === p2; })) {
           scrollRowIntoView(p2, { auto: true });
+        } else if (p2 && state.currentStream && (S.view === 'stream' || S.view.indexOf('spl:') === 0)
+            && AM.scrollStreamRowIntoView) {
+          // V4.4：流媒体切歌终点校正——playStreamAt 的 smooth 滚动会被 refresh 链里
+          // restoreScrollAround 的瞬时 scrollTop 恢复掐断在半路（首次播放「定位乱跳」根因之一），
+          // 这里在全部重建落定后补一次（行已可见则不打扰）
+          AM.scrollStreamRowIntoView(true);
         }
       }
       refreshTransport();

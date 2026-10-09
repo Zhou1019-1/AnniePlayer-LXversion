@@ -154,13 +154,13 @@
     const stats = state.library.stats || {};
     const topN = smartTracks('top').length, recentN = smartTracks('recent').length;
     return [
-      { special: 'smart:top', name: '最常听', sub: '按播放次数', count: topN, icon: '🔥' },
-      { special: 'smart:recent', name: '最近播放', sub: '按最近播放时间', count: recentN, icon: '🕒' },
-      { special: 'smart:new', name: '最近添加', sub: '按文件修改时间', count: Math.min(100, state.library.tracks.length), icon: '🆕' },
+      { special: 'smart:top', name: '最常听', sub: '按播放次数', count: topN, icon: 'fire' },
+      { special: 'smart:recent', name: '最近播放', sub: '按最近播放时间', count: recentN, icon: 'clock' },
+      { special: 'smart:new', name: '最近添加', sub: '按文件修改时间', count: Math.min(100, state.library.tracks.length), icon: 'sparkles' },
       // V3.5.19：每日推荐（本地曲库，种子=日期，同日稳定；count 固定展示不算实数，避免每次渲染全库排序）
-      { special: 'smart:daily', name: '每日推荐', sub: '偏好 60% + 探索 40%', count: 30, icon: '✨' },
-      { special: 'albums', name: '专辑', sub: '媒体库 · 按专辑聚合', count: aggAlbums().length, icon: '💿' },
-      { special: 'artists', name: '艺术家', sub: '媒体库 · 按艺术家聚合', count: aggArtists().length, icon: '🎤' },
+      { special: 'smart:daily', name: '每日推荐', sub: '偏好 60% + 探索 40%', count: 30, icon: 'sparkles' },
+      { special: 'albums', name: '专辑', sub: '媒体库 · 按专辑聚合', count: aggAlbums().length, icon: 'disc' },
+      { special: 'artists', name: '艺术家', sub: '媒体库 · 按艺术家聚合', count: aggArtists().length, icon: 'mic' },
     ];
   }
 

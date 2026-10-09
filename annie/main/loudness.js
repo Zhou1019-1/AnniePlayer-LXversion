@@ -9,7 +9,9 @@ const path = require('path');
 function resolveFfmpeg() {
   const prod = path.join(process.resourcesPath || '', 'engine', 'tools', 'ffmpeg.exe');
   const dev = path.join(__dirname, '..', 'engine', 'tools', 'ffmpeg.exe');
-  for (const p of [prod, dev]) { try { if (fs.existsSync(p)) return p; } catch { } }
+  // V4.4：补仓库根候选（analyzer/tagWriter 均有，独漏此处 → dev 响度分析静默全失败）
+  const devRoot = path.join(__dirname, '..', '..', 'engine', 'tools', 'ffmpeg.exe');
+  for (const p of [prod, dev, devRoot]) { try { if (fs.existsSync(p)) return p; } catch { } }
   return 'ffmpeg.exe';
 }
 

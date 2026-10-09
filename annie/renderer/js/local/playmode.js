@@ -163,7 +163,9 @@
     if (!btn) return;
     function refresh() {
       var i = info();
-      btn.textContent = i.icon;
+      // V4.4：SVG 图标（ICONS/ico 由 player.js 顶层定义，本脚本后加载共享全局词法作用域）
+      var icoKey = { 'all-seq': 'modeAllSeq', 'list-seq': 'modeListSeq', 'all-rand': 'modeAllRand', 'list-rand': 'modeListRand', 'repeat-one': 'modeRepeatOne' }[i.id];
+      btn.innerHTML = (typeof ico === 'function' && icoKey) ? ico(icoKey, 16) : i.icon;
       btn.title = '播放模式：' + i.label + (i.hint ? '\n' + i.hint : '') + '\n（仅本地播放生效，点击切换）';
     }
     btn.addEventListener('click', function () {

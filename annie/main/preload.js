@@ -9,6 +9,16 @@ contextBridge.exposeInMainWorld('mine', {
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),
 
+  // V4.4：AnnieFlyout 伴侣进程（任务栏小组件 + 切歌弹窗）
+  flyoutGet: () => ipcRenderer.invoke('flyout:get'),
+  flyoutSet: (on) => ipcRenderer.invoke('flyout:set', on),
+  flyoutPush: (obj) => ipcRenderer.send('flyout:push', obj), // SMTC 桥：曲目/状态推送
+  onFlyoutCmd: (cb) => { // SMTC 桥：按钮命令回流（play/pause/next/prev）
+    const listener = (_e, cmd) => cb(cmd);
+    ipcRenderer.on('flyout:cmd', listener);
+    return () => ipcRenderer.removeListener('flyout:cmd', listener);
+  },
+
   // V3.5.8：全局快捷键 / 播放状态上报（任务栏缩略图）
   hotkeysGet: () => ipcRenderer.invoke('hotkeys:get'),
   hotkeysSetEnabled: (on) => ipcRenderer.invoke('hotkeys:setEnabled', on),
@@ -110,6 +120,11 @@ contextBridge.exposeInMainWorld('mine', {
   // V4.3：专辑搜索 / 专辑曲目
   streamAlbumSearch: (params) => ipcRenderer.invoke('stream:albumSearch', params),
   streamAlbumSongs: (params) => ipcRenderer.invoke('stream:albumSongs', params),
+
+  // V4.4：节拍分析落盘缓存（beat-cache.json；键=曲路径，二次播放免整轨解码）
+  beatCacheGet: (key) => ipcRenderer.invoke('beatCache:get', key),
+  beatCacheSet: (key, map) => ipcRenderer.invoke('beatCache:set', key, map),
+  showItemInFolder: (p) => ipcRenderer.invoke('shell:showItem', p), // V4.4：在文件管理器中定位
 
   // 设置中心：版本 / 手动检查更新 / 外链 / 更新状态订阅
   appVersion: () => ipcRenderer.invoke('app:getVersion'),

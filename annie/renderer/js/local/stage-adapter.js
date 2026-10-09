@@ -111,9 +111,13 @@
   var lastPosAt = 0;
   var posPlaying = false;
 
+  var interpRunning = true;
   function interpTicker() {
-    // 仅舞台可见且播放中需要 60fps 补间；暂停或切到其他主题时降为 4Hz 慢轮（等 state 事件恢复锚点）
-    var active = posPlaying && !annieAudio.paused && !window.__legacyThemeHidden;
+    // V4.4：主题冻结期彻底停（原 4Hz 慢轮也停，与主循环休眠对齐）；切回由 annie-theme-changed 重启
+    if (window.__legacyThemeHidden) { interpRunning = false; return; }
+    interpRunning = true;
+    // 仅播放中需要 60fps 补间；暂停时降为 4Hz 慢轮（等 state 事件恢复锚点）
+    var active = posPlaying && !annieAudio.paused;
     if (active) {
       var now = performance.now();
       var est = lastPosSec + (now - lastPosAt) / 1000;
@@ -124,6 +128,9 @@
       setTimeout(interpTicker, 250);
     }
   }
+  document.addEventListener('annie-theme-changed', function (e) {
+    if (e.detail && e.detail.theme === 'legacy' && !interpRunning) requestAnimationFrame(interpTicker);
+  });
   requestAnimationFrame(interpTicker);
 
   // ================= 封面 =================
@@ -255,8 +262,21 @@
     return { text: fullText, words: words };
   }
 
+  /* V4.4：同时间戳多行拆分——下载落盘/内嵌歌词的译文合并格式
+   *（tagWriter.writeLyric 把 tlyric 直接拼进同一 .lrc，同时间戳第二行即译文），
+   * 此前舞台把译文当普通歌词行重复显示；现拆出转译文轨。 */
+  function splitMergedTranslations(lines) {
+    var byT = {}, out = [], tly = [];
+    lines.forEach(function (l) {
+      var k = (Math.round((l.t || 0) * 100) / 100).toFixed(2);
+      if (byT[k]) tly.push(l); else { byT[k] = l; out.push(l); }
+    });
+    return tly.length ? { lines: out, tly: tly } : { lines: lines, tly: [] };
+  }
+
   // 通用歌词注入：text 为空 → 清空；非空 → 解析 LRC 并激活歌词舞台
-  function applyLyricText(text, token) {
+  // V4.4：tlyText 译文轨（流媒体 ly.tlyric 显式传入；本地走同时间戳合并行自动拆分）
+  function applyLyricText(text, token, tlyText) {
     if (token !== trackSwitchToken) return;
     if (!text) {
       lyricsLines = [];
@@ -279,12 +299,22 @@
         hasWordTiming = true;
       }
     }
+    // V4.4：译文轨接通——渲染层译文机（08-lyrics-display-modes）原本完整但数据被丢弃。
+    // 优先显式 tlyText；无则试同时间戳合并行拆分（本地 .lrc 拼装格式）
+    var tlyLines = tlyText ? parseLyricText(tlyText) : [];
+    if (!tlyLines.length) {
+      var sp = splitMergedTranslations(lines);
+      lines = sp.lines; tlyLines = sp.tly;
+    }
+    if (tlyLines.length && typeof attachLyricTranslations === 'function') {
+      lines = attachLyricTranslations(lines, tlyLines); // 按时间容差/顺序把译文挂到 line.translation
+    }
     originalLyricsState = {
       lines: lines,
       hasNativeKaraoke: hasWordTiming,
       timingSource: hasWordTiming ? 'word-lrc' : 'lrc',
-      translationLines: [],
-      translationSource: 'none'
+      translationLines: tlyLines,
+      translationSource: tlyLines.length ? 'tlyric' : 'none'
     };
     lyricsLines = lines;
     lyricsTimingSource = hasWordTiming ? 'word-lrc' : 'lrc';
@@ -318,6 +348,18 @@
     try {
       // 流媒体 URL 无法走本地文件读取（无本地字节），跳过节拍图（视觉照常）
       if (/^https?:\/\//i.test(path)) return;
+      // V4.4：设置开关——节拍律动分析关闭时整链跳过（弱机省一次整轨解码 + 4 路滤波渲染）
+      if (window.annieSettings && annieSettings.ui && annieSettings.ui.beatAnalysis === false) return;
+      var cacheKey = String(path);
+      // V4.4：落盘缓存命中直接应用——二次播放零成本（上游缓存链走 apiJson，在 Annie 不可用，故走自己的 IPC）
+      if (window.mine.beatCacheGet) {
+        try {
+          var hit = await window.mine.beatCacheGet(cacheKey);
+          if (token !== trackSwitchToken) return;
+          if (hit && hit.map && typeof applyBeatMapCacheForCurrent === 'function'
+              && applyBeatMapCacheForCurrent(cacheKey, hit.map, token, '[stage] 节拍缓存命中')) return;
+        } catch (e0) { }
+      }
       var buf = await window.mine.readFile(path); // ArrayBuffer（主进程限制 64MB）
       if (token !== trackSwitchToken) return;
       var blobUrl = URL.createObjectURL(new Blob([buf]));
@@ -329,6 +371,8 @@
       }
       if (map && token === trackSwitchToken) {
         smoothBeatMapHandoff(String(path), map, token, song);
+        // V4.4：分析结果落盘（异步，不阻塞视觉应用）
+        if (window.mine.beatCacheSet) window.mine.beatCacheSet(cacheKey, map).catch(function () { });
       }
     } catch (e) {
       // APE/DSD/TTA 等 Chromium 解不了的格式会走到这里：没有节拍图，视觉照样播
@@ -337,6 +381,36 @@
   }
 
   // ================= 对外：切歌 =================
+  /* V4.4：主题冻结期（AM/FB2K 激活）的重活挂起——封面处理/歌词 mesh 预热/节拍整轨解码
+   * 在舞台不可见时全白跑（AM 主题切歌 CPU 尖峰根因）。冻结期 playTrack 只更新状态锚点，
+   * 视觉管线记为 pending，annie-theme-changed 切回 legacy 时按最后一首补做。 */
+  var pendingVisualMeta = null, pendingLyricText = null, pendingCoverSrc = null;
+  function applyTrackVisuals(meta, token) {
+    try { applyStageCover(meta.cover, 'annie|' + meta.path, token); } catch (e) { console.warn('[stage] cover', e); }
+    // 流媒体 URL（http/https）没有本地 .lrc：跳过本地歌词读取，
+    // 避免其空结果异步到达后覆盖 streaming.js 通过 setLyricText 注入的在线歌词。
+    // 在线歌词由 streaming.js → streamLyric → annieStage.setLyricText 负责。
+    if (!/^https?:\/\//i.test(String(meta.path || ''))) {
+      try { applyStageLyrics(meta.path, token); } catch (e) { console.warn('[stage] lyrics', e); }
+    }
+    try { applyStageBeatMap(meta.path, meta.duration, token, currentSong); } catch (e) { console.warn('[stage] beat', e); }
+  }
+  document.addEventListener('annie-theme-changed', function (e) {
+    if (!(e.detail && e.detail.theme === 'legacy')) return;
+    // 切回粒子舞台：补做冻结期挂起的视觉管线（只补最后一首，token 用当前切歌令牌）
+    if (pendingVisualMeta) {
+      var m = pendingVisualMeta; pendingVisualMeta = null;
+      applyTrackVisuals(m, trackSwitchToken);
+    }
+    if (pendingLyricText != null) {
+      var lt = pendingLyricText; pendingLyricText = null;
+      applyLyricText(lt.text, trackSwitchToken, lt.tly);
+    }
+    if (pendingCoverSrc) {
+      var cs2 = pendingCoverSrc; pendingCoverSrc = null;
+      try { applyStageCover(cs2, 'annie|' + (currentSong ? currentSong.id : 'cover'), trackSwitchToken); } catch (e2) { }
+    }
+  });
   var annieStage = {
     ready: true,
 
@@ -345,6 +419,8 @@
       var token = ++trackSwitchToken;
       // 节拍分析用自己的令牌做竞态取消，必须与切歌令牌对齐
       try { beatMapToken = token; } catch (e) { }
+      // 新一曲作废旧挂起（防止上一首的流歌词/封面污染新曲）
+      pendingLyricText = null; pendingCoverSrc = null;
       // 粒子整体透明度淡入（上游在 05-playback 播放启动里做，本地版在此补齐）
       try { if (typeof tweenParticleAlpha === 'function') tweenParticleAlpha(uniforms.uAlpha.value || 0, particlesEnabled ? 1.0 : 0, 220); } catch (e) { }
       currentSong = {
@@ -376,14 +452,9 @@
         if (typeof clearStageLyrics === 'function') clearStageLyrics();
       } catch (e) { console.warn('[stage] clearLyrics', e); }
 
-      try { applyStageCover(meta.cover, 'annie|' + meta.path, token); } catch (e) { console.warn('[stage] cover', e); }
-      // 流媒体 URL（http/https）没有本地 .lrc：跳过本地歌词读取，
-      // 避免其空结果异步到达后覆盖 streaming.js 通过 setLyricText 注入的在线歌词。
-      // 在线歌词由 streaming.js → streamLyric → annieStage.setLyricText 负责。
-      if (!/^https?:\/\//i.test(String(meta.path || ''))) {
-        try { applyStageLyrics(meta.path, token); } catch (e) { console.warn('[stage] lyrics', e); }
-      }
-      try { applyStageBeatMap(meta.path, meta.duration, token, currentSong); } catch (e) { console.warn('[stage] beat', e); }
+      // V4.4：冻结期重活挂起，只记锚点；切回时由 annie-theme-changed 补做
+      if (window.__legacyThemeHidden) { pendingVisualMeta = meta; return; }
+      applyTrackVisuals(meta, token);
     },
 
     setPaused: function (paused) {
@@ -417,15 +488,20 @@
     getParticlesEnabled: function () { return particlesEnabled; },
 
     // 流媒体在线歌词注入（由 streaming.js 异步回调调用；token 竞态由 applyLyricText 把关）
-    setLyricText: function (text) {
-      applyLyricText(text || '', trackSwitchToken);
+    // V4.4：tly 译文轨一并注入（ly.tlyric）
+    setLyricText: function (text, tly) {
+      if (window.__legacyThemeHidden) { pendingLyricText = { text: text || '', tly: tly || '' }; return; } // V4.4：冻结期挂起，切回补做
+      applyLyricText(text || '', trackSwitchToken, tly || '');
     },
 
     // 流媒体封面补充注入（由 streaming.js 异步回调调用；URL 直接走 applyStageCover 的 HTTP 链路）
     setCover: function (src) {
       if (!src) return;
+      if (window.__legacyThemeHidden) { pendingCoverSrc = src; return; } // V4.4：冻结期挂起，切回补做
       try {
         applyStageCover(src, 'annie|' + (currentSong ? currentSong.id : 'cover'), trackSwitchToken);
+        // V4.4+：氛围背景同步（仅 data/https——http 会被 CSP 拦，交给 applyStageCover 的代理链）
+        if (/^(data:|https:)/i.test(src)) document.body.style.setProperty('--lv-bgimage', 'url("' + src + '")');
       } catch (e) { console.warn('[stage] setCover', e); }
     }
   };

@@ -182,7 +182,9 @@
       renderLyrics();
     }).catch(function () { renderLyrics(); });
   }
+  var _lyrManualScrollUntil = 0;
   function renderLyrics() {
+    _lyrManualScrollUntil = 0;
     // 沉浸/迷你里打开的歌词容器同步刷新
     if (R.imm && S.imm && S.immLyrOn) buildLyrInto(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
@@ -226,7 +228,7 @@
       n.classList.toggle('near', dist === 1);
       n.classList.toggle('far', dist > 1);
     }
-    if (cur >= 0 && nodes[cur]) {
+    if (cur >= 0 && nodes[cur] && Date.now() >= _lyrManualScrollUntil) {
       R.lyrScroll.scrollTop = nodes[cur].offsetTop - R.lyrScroll.clientHeight * 0.42;
     }
     // 沉浸/迷你歌词容器跟随同一 S.lyrCur
@@ -273,6 +275,7 @@
     if (!box) return;
     var t = 0;
     box.addEventListener('scroll', function () {
+      if (box === R.lyrScroll) _lyrManualScrollUntil = Date.now() + 5000;
       box.classList.add('scrolling');
       clearTimeout(t);
       t = setTimeout(function () { box.classList.remove('scrolling'); }, 800);
@@ -308,11 +311,15 @@
     if (R.imm && S.imm && S.immLyrOn) buildLyrInto(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
   }
-  function toggleLyrSetPop() {
+  /* V4.4：支持沉浸模式锚点——同一弹层可从主面板 ⚙ 或沉浸右上角 ⚙ 打开；
+   * 开着时换锚点=改挂新位置，同一锚点再点=收起 */
+  function toggleLyrSetPop(anchor) {
     if (!R.lyrSetPop) buildLyrSetPop();
     var pop = R.lyrSetPop;
-    if (pop.classList.contains('on')) { pop.classList.remove('on'); return; }
-    var r = R.btnLyrSet.getBoundingClientRect();
+    var btn = anchor || R.btnLyrSet;
+    if (pop.classList.contains('on') && pop._anchor === btn) { pop.classList.remove('on'); return; }
+    pop._anchor = btn;
+    var r = btn.getBoundingClientRect();
     pop.style.left = Math.max(8, r.right - 250) + 'px';
     pop.style.top = (r.bottom + 8) + 'px';
     pop.classList.add('on');

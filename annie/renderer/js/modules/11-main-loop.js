@@ -189,10 +189,12 @@ function mainLoopBackgroundDelayMs() {
 }
 function requestMainLoopAnimationFrame() {
   if (mainLoopAnimationRequested) return;
+  if (window.__legacyThemeHidden) return; // V4.4：主题冻结期彻底停摆（切回由 wakeStageFromTheme 唤醒）
   mainLoopAnimationRequested = true;
   requestAnimationFrame(animate);
 }
 function scheduleNextMainLoopFrame() {
+  if (window.__legacyThemeHidden) return; // V4.4：休眠后不再预约任何帧（含 setTimeout 心跳链）
   var delay = mainLoopBackgroundDelayMs();
   if (delay > 0) {
     if (mainLoopBackgroundTimer) return;
@@ -697,6 +699,8 @@ function animate() {
 //  窗口尺寸变化时同步渲染器与相机
 // ============================================================
 function refreshMainRendererViewport(reason) {
+  // V4.4：休眠期跳过（容器 display:none 尺寸为 0，会退化成 innerWidth 全尺寸 setSize，破坏 4x4 收缩）
+  if (window.__legacyThemeHidden && reason !== 'theme-wake') return;
   if (typeof camera !== 'undefined' && camera) {
     // 用舞台容器实际尺寸（而非窗口尺寸）计算宽高比：
     // 渲染 buffer / CSS 100% / 相机 aspect 三者一致，画面只缩放不变形
@@ -726,8 +730,38 @@ if (typeof ResizeObserver !== 'undefined') {
   var stageViewportEl = document.getElementById('canvas-container');
   if (stageViewportEl) {
     new ResizeObserver(function () {
+      if (window.__legacyThemeHidden) return; // V4.4：休眠期容器 display:none（尺寸为 0），不刷新视口
       scheduleMainRendererViewportRefresh('container-resize');
     }).observe(stageViewportEl);
   }
 }
+
+/* V4.4：主题冻结时舞台彻底休眠（原仅 4fps 心跳 + GPU 缓冲不释放）。
+ * 切走：renderer.setSize(4,4) + renderLists.dispose() 释放 GPU 合成缓冲，主循环/心跳链全停；
+ * 切回：恢复容器尺寸（含 48/140/320ms 布局沉降重试）+ 唤醒主循环。 */
+var stageHibernated = false;
+function hibernateStageForTheme() {
+  if (stageHibernated) return;
+  stageHibernated = true;
+  if (mainLoopBackgroundTimer) { clearTimeout(mainLoopBackgroundTimer); mainLoopBackgroundTimer = 0; }
+  try {
+    if (typeof renderer !== 'undefined' && renderer) {
+      renderer.setSize(4, 4, false);
+      if (renderer.renderLists && renderer.renderLists.dispose) renderer.renderLists.dispose();
+    }
+  } catch (e) { }
+}
+function wakeStageFromTheme() {
+  if (!stageHibernated) return;
+  stageHibernated = false;
+  scheduleMainRendererViewportRefresh('theme-wake'); // 恢复容器尺寸 + DPR 预算
+  wakeMainLoopFromBackground();
+}
+document.addEventListener('annie-theme-changed', function (e) {
+  var t = e.detail && e.detail.theme;
+  if (t === 'legacy') wakeStageFromTheme(); else hibernateStageForTheme();
+});
+// 启动即非 legacy 主题（上次退出时是 AM/FB2K）：直接休眠
+if (window.__legacyThemeHidden) hibernateStageForTheme();
+
 requestMainLoopAnimationFrame();

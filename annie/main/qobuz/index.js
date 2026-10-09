@@ -71,6 +71,7 @@ function setDlDir(dir) {
   const st = loadStore();
   st.qobuzExp = st.qobuzExp || {};
   if (dir) st.qobuzExp.dlDir = dir; else delete st.qobuzExp.dlDir;
+  touchStore(); // V4.4：修复只 flush 不置脏——下载目录只活在内存、重启即丢（V4.3.10 同款教训）
   flushStore();
   return dlDir();
 }

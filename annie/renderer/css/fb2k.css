@@ -7,6 +7,19 @@
 html[data-theme="fb2k"] { color-scheme: light; }
 html[data-theme="fb2k"] #fb2k-root.f2-dark { color-scheme: dark; }
 #fb2k-root { display: none; }
+/* V4.4 第三层：设计 token 集中处。--accent 由设置中心强调色注入 documentElement
+ *（内联样式，优先级最高）；用户选「默认」时内联被清除，回落到下面这条 FB2K 作用域规则
+ * = 经典蓝 #4a90c2（html[data-theme] 特异性高于 :root，故 FB2K 默认不吃配色方案的 accent）。
+ * 派生背景（选中/hover/播放行）用 color-mix 由 accent 现算，前一行纯色是不支持时的兜底。 */
+html[data-theme="fb2k"] { --accent: #4a90c2; }
+#fb2k-root {
+  --f2-accent: var(--accent, #4a90c2);
+  --f2-fs: 12px;        /* 正文字号（行/树节点/菜单/元信息） */
+  --f2-fs-sm: 11px;     /* 次级字号（列头/区标题/格式行） */
+  --f2-fs-lg: 13px;     /* 歌词字号 */
+  --f2-row-h: 32px;     /* 曲目行/分组行高（与 fb2k.js S.rowH 同步） */
+  --f2-node-h: 24px;    /* 树节点行高 */
+}
 html[data-theme="fb2k"] #fb2k-root {
   display: flex; flex-direction: column;
   position: fixed; inset: 0; z-index: 40;
@@ -46,8 +59,18 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .f2-title.playing { color: #14586e; }
 .f2-winbtns { flex: none; display: flex; -webkit-app-region: no-drag; }
+/* V4.4：标题栏设置齿轮（统一三主题右上角入口）；齿轮图标约 14px，按钮盒与窗口按钮同高 */
+.f2-tb-gear { flex: none; width: 36px; height: 30px; border: none; background: transparent;
+  color: #555; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .12s ease, color .12s ease; -webkit-app-region: no-drag; }
+.f2-tb-gear svg { width: 14px; height: 14px; display: block; }
+.f2-tb-gear:hover { background: #e0e0e0; color: #222; }
+#fb2k-root.f2-dark .f2-tb-gear { color: #c7ccd8; }
+#fb2k-root.f2-dark .f2-tb-gear:hover { background: #333947; color: #fff; }
 .f2-winbtns button { width: 42px; height: 30px; border: none; background: transparent;
-  color: #555; font-size: 13px; cursor: pointer; }
+  color: #555; font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background .12s ease, color .12s ease; }
+.f2-winbtns button svg { display: block; }
 .f2-winbtns button:hover { background: #e0e0e0; }
 .f2-winbtns button.f2-close:hover { background: #e81123; color: #fff; }
 
@@ -77,51 +100,60 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 /* ---------- 左侧：播放列表树 ---------- */
 .f2-left { min-width: 0; display: flex; flex-direction: column; background: #f5f5f5;
   border-right: 1px solid #e0e0e0; }
-.f2-left-search { flex: none; display: flex; margin: 6px 8px 0; border: 1px solid #ccc;
-  background: #fff; border-radius: 2px; }
-.f2-left-search input { flex: 1; min-width: 0; border: none; outline: none; padding: 3px 6px; font-size: 12px; }
-.f2-left-search .f2-arr { flex: none; padding: 0 7px; color: #888; font-size: 10px;
-  display: flex; align-items: center; }
 .f2-filter-row { flex: none; display: flex; align-items: center; gap: 5px; margin: 6px 8px; }
 .f2-filter-row input { flex: 1; min-width: 0; border: 1px solid #ccc; border-radius: 2px;
   padding: 3px 6px; font-size: 12px; outline: none; }
-.f2-filter-row input:focus { border-color: #4a90c2; }
+.f2-filter-row input:focus { border-color: var(--f2-accent); }
 .f2-badge { flex: none; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px;
-  background: #4a90c2; color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+  background: var(--f2-accent); color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
 .f2-badge.dim { background: #bbb; }
 .f2-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 8px; }
-.f2-node { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
-  font-size: 12px; color: #333; cursor: default; user-select: none; }
-.f2-node:hover { background: #e8f0f5; }
-.f2-node.active { background: #d0e8f0; }
+.f2-node { display: flex; align-items: center; gap: 6px; height: var(--f2-node-h); padding: 0 8px;
+  font-size: var(--f2-fs); color: #333; cursor: default; user-select: none;
+  transition: background .12s ease; }
+.f2-node:hover { background: #e8f0f5; background: color-mix(in srgb, var(--f2-accent) 9%, #fff); }
+.f2-node.active { background: #d0e8f0; background: color-mix(in srgb, var(--f2-accent) 20%, #fff); }
 .f2-node .f2-twisty { flex: none; width: 12px; color: #999; font-size: 9px; text-align: center; }
 .f2-node .f2-nicon { flex: none; width: 15px; text-align: center; }
 .f2-node .f2-nname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .f2-node .f2-badge { background: #bbb; }
-.f2-node.active .f2-badge { background: #4a90c2; }
+.f2-node.active .f2-badge { background: var(--f2-accent); }
 .f2-node.child { padding-left: 26px; }
+/* V4.4：歌单节点长按拖拽排序的落点高亮（上半=插前，下半=插后） */
+.f2-node.pl-drag-src { opacity: .55; }
+.f2-node.pl-drop-before { box-shadow: inset 0 2px 0 var(--f2-accent); }
+.f2-node.pl-drop-after { box-shadow: inset 0 -2px 0 var(--f2-accent); }
 
 /* ---------- 拖拽手柄 ---------- */
-.f2-resizer { background: transparent; cursor: col-resize; }
-.f2-resizer:hover, .f2-resizer.on { background: #4a90c2; opacity: .5; }
+.f2-resizer { background: transparent; cursor: col-resize; transition: background .12s ease; }
+.f2-resizer:hover, .f2-resizer.on { background: var(--f2-accent); opacity: .5; }
 
 /* ---------- 中央：曲目列表 ---------- */
 .f2-center { min-width: 0; display: flex; flex-direction: column; background: #fff; }
 .f2-cols { flex: none; display: flex; height: 26px; border-bottom: 1px solid #ddd;
   background: #f8f8f8; user-select: none; }
-.f2-col { display: flex; align-items: center; padding: 0 6px; font-size: 11px; color: #666;
-  border-right: 1px solid #eee; cursor: pointer; overflow: hidden; white-space: nowrap; }
+.f2-col { display: flex; align-items: center; padding: 0 6px; font-size: var(--f2-fs-sm); color: #666;
+  border-right: 1px solid #eee; cursor: pointer; overflow: hidden; white-space: nowrap;
+  position: relative; transition: background .12s ease; }
 .f2-col:hover { background: #f0f0f0; }
-.f2-col .f2-sort-arrow { margin-left: 3px; font-size: 8px; color: #4a90c2; }
+.f2-col .f2-sort-arrow { margin-left: 3px; font-size: 8px; color: var(--f2-accent); }
+/* V4.4 第三层：列宽拖拽手柄（表头右缘 7px 热区；仅固定宽列有） */
+.f2-col-resize { position: absolute; top: 0; right: -3px; width: 7px; height: 100%;
+  cursor: col-resize; z-index: 2; }
+.f2-col-resize:hover { background: var(--f2-accent); opacity: .45; }
 .f2-list { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
 .f2-rows { position: absolute; top: 0; left: 0; right: 0; }
-.f2-row { display: flex; align-items: center; height: 32px; background: #fff;
-  font-size: 12px; color: #222; cursor: default; user-select: none; }
+.f2-row { display: flex; align-items: center; height: var(--f2-row-h); background: #fff;
+  font-size: var(--f2-fs); color: #222; cursor: default; user-select: none;
+  transition: background .12s ease; }
 .f2-row.alt { background: #f8f8f8; }
-.f2-row:hover { background: #e8f4f8; }
-.f2-row.sel { background: #d0e8f0; }
-.f2-row.playing, .f2-row.playing.alt { background: #5a8a9a; color: #fff; }
-.f2-row.playing:hover { background: #527f8e; }
+.f2-row:hover { background: #e8f4f8; background: color-mix(in srgb, var(--f2-accent) 9%, #fff); }
+.f2-row.sel { background: #d0e8f0; background: color-mix(in srgb, var(--f2-accent) 20%, #fff); }
+/* 播放行：accent 派生底色 + 左侧 3px 高亮指示条 */
+.f2-row.playing, .f2-row.playing.alt { background: #5a8a9a;
+  background: color-mix(in srgb, var(--f2-accent) 72%, #3f5b66); color: #fff;
+  box-shadow: inset 3px 0 0 rgba(255,255,255,.55); }
+.f2-row.playing:hover { background: #527f8e; background: color-mix(in srgb, var(--f2-accent) 78%, #38525c); }
 .f2-cell { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .f2-c-cover { display: flex; align-items: center; justify-content: center; }
 .f2-c-cover img { width: 26px; height: 26px; border-radius: 2px; object-fit: cover; background: #eee; }
@@ -133,9 +165,12 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-row.playing .f2-c-rating .off { color: #8fb2bd; }
 .f2-c-time { text-align: right; font-variant-numeric: tabular-nums; color: #555; }
 .f2-row.playing .f2-c-time { color: #eafcff; font-weight: 600; }
-.f2-group-row { display: flex; align-items: center; height: 32px; padding: 0 8px;
-  background: #fff; font-size: 12px; font-weight: 600; color: #2e8b57;
-  border-bottom: 1px solid #cde8d5; user-select: none; }
+/* V4.4 第三层：分组行并入 accent 体系（原孤立的绿色 #2e8b57 已砍） */
+.f2-group-row { display: flex; align-items: center; height: var(--f2-row-h); padding: 0 8px;
+  background: #fff; font-size: var(--f2-fs); font-weight: 600;
+  color: #4a90c2; color: var(--f2-accent);
+  border-bottom: 1px solid #d0e8f0; border-bottom: 1px solid color-mix(in srgb, var(--f2-accent) 26%, #fff);
+  user-select: none; }
 .f2-empty { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 4px; color: #999; font-size: 14px; }
 
@@ -145,7 +180,7 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-right-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
 .f2-collapse-btn { flex: none; height: 100%; width: 100%; border: none; background: #f0f0f0;
   color: #888; cursor: pointer; writing-mode: vertical-rl; font-size: 11px; }
-.f2-collapse-btn:hover { background: #e5e5e5; color: #4a90c2; }
+.f2-collapse-btn:hover { background: #e5e5e5; color: var(--f2-accent); }
 .f2-cover-box { flex: none; padding: 14px 14px 8px; display: flex; justify-content: center; }
 .f2-cover { width: min(260px, 100%); aspect-ratio: 1; border-radius: 3px; object-fit: cover;
   background: #e8e8e8; border: 1px solid #ddd; }
@@ -163,10 +198,10 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-sec-title { padding: 0 14px 6px; font-size: 11px; color: #999; letter-spacing: 1px; }
 /* position:relative 使歌词行 offsetTop 以本容器为基准，tickLyrics 的 scrollTop 计算才正确 */
 .f2-lyr-lines { max-height: 180px; overflow-y: auto; padding: 0 14px; position: relative; }
-.f2-lyr { font-size: 13px; color: #888; line-height: 1.5; padding: 1px 0; opacity: .62; transition: color .25s ease, opacity .25s ease; }
-.f2-lyr .tly { display: block; font-size: 11px; color: #aaa; }
-.f2-lyr.cur { font-weight: 700; color: #2a6b7a; opacity: 1; }
-.f2-lyr.cur .tly { color: #4a8b9a; }
+.f2-lyr { font-size: var(--f2-fs-lg); color: #888; line-height: 1.5; padding: 1px 0; opacity: .62; transition: color .25s ease, opacity .25s ease; }
+.f2-lyr .tly { display: block; font-size: var(--f2-fs-sm); color: #aaa; }
+.f2-lyr.cur { font-weight: 700; color: #2a6b7a; color: var(--f2-accent); opacity: 1; }
+.f2-lyr.cur .tly { color: #4a8b9a; color: color-mix(in srgb, var(--f2-accent) 70%, #fff); }
 /* 逐字歌词：逐词 span（词间自然折行；词内双层按进度裁切，扫过前缘渐变淡出） */
 .f2-lyr.kara { white-space: normal; }
 .f2-lyr.kara .kara-w { position: relative; display: inline-block; white-space: pre; }
@@ -174,7 +209,7 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-lyr.kara.cur .kara-wb { color: #b3b3b3; }
 .f2-lyr.kara .kara-wh {
   position: absolute; left: 0; top: 0; width: 0%; overflow: hidden; white-space: pre;
-  color: #0f7a94;
+  color: #0f7a94; color: var(--f2-accent);
   -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 8px), transparent 100%);
   mask-image: linear-gradient(90deg, #000 calc(100% - 8px), transparent 100%);
 }
@@ -186,9 +221,12 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
   padding: 0 12px; background: #f0f0f0; border-top: 1px solid #ddd; }
 .f2-toolbtns { flex: none; display: flex; gap: 4px; }
 .f2-toolbtns button { width: 32px; height: 32px; border: 1px solid transparent; border-radius: 3px;
-  background: transparent; color: #666; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  background: transparent; color: #666; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .12s ease, color .12s ease; }
 .f2-toolbtns button:hover { background: #e0e0e0; }
-.f2-toolbtns button.active { background: #d0d0d0; border-color: #bbb; color: #14586e; }
+.f2-toolbtns button.active { background: #d0e8f0; background: color-mix(in srgb, var(--f2-accent) 22%, #fff);
+  border-color: #bbb; border-color: color-mix(in srgb, var(--f2-accent) 45%, #fff);
+  color: #14586e; color: var(--f2-accent); }
 .f2-toolbtns svg { width: 17px; height: 17px; fill: currentColor; }
 
 .f2-progress { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
@@ -196,9 +234,9 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-slider { position: relative; flex: 1; height: 14px; cursor: pointer; }
 .f2-slider .rail { position: absolute; left: 0; right: 0; top: 5px; height: 4px;
   background: #d5d5d5; border-radius: 2px; }
+/* V4.4 第三层：彩虹进度条已砍，亮暗统一为 accent 纯色 */
 .f2-slider .fill { position: absolute; left: 0; top: 5px; height: 4px; width: 0;
-  border-radius: 2px; background: linear-gradient(90deg, #e74c3c, #f1c40f, #2ecc71, #3498db, #9b59b6);
-  background-size: 100% 100%; }
+  border-radius: 2px; background: var(--f2-accent); }
 .f2-slider.idle .fill { background: #d5d5d5; }
 .f2-slider .knob { position: absolute; top: 2px; width: 10px; height: 10px; margin-left: -5px;
   border-radius: 50%; background: #fff; border: 1px solid #999; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
@@ -213,8 +251,9 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
   transition: transform .12s ease; }
 .f2-tbtn:hover { transform: scale(1.1); background: #e0e0e0; }
 .f2-tbtn svg { width: 16px; height: 16px; fill: currentColor; }
-.f2-tbtn.main { width: 40px; height: 40px; border-radius: 50%; background: #4CAF50; color: #fff; }
-.f2-tbtn.main:hover { background: #43a047; }
+/* V4.4 第三层：主播放钮并入 accent 体系（原孤立的绿色 #4CAF50 已砍） */
+.f2-tbtn.main { width: 40px; height: 40px; border-radius: 50%; background: var(--f2-accent); color: #fff; }
+.f2-tbtn.main:hover { background: var(--f2-accent); filter: brightness(.9); }
 .f2-tbtn.main svg { width: 18px; height: 18px; }
 
 .f2-volume { flex: none; display: flex; align-items: center; gap: 6px; }
@@ -225,26 +264,36 @@ html[data-theme="fb2k"] #titlebar { display: none !important; }
 .f2-vol-slider .rail { position: absolute; left: 0; right: 0; top: 5px; height: 4px;
   background: #d5d5d5; border-radius: 2px; }
 .f2-vol-slider .fill { position: absolute; left: 0; top: 5px; height: 4px; border-radius: 2px;
-  background: #4a90c2; }
+  background: var(--f2-accent); }
 .f2-vol-slider .knob { position: absolute; top: 2px; width: 10px; height: 10px; margin-left: -5px;
   border-radius: 50%; background: #fff; border: 1px solid #999; }
 .f2-viewbtns { flex: none; display: flex; gap: 3px; }
 .f2-viewbtns button { width: 26px; height: 26px; border: 1px solid transparent; border-radius: 3px;
-  background: transparent; color: #777; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  background: transparent; color: #777; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .12s ease, color .12s ease; }
 .f2-viewbtns button:hover { background: #e0e0e0; }
-.f2-viewbtns button.active { background: #d0d0d0; border-color: #bbb; color: #14586e; }
+.f2-viewbtns button.active { background: #d0e8f0; background: color-mix(in srgb, var(--f2-accent) 22%, #fff);
+  border-color: #bbb; border-color: color-mix(in srgb, var(--f2-accent) 45%, #fff);
+  color: #14586e; color: var(--f2-accent); }
 .f2-viewbtns svg { width: 14px; height: 14px; fill: currentColor; }
 
 /* ---------- 右键上下文菜单 ---------- */
 .f2-ctx { position: fixed; z-index: 300; min-width: 170px; background: #fff;
-  border: 1px solid #ccc; box-shadow: 2px 3px 10px rgba(0,0,0,.2); padding: 3px 0; }
+  border: 1px solid #ccc; box-shadow: 2px 3px 10px rgba(0,0,0,.2); padding: 3px 0;
+  display: none; }
+.f2-ctx.on { display: block; }
+.f2-ctx-sep { height: 1px; margin: 3px 6px; background: #e5e5e5; }
+/* V4.4：右键菜单二级浮层（歌单 >8 收敛）。子面板 fixed 定位、挂菜单项节点内部（外点关闭不误伤） */
+.f2-mi-sub .f2-sub-arrow { margin-left: auto; padding-left: 18px; color: #888; font-size: 10px; }
+.f2-ctx-sub { min-width: 150px; max-height: 60vh; overflow-y: auto; }
+#fb2k-root.f2-dark .f2-mi-sub .f2-sub-arrow { color: #8a92a4; }
 
 /* ---------- 属性弹窗 ---------- */
 .f2-modal-mask { position: fixed; inset: 0; z-index: 290; background: rgba(0,0,0,.25);
   display: flex; align-items: center; justify-content: center; }
 .f2-modal { width: 440px; max-height: 70vh; overflow-y: auto; background: #fff;
   border-radius: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.3); padding: 16px 18px; }
-.f2-modal h3 { margin: 0 0 10px; font-size: 14px; color: #14586e; }
+.f2-modal h3 { margin: 0 0 10px; font-size: 14px; color: #14586e; color: var(--f2-accent); }
 
 /* 滚动条（FB2K 浅色风格） */
 html[data-theme="fb2k"] ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -259,12 +308,13 @@ html[data-theme="fb2k"] ::-webkit-scrollbar-track { background: transparent; }
 .f2-eq-dock.hidden { display: none; }
 .f2-eq-dock .eq-preset, .f2-eq-dock .eq-reset { color: #555; border-color: #c5c5c5; background: #fafafa; }
 .f2-eq-dock .eq-preset:hover, .f2-eq-dock .eq-reset:hover { background: #e8f4f8; }
-.f2-eq-dock .eq-preset.active { color: #2a6b7a; border-color: #4a8b9a; background: #d0e8f0; }
+.f2-eq-dock .eq-preset.active { color: #2a6b7a; color: var(--f2-accent);
+  border-color: #4a8b9a; border-color: var(--f2-accent);
+  background: #d0e8f0; background: color-mix(in srgb, var(--f2-accent) 20%, #fff); }
 .f2-eq-dock .eq-enable { color: #444; }
 .f2-eq-dock .eq-val { background: #fff; border: 1px solid #c5c5c5; color: #333; }
-.f2-eq-dock .eq-slider { accent-color: #4a8b9a; }
+.f2-eq-dock .eq-slider { accent-color: #4a8b9a; accent-color: var(--f2-accent); }
 .f2-eq-dock .eq-freq { color: #777; }
-.f2-toolbtns button.active { background: #d0e8f0; border-radius: 3px; }
 
 /* ==========================================================================
    V1.1.2 —— FB2K 暗色模式（#fb2k-root.f2-dark）
@@ -275,7 +325,7 @@ html[data-theme="fb2k"] ::-webkit-scrollbar-track { background: transparent; }
 /* 标题栏 */
 #fb2k-root.f2-dark .f2-titlebar { background: #1e2129; border-bottom-color: #3a3f4d; }
 #fb2k-root.f2-dark .f2-title { color: #c7ccd8; }
-#fb2k-root.f2-dark .f2-title.playing { color: #7fc4d8; }
+#fb2k-root.f2-dark .f2-title.playing { color: #7fc4d8; color: color-mix(in srgb, var(--f2-accent) 80%, #fff); }
 #fb2k-root.f2-dark .f2-winbtns button { color: #c7ccd8; }
 #fb2k-root.f2-dark .f2-winbtns button:hover { background: #333947; }
 #fb2k-root.f2-dark .f2-winbtns button.f2-close:hover { background: #c42b1c; color: #fff; }
@@ -292,32 +342,30 @@ html[data-theme="fb2k"] ::-webkit-scrollbar-track { background: transparent; }
 
 /* 左侧索引栏 */
 #fb2k-root.f2-dark .f2-left { background: #1b1e26; border-right-color: #3a3f4d; }
-#fb2k-root.f2-dark .f2-left-search { border-color: #3a3f4d; background: #262b35; }
-#fb2k-root.f2-dark .f2-left-search input { background: transparent; color: #e4e7ee; }
-#fb2k-root.f2-dark .f2-left-search .f2-arr { color: #8a92a4; }
 #fb2k-root.f2-dark .f2-filter-row input { background: #262b35; border-color: #3a3f4d; color: #e4e7ee; }
-#fb2k-root.f2-dark .f2-filter-row input:focus { border-color: #5aa0c8; }
+#fb2k-root.f2-dark .f2-filter-row input:focus { border-color: var(--f2-accent); }
 #fb2k-root.f2-dark .f2-badge { background: #4a5163; color: #d6dae4; }
 #fb2k-root.f2-dark .f2-badge.dim { background: #39404e; }
 #fb2k-root.f2-dark .f2-node { color: #d6dae4; }
-#fb2k-root.f2-dark .f2-node:hover { background: #262c39; }
-#fb2k-root.f2-dark .f2-node.active { background: #31435a; color: #fff; }
+#fb2k-root.f2-dark .f2-node:hover { background: #262c39; background: color-mix(in srgb, var(--f2-accent) 12%, #1b1e26); }
+#fb2k-root.f2-dark .f2-node.active { background: #31435a; background: color-mix(in srgb, var(--f2-accent) 30%, #17191f); color: #fff; }
 #fb2k-root.f2-dark .f2-node .f2-twisty { color: #7c8496; }
 #fb2k-root.f2-dark .f2-node .f2-badge { background: #4a5163; }
-#fb2k-root.f2-dark .f2-node.active .f2-badge { background: #5aa0c8; color: #10151c; }
+#fb2k-root.f2-dark .f2-node.active .f2-badge { background: var(--f2-accent); color: #10151c; }
 
 /* 中央列表 */
 #fb2k-root.f2-dark .f2-center { background: #17191f; }
 #fb2k-root.f2-dark .f2-cols { background: #1e2129; border-bottom-color: #3a3f4d; }
 #fb2k-root.f2-dark .f2-col { color: #9aa1b0; }
 #fb2k-root.f2-dark .f2-col:hover { background: #2a303d; color: #e4e7ee; }
-#fb2k-root.f2-dark .f2-col .f2-sort-arrow { color: #7fc4d8; }
+#fb2k-root.f2-dark .f2-col .f2-sort-arrow { color: #7fc4d8; color: color-mix(in srgb, var(--f2-accent) 80%, #fff); }
 #fb2k-root.f2-dark .f2-row { background: #17191f; color: #e4e7ee; }
 #fb2k-root.f2-dark .f2-row.alt { background: #1b1e26; }
-#fb2k-root.f2-dark .f2-row:hover { background: #232936; }
-#fb2k-root.f2-dark .f2-row.sel { background: #31435a; }
-#fb2k-root.f2-dark .f2-row.playing, #fb2k-root.f2-dark .f2-row.playing.alt { background: #2f4a57; color: #eaf6fa; }
-#fb2k-root.f2-dark .f2-row.playing:hover { background: #355563; }
+#fb2k-root.f2-dark .f2-row:hover { background: #232936; background: color-mix(in srgb, var(--f2-accent) 12%, #1b1e26); }
+#fb2k-root.f2-dark .f2-row.sel { background: #31435a; background: color-mix(in srgb, var(--f2-accent) 30%, #17191f); }
+#fb2k-root.f2-dark .f2-row.playing, #fb2k-root.f2-dark .f2-row.playing.alt { background: #2f4a57;
+  background: color-mix(in srgb, var(--f2-accent) 42%, #10151c); color: #eaf6fa; }
+#fb2k-root.f2-dark .f2-row.playing:hover { background: #355563; background: color-mix(in srgb, var(--f2-accent) 50%, #10151c); }
 #fb2k-root.f2-dark .f2-c-cover img { background: #2a303d; }
 #fb2k-root.f2-dark .f2-c-idx { color: #7c8496; }
 #fb2k-root.f2-dark .f2-row.playing .f2-c-idx { color: #a9ccd8; }
@@ -326,13 +374,15 @@ html[data-theme="fb2k"] ::-webkit-scrollbar-track { background: transparent; }
 #fb2k-root.f2-dark .f2-row.playing .f2-c-rating .off { color: #6e93a3; }
 #fb2k-root.f2-dark .f2-c-time { color: #9aa1b0; }
 #fb2k-root.f2-dark .f2-row.playing .f2-c-time { color: #dff3fa; }
-#fb2k-root.f2-dark .f2-group-row { background: #20242e; color: #c7ccd8; border-bottom-color: #3a3f4d; }
+#fb2k-root.f2-dark .f2-group-row { background: #20242e;
+  color: #c7ccd8; color: color-mix(in srgb, var(--f2-accent) 80%, #fff);
+  border-bottom-color: #3a3f4d; border-bottom-color: color-mix(in srgb, var(--f2-accent) 40%, #20242e); }
 #fb2k-root.f2-dark .f2-empty { color: #7c8496; background: #17191f; }
 
 /* 右侧信息栏 */
 #fb2k-root.f2-dark .f2-right { background: #1b1e26; border-left-color: #3a3f4d; }
 #fb2k-root.f2-dark .f2-collapse-btn { background: #1e2129; color: #8a92a4; }
-#fb2k-root.f2-dark .f2-collapse-btn:hover { background: #2a303d; color: #7fc4d8; }
+#fb2k-root.f2-dark .f2-collapse-btn:hover { background: #2a303d; color: #7fc4d8; color: color-mix(in srgb, var(--f2-accent) 80%, #fff); }
 #fb2k-root.f2-dark .f2-songname { color: #f0f2f7; }
 #fb2k-root.f2-dark .f2-formatline { color: #8a92a4; }
 #fb2k-root.f2-dark .f2-meta-row .k { color: #8a92a4; }
@@ -341,50 +391,59 @@ html[data-theme="fb2k"] ::-webkit-scrollbar-track { background: transparent; }
 #fb2k-root.f2-dark .f2-sec-title { color: #7c8496; }
 #fb2k-root.f2-dark .f2-lyr { color: #9aa1b0; }
 #fb2k-root.f2-dark .f2-lyr .tly { color: #7c8496; }
-#fb2k-root.f2-dark .f2-lyr.cur { color: #8fd0e2; }
-#fb2k-root.f2-dark .f2-lyr.cur .tly { color: #6aa8ba; }
+#fb2k-root.f2-dark .f2-lyr.cur { color: #8fd0e2; color: color-mix(in srgb, var(--f2-accent) 75%, #fff); }
+#fb2k-root.f2-dark .f2-lyr.cur .tly { color: #6aa8ba; color: color-mix(in srgb, var(--f2-accent) 55%, #fff); }
 /* 逐字歌词（暗色）：未唱更暗、已唱更亮，对比更强 */
 #fb2k-root.f2-dark .f2-lyr.kara.cur .kara-wb { color: #5f6775; }
-#fb2k-root.f2-dark .f2-lyr.kara .kara-wh { color: #7fe3ff; }
+#fb2k-root.f2-dark .f2-lyr.kara .kara-wh { color: #7fe3ff; color: color-mix(in srgb, var(--f2-accent) 60%, #fff); }
 #fb2k-root.f2-dark .f2-spec-box { border-top-color: #343a48; }
 
 /* 底部控制条 */
 #fb2k-root.f2-dark .f2-bottom { background: #1e2129; border-top-color: #3a3f4d; }
 #fb2k-root.f2-dark .f2-toolbtns button { color: #c7ccd8; }
 #fb2k-root.f2-dark .f2-toolbtns button:hover { background: #333947; }
-#fb2k-root.f2-dark .f2-toolbtns button.active { background: #31435a; border-color: #4a5a72; color: #8fd0e2; }
+#fb2k-root.f2-dark .f2-toolbtns button.active { background: #31435a;
+  background: color-mix(in srgb, var(--f2-accent) 30%, #1e2129);
+  border-color: #4a5a72; border-color: color-mix(in srgb, var(--f2-accent) 55%, #1e2129);
+  color: #8fd0e2; color: color-mix(in srgb, var(--f2-accent) 80%, #fff); }
 #fb2k-root.f2-dark .f2-ptime { color: #9aa1b0; }
 #fb2k-root.f2-dark .f2-slider .rail { background: #343a48; }
-#fb2k-root.f2-dark .f2-slider .fill { background: #5aa0c8; }
+#fb2k-root.f2-dark .f2-slider .fill { background: var(--f2-accent); }
 #fb2k-root.f2-dark .f2-slider.idle .fill { background: #39404e; }
 #fb2k-root.f2-dark .f2-slider .knob { background: #d6dae4; border-color: #17191f; }
 #fb2k-root.f2-dark .f2-slider-tip { background: #22262f; color: #e4e7ee; border-color: #3a3f4d; }
 #fb2k-root.f2-dark .f2-tbtn { color: #c7ccd8; }
 #fb2k-root.f2-dark .f2-tbtn:hover { background: #333947; }
-#fb2k-root.f2-dark .f2-tbtn.main { background: #3d8b52; color: #fff; }
-#fb2k-root.f2-dark .f2-tbtn.main:hover { background: #357a47; }
+#fb2k-root.f2-dark .f2-tbtn.main { background: var(--f2-accent); color: #fff; }
+#fb2k-root.f2-dark .f2-tbtn.main:hover { background: var(--f2-accent); filter: brightness(.9); }
 #fb2k-root.f2-dark .f2-volume .f2-vicon { color: #c7ccd8; }
 #fb2k-root.f2-dark .f2-vol-slider .rail { background: #343a48; }
-#fb2k-root.f2-dark .f2-vol-slider .fill { background: #5aa0c8; }
+#fb2k-root.f2-dark .f2-vol-slider .fill { background: var(--f2-accent); }
 #fb2k-root.f2-dark .f2-vol-slider .knob { background: #d6dae4; }
 #fb2k-root.f2-dark .f2-viewbtns button { color: #c7ccd8; }
 #fb2k-root.f2-dark .f2-viewbtns button:hover { background: #333947; }
-#fb2k-root.f2-dark .f2-viewbtns button.active { background: #31435a; border-color: #4a5a72; color: #8fd0e2; }
+#fb2k-root.f2-dark .f2-viewbtns button.active { background: #31435a;
+  background: color-mix(in srgb, var(--f2-accent) 30%, #1e2129);
+  border-color: #4a5a72; border-color: color-mix(in srgb, var(--f2-accent) 55%, #1e2129);
+  color: #8fd0e2; color: color-mix(in srgb, var(--f2-accent) 80%, #fff); }
 
 /* 右键菜单与弹窗 */
 #fb2k-root.f2-dark .f2-ctx, .f2-ctx.f2-dark { background: #22262f; border-color: #3a3f4d; box-shadow: 0 6px 22px rgba(0,0,0,.55); }
+#fb2k-root.f2-dark .f2-ctx-sep { background: #3a3f4d; }
 #fb2k-root.f2-dark .f2-modal { background: #22262f; color: #e4e7ee; box-shadow: 0 10px 36px rgba(0,0,0,.6); }
-#fb2k-root.f2-dark .f2-modal h3 { color: #8fd0e2; }
+#fb2k-root.f2-dark .f2-modal h3 { color: #8fd0e2; color: color-mix(in srgb, var(--f2-accent) 75%, #fff); }
 #fb2k-root.f2-dark .f2-modal input, #fb2k-root.f2-dark .f2-modal select { background: #262b35; border: 1px solid #3a3f4d; color: #e4e7ee; }
 
 /* EQ 抽屉（覆盖浅色定制，回到暗色体系） */
 #fb2k-root.f2-dark .f2-eq-dock { background: #1b1e26; border-top-color: #3a3f4d; }
 #fb2k-root.f2-dark .f2-eq-dock .eq-preset, #fb2k-root.f2-dark .f2-eq-dock .eq-reset { color: #c7ccd8; border-color: #3a3f4d; background: #262b35; }
 #fb2k-root.f2-dark .f2-eq-dock .eq-preset:hover, #fb2k-root.f2-dark .f2-eq-dock .eq-reset:hover { background: #31435a; }
-#fb2k-root.f2-dark .f2-eq-dock .eq-preset.active { color: #8fd0e2; border-color: #5aa0c8; background: #31435a; }
+#fb2k-root.f2-dark .f2-eq-dock .eq-preset.active { color: #8fd0e2; color: color-mix(in srgb, var(--f2-accent) 80%, #fff);
+  border-color: #5aa0c8; border-color: var(--f2-accent);
+  background: #31435a; background: color-mix(in srgb, var(--f2-accent) 28%, #1b1e26); }
 #fb2k-root.f2-dark .f2-eq-dock .eq-enable { color: #c7ccd8; }
 #fb2k-root.f2-dark .f2-eq-dock .eq-val { background: #262b35; border-color: #3a3f4d; color: #e4e7ee; }
-#fb2k-root.f2-dark .f2-eq-dock .eq-slider { accent-color: #5aa0c8; }
+#fb2k-root.f2-dark .f2-eq-dock .eq-slider { accent-color: #5aa0c8; accent-color: var(--f2-accent); }
 #fb2k-root.f2-dark .f2-eq-dock .eq-freq { color: #8a92a4; }
 
 /* 暗色滚动条 */
@@ -398,3 +457,41 @@ html[data-theme="fb2k"] #fb2k-root.f2-dark ::-webkit-scrollbar-thumb:hover { bac
 .f2-bp.warn { color: #d99a1f; }
 #fb2k-root.f2-dark .f2-bp.ok { color: #3ddc84; }
 #fb2k-root.f2-dark .f2-bp.warn { color: #f5b942; }
+
+/* ==========================================================================
+   V4.4 自定义壁纸（全局，wallpaper.js 注入 --wp-img / html.wp-on）
+   FB2K 原本全平色无背景层：新增 #fb2k-root::before 壁纸层（z-index:-1 垫在面板下），
+   各大面板/曲目行改半透明让壁纸透出来（保留 FB2K 的高对比可读性）。
+   ========================================================================== */
+html.wp-on #fb2k-root::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: var(--wp-img); background-size: cover; background-position: center;
+  filter: blur(var(--wp-blur, 40px)) saturate(1.1) brightness(calc(1 - var(--wp-dim, .35)));
+}
+/* 亮色：面板 78% 不透明的白，行间斑马弱化 */
+html.wp-on[data-theme="fb2k"] #fb2k-root { background: transparent; } /* 特异性压过 html[data-theme] 的不透明白底 */
+html.wp-on #fb2k-root .f2-titlebar { background: rgba(255,255,255,.82); }
+html.wp-on #fb2k-root .f2-menubar { background: rgba(255,255,255,.78); }
+html.wp-on #fb2k-root .f2-left { background: rgba(245,245,245,.78); }
+html.wp-on #fb2k-root .f2-center { background: rgba(255,255,255,.72); }
+html.wp-on #fb2k-root .f2-right { background: rgba(248,248,248,.78); }
+html.wp-on #fb2k-root .f2-bottom, html.wp-on #fb2k-root .f2-eq-dock { background: rgba(240,240,240,.82); }
+html.wp-on #fb2k-root .f2-cols { background: rgba(248,248,248,.8); }
+html.wp-on #fb2k-root .f2-row { background: transparent; }
+html.wp-on #fb2k-root .f2-row.alt { background: rgba(0,0,0,.035); }
+html.wp-on #fb2k-root .f2-collapse-btn { background: rgba(240,240,240,.8); }
+html.wp-on #fb2k-root .f2-group-row { background: rgba(0,0,0,.06); }
+/* 暗色：同理用半透明深底 */
+html.wp-on #fb2k-root.f2-dark { background: transparent; }
+html.wp-on #fb2k-root.f2-dark .f2-titlebar { background: rgba(30,33,41,.85); }
+html.wp-on #fb2k-root.f2-dark .f2-menubar { background: rgba(30,33,41,.8); }
+html.wp-on #fb2k-root.f2-dark .f2-left { background: rgba(27,30,38,.8); }
+html.wp-on #fb2k-root.f2-dark .f2-center { background: rgba(23,25,31,.72); }
+html.wp-on #fb2k-root.f2-dark .f2-right { background: rgba(27,30,38,.8); }
+html.wp-on #fb2k-root.f2-dark .f2-bottom, html.wp-on #fb2k-root.f2-dark .f2-eq-dock { background: rgba(30,33,41,.85); }
+html.wp-on #fb2k-root.f2-dark .f2-cols { background: rgba(30,33,41,.8); }
+html.wp-on #fb2k-root.f2-dark .f2-row { background: transparent; }
+html.wp-on #fb2k-root.f2-dark .f2-row.alt { background: rgba(255,255,255,.03); }
+html.wp-on #fb2k-root.f2-dark .f2-collapse-btn { background: rgba(27,30,38,.8); }
+html.wp-on #fb2k-root.f2-dark .f2-group-row { background: rgba(255,255,255,.05); }
+html.wp-on #fb2k-root.f2-dark .f2-empty { background: transparent; }

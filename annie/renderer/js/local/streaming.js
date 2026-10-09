@@ -262,7 +262,7 @@ function renderResults() {
         <div class="s-sub">${escapeHtml(song.artist || '未知艺人')}${song.album ? ' · ' + escapeHtml(song.album) : ''}${dur ? ' · ' + dur : ''}</div>
       </div>
       ${typesBadges(song)}
-      <button class="s-dl" data-gi="${gi}" title="下载到本地曲库">⬇</button>`;
+      <button class="s-dl" data-gi="${gi}" title="下载到本地曲库">${typeof ico === 'function' ? ico('download', 13) : '⬇'}</button>`;
     row.onclick = () => playStreamAt(gi);
     const dlBtn = row.querySelector('.s-dl');
     dlBtn.onclick = (ev) => { ev.stopPropagation(); downloadStreamAt(gi, dlBtn); };
@@ -295,6 +295,14 @@ function cancelStreamSwitch() {
   streamSwitch.timer = 0;
   streamSwitch.target = null;
 }
+/* V4.4：跨模块取消令牌——本地 playAt 接管播放时调用。
+ * 除取消 150ms 合并定时器外，还递增 gen 使在途的 playStreamAt（songUrl 网络等待中）
+ * 回调失效：否则等待期间点本地曲目，晚到的 annieStreamPlay 会把本地播放劫持回流媒体。
+ * （旧实现 cancelStreamSwitch 是 IIFE 局部、未导出，player.js 的 typeof 守卫恒 false——死代码） */
+function cancelStreamPlayback() {
+  cancelStreamSwitch();
+  streamState.gen = (streamState.gen || 0) + 1;
+}
 function queueStreamSwitch(dir) {
   const base = streamSwitch.target !== null ? streamSwitch.target : streamState.index;
   const max = streamState.results.length - 1;
@@ -326,6 +334,7 @@ function prefetchNextSong() {
 async function playStreamAt(i) {
   const song = streamState.results[i];
   if (!song) return;
+  const gen = streamState.gen || 0; // V4.4：捕获代际，本地接管播放后在途回调失效
   cancelStreamSwitch(); // 明确指定目标（点行/合并后执行），取消未执行的合并
   // V1.1.5：取消本地侧未执行的切歌合并——否则点流媒体曲目后 player.js 的 localSwitch
   // 定时器仍会开火，playAt 劫持播放（把刚播的流媒体换成本地曲目）
@@ -363,7 +372,7 @@ async function playStreamAt(i) {
     setStreamStatus(`获取播放地址失败：${e.message || e}`, true);
     return;
   }
-  if (streamState.index !== i) return; // 等待期间用户已点击其他曲目
+  if (streamState.index !== i || streamState.gen !== gen) return; // 等待期间用户已点击其他曲目/本地接管
 
   if (!r || !r.playable || !r.url) {
     setStreamStatus(`${song.name}：${(r && r.message) || '无法播放'}`, true);
@@ -379,7 +388,7 @@ async function playStreamAt(i) {
   // 同步执行完毕（player.js 已重排），此时注入 token 匹配、不会被 reset 覆盖，
   // 也不再被慢速网络流的引擎确认时间阻塞。
   const doInject = () => {
-    if (streamState.index !== i) return; // 等待期间用户已点击其他曲目
+    if (streamState.index !== i || streamState.gen !== gen) return; // 等待期间用户已点击其他曲目/本地接管
     // 异步补齐封面（部分平台搜索结果不带图；拿到后除刷新列表外，还要推给舞台/悬浮封面）
     if (!song.cover && window.mine.streamGetPic) {
       window.mine.streamGetPic({ provider: song.provider, song }).then(p => {
@@ -394,7 +403,7 @@ async function playStreamAt(i) {
     }
     // 注入歌词：与播放地址并行获取，playTrack 完成后立即渲染
     if (ly && ly.lrc && window.annieStage && window.annieStage.setLyricText) {
-      window.annieStage.setLyricText(ly.lrc);
+      window.annieStage.setLyricText(ly.lrc, ly.tlyric); // V4.4：译文轨一并注入舞台
     }
     // AM 主题流媒体歌词：按 stream:// 路径缓存 + 广播事件（AM 歌词走本地文件接口，stream:// 会落空）
     if (ly && ly.lrc && state.currentPath) {
@@ -419,6 +428,7 @@ async function playStreamAt(i) {
       duration: song.duration ? song.duration / 1000 : 0,
       provider: song.provider,
       quality: r.quality || '',
+      song: song, // 原始完整歌曲对象（含 songmid/hash 等平台字段）：主题切换续播需用它重取 URL
       onPlayed: doInject,
     });
   } else {
@@ -460,6 +470,8 @@ window.annieStream = {
     const s = streamState.results[streamState.index];
     return s && s.duration ? s.duration / 1000 : 0;
   },
+  // V4.4：供 player.js playAt 在本地接管播放时调用（取消合并定时器 + 作废在途 URL 解析回调）
+  cancelSwitch: cancelStreamPlayback,
 };
 window.annieStreamSearch = (kw) => {
   document.querySelector('.side-tab[data-tab="stream"]')?.click();
@@ -569,13 +581,13 @@ async function downloadStreamAt(gi, btn) {
       setStreamStatus(`已下载：${song.name}（${(r.size / 1048576).toFixed(1)}MB · ${r.quality || ''}${dlNote}）→ ${r.path}`, !!r.downgraded);
     } else {
       btn.classList.remove('busy');
-      btn.textContent = '⬇';
+      btn.innerHTML = typeof ico === 'function' ? ico('download', 13) : '⬇'; // V4.4：SVG 图标
       setStreamStatus(`下载失败：${(r && r.error) || '未知错误'}`, true);
     }
   } catch (e) {
     dlJobs.delete(key);
     btn.classList.remove('busy');
-    btn.textContent = '⬇';
+    btn.innerHTML = typeof ico === 'function' ? ico('download', 13) : '⬇'; // V4.4：SVG 图标
     setStreamStatus('下载失败：' + (e.message || e), true);
   }
 }

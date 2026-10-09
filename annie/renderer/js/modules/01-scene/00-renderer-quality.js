@@ -191,9 +191,23 @@ renderer.domElement.addEventListener('webglcontextlost', function (e) {
   console.warn('[stage] WebGL context lost');
 }, false);
 renderer.domElement.addEventListener('webglcontextrestored', function () {
+  // V4.4：主题冻结期（AM/FB2K 激活）不整页 reload——舞台不可见时丢现场毫无意义，
+  // 且 AM/FB2K 的使用现场（滚动位置/面板状态）会被白砸；标记后等切回 legacy 再重载。
+  if (window.__legacyThemeHidden) {
+    console.warn('[stage] WebGL context restored while hidden, deferring reload until theme returns');
+    window.__annieStageNeedsReload = true;
+    return;
+  }
   console.warn('[stage] WebGL context restored, reloading renderer');
   try { location.reload(); } catch (e) { }
 }, false);
+// V4.4：冻结期发生过的 GL 恢复 → 切回粒子舞台时补做整页重载（重建 GL 资源）
+document.addEventListener('annie-theme-changed', function (e) {
+  if (e.detail && e.detail.theme === 'legacy' && window.__annieStageNeedsReload) {
+    window.__annieStageNeedsReload = false;
+    try { location.reload(); } catch (err) { }
+  }
+});
 
 // ============================================================
 //  相机系统 v7.1 — 分离 user offset / cinema offset

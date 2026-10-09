@@ -144,6 +144,8 @@
         curSessSec += d;
         curGenres.forEach(g => { data.genres[g].sec += d; });
         const yk = yearKey();
+        // V4.4：防护——播放中「清空统计」或跨年时 years[yk] 不存在，旧实现此处每 0.1s 抛 TypeError
+        data.years[yk] = data.years[yk] || { plays: 0, sec: 0 };
         data.years[yk].sec += d;
         save();
       }

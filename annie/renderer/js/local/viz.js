@@ -63,6 +63,34 @@ const PALETTE = (() => {
 
 const $v = (s) => document.querySelector(s);
 
+/* V4.4：DPR 适配（HiDPI 屏 canvas 不再发虚——此前 cv.width=clientWidth 物理像素 1:1 CSS 像素，
+ * 2x 屏被拉伸模糊）+ accent 取色（换 palette/强调色联动，1s 缓存避免每帧 getComputedStyle）。 */
+function fitCanvas(cv, W, H) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const pw = Math.max(1, Math.round(W * dpr)), ph = Math.max(1, Math.round(H * dpr));
+  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+let _vizAccent = '', _vizAccentAt = 0;
+function vizAccent() {
+  const now = performance.now();
+  if (!_vizAccent || now - _vizAccentAt > 1000) {
+    _vizAccentAt = now;
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    _vizAccent = v || '#fac900';
+  }
+  return _vizAccent;
+}
+function vizAccentRgba(alpha) {
+  const hex = vizAccent();
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return `rgba(250,201,0,${alpha})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 /* ---------------- V1.1.5：canvas 尺寸缓存 ----------------
  * 渲染热路径（position 10Hz / level 11Hz）只读缓存；尺寸只在低频事件
  * （resize / 切 tab / 面板显隐）时重测。读 clientWidth/clientHeight 会
@@ -136,21 +164,23 @@ function drawLevel() {
   const cv = $v('#level-canvas');
   const { w: W, h: H } = ensureVizSize('level');
   if (!W || !H) return;
-  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-  const ctx = cv.getContext('2d');
+  const ctx = fitCanvas(cv, W, H); // V4.4：DPR 适配
   ctx.fillStyle = '#07080c';
   ctx.fillRect(0, 0, W, H);
 
   const toDb = (v) => v > 1e-6 ? 20 * Math.log10(v) : -60;
   const frac = (v) => Math.max(0, Math.min(1, (toDb(v) + 60) / 60));
   // V1.1.5：渐变缓存——11Hz 调用下旧实现每次 createLinearGradient 新建对象
-  if (!vizState._levelGrad || vizState._levelGradH !== H) {
+  // V4.4：缓存键加 accent——换 palette/强调色后渐变跟着换（原硬编码金色）
+  const _acc = vizAccent();
+  if (!vizState._levelGrad || vizState._levelGradH !== H || vizState._levelGradA !== _acc) {
     const g = ctx.createLinearGradient(0, H, 0, 0);
     g.addColorStop(0, '#008aff');
-    g.addColorStop(0.65, '#fac900');
+    g.addColorStop(0.65, _acc);
     g.addColorStop(0.92, '#e74c3c');
     vizState._levelGrad = g;
     vizState._levelGradH = H;
+    vizState._levelGradA = _acc;
   }
   const grad = vizState._levelGrad;
 
@@ -199,8 +229,7 @@ function renderWaveFull() {
   const cv = $v('#wave-canvas');
   const { w: W, h: H } = ensureVizSize('wave');
   if (!W || !H) return; // 分区收起时尺寸为 0，跳过绘制
-  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-  const ctx = cv.getContext('2d');
+  const ctx = fitCanvas(cv, W, H); // V4.4：DPR 适配
   ctx.fillStyle = '#07080c';
   ctx.fillRect(0, 0, W, H);
 
@@ -227,7 +256,7 @@ function renderWaveFull() {
     const h = Math.max(1, wf[i] * (H - 6));
     ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
   }
-  ctx.fillStyle = '#fac900';
+  ctx.fillStyle = vizAccent(); // V4.4：已播放部分接 accent（原硬编码金色）
   for (let i = 0; i <= curIdx && i < n; i++) {
     const x = i * barW;
     const h = Math.max(1, wf[i] * (H - 6));
@@ -244,7 +273,7 @@ function drawWaveProgress() {
   const { w: W, h: H } = ensureVizSize('wave');
   const wf = vizState.waveform;
   if (!W || !H || !wf || !wf.length || vizState.waveLastIdx < 0) return;
-  const ctx = cv.getContext('2d');
+  const ctx = fitCanvas(cv, W, H); // V4.4：DPR 适配（尺寸未变时仅重设 transform，开销可忽略）
   const mid = H / 2;
   const n = wf.length;
   const barW = W / n;
@@ -252,7 +281,7 @@ function drawWaveProgress() {
   const curIdx = Math.floor(progress * n);
   if (curIdx !== vizState.waveLastIdx) {
     if (curIdx > vizState.waveLastIdx) {
-      ctx.fillStyle = '#fac900';
+      ctx.fillStyle = vizAccent();
       for (let i = vizState.waveLastIdx + 1; i <= curIdx && i < n; i++) {
         const x = i * barW;
         const h = Math.max(1, wf[i] * (H - 6));
@@ -286,13 +315,13 @@ function drawWaveProgressLine(ctx, W, H, progress, wf, mid, barW, n) {
     for (let i = i0; i <= i1; i++) {
       const x = i * barW;
       const h = Math.max(1, wf[i] * (H - 6));
-      ctx.fillStyle = i <= vizState.waveLastIdx ? '#fac900' : '#3a4a6b';
+      ctx.fillStyle = i <= vizState.waveLastIdx ? vizAccent() : '#3a4a6b';
       ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
     }
   }
   if (progress > 0) {
     const px = Math.round(progress * W) - 1;
-    ctx.fillStyle = 'rgba(250,201,0,.9)';
+    ctx.fillStyle = vizAccentRgba(.9); // V4.4：进度线接 accent（原硬编码金色 rgba）
     ctx.fillRect(px, 0, 2, H);
     vizState._waveOldX = px;
   }
@@ -356,8 +385,7 @@ function renderSpecFull() {
   const cv = $v('#spec-canvas');
   const { w: W, h: H } = ensureVizSize('spec');
   if (!W || !H) return; // 分区收起时尺寸为 0，跳过绘制
-  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-  const ctx = cv.getContext('2d');
+  const ctx = fitCanvas(cv, W, H); // V4.4：DPR 适配
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
@@ -446,7 +474,7 @@ function renderLosslessIdle() {
   const btn = document.createElement('button');
   btn.textContent = '开始无损检测';
   btn.style.cssText = 'margin-top:8px;padding:6px 16px;border:1px solid var(--line);border-radius:8px;background:none;color:var(--fg,#e8eaf0);cursor:pointer;font-size:12px';
-  btn.onmouseenter = () => { btn.style.borderColor = '#fac900'; };
+  btn.onmouseenter = () => { btn.style.borderColor = vizAccent(); }; // V4.4：接 accent（原硬编码金色）
   btn.onmouseleave = () => { btn.style.borderColor = 'var(--line)'; };
   btn.onclick = () => window.annieConfirmFakeScan(function () { window.annieViz.detectLossless(); });
   rs.appendChild(btn);

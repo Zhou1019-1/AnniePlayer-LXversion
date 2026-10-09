@@ -19,6 +19,7 @@
     // —— 界面 ——
     particlesEnabled: true, albumBg: true, albumBgBlur: 120,
     sortMode: 'name', sidebarCollapsed: false, viewMode: 'tree',
+    amTopbarBottom: false, // V4.4：AM 顶栏置底（AM 界面页开关）
     amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
     amFavSort: 'az',        // V4.3.22：AM 喜爱歌曲视图排序（选项同歌曲视图）
     amAlbumSort: 'az',      // V4.3.22：AM 专辑视图排序 az|azArtist|countDesc|countAsc
@@ -46,7 +47,8 @@
     closeToTray: false,      // V3.5.9：关闭主窗口后驻留系统托盘（默认关=关窗即退出，保证更新顺利安装）
     accent: 'default',       // V3.5.17：强调色（default=主题原色；AM/粒子舞台生效）
     amViz: true,              // V3.5.17：AM 主题底部实时频谱条
-    amVizColor: 'cover'      // V4.3.17：频谱条配色 cover|coverMulti|rainbow|heat|accent
+    amVizColor: 'cover',      // V4.3.17：频谱条配色 cover|coverMulti|rainbow|heat|accent
+    beatAnalysis: true        // V4.4：节拍律动分析（相机随鼓点运动；关闭省整轨解码，弱机建议关）
   };
 
   /* V3.5.17：强调色预设——内联 style 写到 <html>，优先级高于所有 CSS 变量定义（含 data-palette 方案） */
@@ -136,6 +138,26 @@
         wrap.style.setProperty('--album-blur', (ui.albumBgBlur || 120) + 'px');
       }
     } catch (e) { }
+    // V4.4：AM 顶栏置底（AM 界面页开关）
+    try {
+      var amRoot = document.getElementById('am-root');
+      if (amRoot) {
+        var tbOn = !!ui.amTopbarBottom;
+        amRoot.classList.toggle('am-topbar-bottom', tbOn);
+        /* 窗口三键不随顶栏下沉：顶栏的 backdrop-filter 会创建包含块，position:fixed 失效
+         *（相对顶栏定位 → 三键反而钉在右下），所以置底时把 .am-winbtns 物理挂到 #am-root 下 */
+        var wb = amRoot.querySelector('.am-winbtns');
+        if (wb) {
+          if (tbOn && wb.parentNode !== amRoot) {
+            wb._homeParent = wb.parentNode; wb._homeNext = wb.nextSibling;
+            amRoot.appendChild(wb);
+          } else if (!tbOn && wb._homeParent) {
+            wb._homeParent.insertBefore(wb, wb._homeNext);
+            wb._homeParent = null; wb._homeNext = null;
+          }
+        }
+      }
+    } catch (e) { }
     // 侧栏与排序归 player.js 管，发个事件通知它
     try { document.dispatchEvent(new CustomEvent('annie-settings-changed')); } catch (e) { }
   }
@@ -159,14 +181,16 @@
   var onOpenHooks = [];  // 每次打开面板时刷新（如媒体库文件夹列表）
   var pageShowHooks = {}; // V4.3.24：每次切到该页时刷新（听歌统计实时数据）
 
-  // 左导航九页（顺序即定案）
+  // 左导航（顺序即定案；V4.4：主题专属设置页——粒子舞台/AM 界面/FB2K 界面）
   var PAGES = [
     ['general', '常规'],
     ['audio', '音频输出'],
     ['playback', '播放'],
     ['fx', '效果器'],
     ['lyrics', '歌词'],
-    ['visual', '视觉舞台'],
+    ['visual', '粒子舞台'],
+    ['ui-am', 'AM 界面'],
+    ['ui-fb2k', 'FB2K 界面'],
     ['library', '媒体库'],
     ['tools', '曲库工具'],
     ['stats', '听歌统计'],
@@ -292,6 +316,127 @@
   var fmt2 = function (v) { return Number(v).toFixed(2); };
   var fmtPx = function (v) { return Math.round(v) + 'px'; };
 
+  /* ---------------- V4.4：自定义壁纸（全局，三主题共用） ----------------
+   * 数据在 wallpaper.js（IndexedDB 存图 + LS 存开关/模糊/明暗）；本区块只是 UI 壳，
+   * 三个主题专属页各挂一份，经 annie-wp-changed 事件互相同步。 */
+  function buildWallpaperSection(pageEl) {
+    var wp = window.annieWallpaper;
+    if (!wp) return;
+    var s = section(pageEl, '自定义壁纸（全局）');
+    s.appendChild(el('div', 'set-hint', '三个主题共用同一张壁纸；启用后替代封面氛围背景（沉浸模式是否跟随由下方开关决定）'));
+
+    // —— 开关 ——
+    var onRow = markItem(el('label', 'set-check'), '启用壁纸 自定义壁纸 背景图片 wallpaper background');
+    var onCk = document.createElement('input');
+    onCk.type = 'checkbox'; onCk.checked = !!wp.cfg.on;
+    onCk.onchange = function () { wp.set({ on: onCk.checked }); };
+    onRow.appendChild(onCk);
+    onRow.appendChild(el('span', '', '启用自定义壁纸'));
+    s.appendChild(onRow);
+
+    // —— 沉浸模式联动（默认关：沉浸大背景仍随封面氛围） ——
+    var immRow = markItem(el('label', 'set-check'), '沉浸模式壁纸 immersive wallpaper 沉浸背景');
+    var immCk = document.createElement('input');
+    immCk.type = 'checkbox'; immCk.checked = !!wp.cfg.imm;
+    immCk.onchange = function () { wp.set({ imm: immCk.checked }); };
+    immRow.appendChild(immCk);
+    immRow.appendChild(el('span', '', '沉浸模式也使用壁纸'));
+    var immHint = el('span', 'set-hint', '（不勾则沉浸模式背景仍随封面变化）');
+    immHint.style.marginLeft = '6px';
+    immRow.appendChild(immHint);
+    s.appendChild(immRow);
+
+    // —— 图片管理：预览 + 选择/清除 + 状态 ——
+    var row = markItem(el('div', 'set-row'), '选择壁纸图片 清除 wallpaper pick image');
+    var lab = el('div');
+    lab.appendChild(el('div', '', '壁纸图片'));
+    var stat = el('div', 'set-hint', '…');
+    lab.appendChild(stat);
+    row.appendChild(lab);
+    var wrap = el('div', 'set-ctrl');
+    var bPick = el('button', 'btn-ghost', '选择图片…');
+    var bClear = el('button', 'btn-ghost', '清除');
+    bClear.title = '删除当前壁纸并停用（历史里的其它壁纸保留，可点缩略图切回）';
+    bPick.onclick = function () {
+      bPick.disabled = true;
+      wp.pick().catch(function () { }).then(function () { bPick.disabled = false; });
+    };
+    bClear.onclick = function () { wp.clear(); };
+    wrap.appendChild(bPick); wrap.appendChild(bClear);
+    row.appendChild(wrap);
+    s.appendChild(row);
+    var pv = document.createElement('img');
+    pv.className = 'set-wp-preview'; pv.alt = '壁纸预览';
+    s.appendChild(pv);
+
+    // —— 历史壁纸条：用过的图自动留存（上限 12 张），点缩略图一键切回，hover 出 ✕ 可删 ——
+    var strip = el('div', 'set-wp-strip');
+    s.appendChild(markItem(strip, '历史壁纸 用过的壁纸 切换 wallpaper history'));
+    function renderStrip() {
+      strip.innerHTML = '';
+      var list = wp.list();
+      if (!list.length) { strip.style.display = 'none'; return; }
+      strip.style.display = '';
+      list.forEach(function (h) {
+        var cell = el('div', 'set-wp-cell' + (h.id === wp.cfg.cur ? ' cur' : ''));
+        cell.title = '点击切换为这张壁纸';
+        var im = document.createElement('img');
+        im.alt = '';
+        wp.thumb(h.id).then(function (u) { if (u) im.src = u; else cell.remove(); });
+        cell.appendChild(im);
+        cell.onclick = function () { wp.use(h.id); };
+        var del = el('button', 'set-wp-del', '✕');
+        del.title = '从历史中删除';
+        del.onclick = function (e) { e.stopPropagation(); wp.remove(h.id); };
+        cell.appendChild(del);
+        strip.appendChild(cell);
+      });
+    }
+
+    // —— 模糊 / 明暗滑杆 ——
+    function wpSlider(label, key, min, max, step, fmt, kw) {
+      var r = markItem(el('div', 'set-row'), kw);
+      var head = el('div', 'set-row-head');
+      head.appendChild(el('span', 'set-label', label));
+      var val = el('span', 'set-val', fmt(wp.cfg[key]));
+      head.appendChild(val);
+      r.appendChild(head);
+      var input = document.createElement('input');
+      input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = wp.cfg[key];
+      input.oninput = function () {
+        var v = Number(input.value);
+        val.textContent = fmt(v);
+        var patch = {}; patch[key] = v;
+        wp.set(patch);
+      };
+      r.appendChild(input);
+      s.appendChild(r);
+      return input;
+    }
+    var slBlur = wpSlider('壁纸模糊', 'blur', 0, 90, 5, fmtPx, '壁纸模糊 背景模糊 wallpaper blur');
+    var slDim = wpSlider('壁纸压暗', 'dim', 0, 0.85, 0.05,
+      function (v) { return Math.round(v * 100) + '%'; }, '壁纸压暗 明暗 亮度 wallpaper dim brightness');
+
+    function refresh() {
+      onCk.checked = !!wp.cfg.on;
+      immCk.checked = !!wp.cfg.imm;
+      slBlur.value = wp.cfg.blur; slDim.value = wp.cfg.dim;
+      var u = wp.thumbUrl();
+      pv.style.display = u ? '' : 'none';
+      if (u) pv.src = u;
+      renderStrip();
+      wp.hasImage().then(function (has) {
+        stat.textContent = has ? (wp.cfg.on ? '已设置（生效中）' : '已设置（未启用）') : '未设置——点「选择图片」导入';
+        if (has && !pv.src) {
+          wp.previewUrl().then(function (u2) { if (u2) { pv.src = u2; pv.style.display = ''; } });
+        }
+        if (!has) { pv.removeAttribute('src'); pv.style.display = 'none'; }
+      });
+    }
+    document.addEventListener('annie-wp-changed', refresh);
+    refresh();
+  }
+
   /* 预设芯片（名称取自视觉栈 presetMeta，点击调上游 setPreset） */
   function buildPresets(parent) {
     var grid = markItem(el('div', 'preset-grid'), '视觉预设 preset 粒子舞台');
@@ -407,6 +552,7 @@
     var pgGeneral = pageEls.general, pgAudio = pageEls.audio, pgPlayback = pageEls.playback,
       pgFx = pageEls.fx,
       pgLyrics = pageEls.lyrics, pgVisual = pageEls.visual, pgLibrary = pageEls.library,
+      pgUiAm = pageEls['ui-am'], pgUiFb2k = pageEls['ui-fb2k'],
       pgTools = pageEls.tools,
       pgStats = pageEls.stats,
       pgDownload = pageEls.download, pgUpdate = pageEls.update, pgExt = pageEls.ext;
@@ -430,7 +576,8 @@
     var curBehavior = (ui.closeBehavior === 'tray' || ui.closeBehavior === 'quit') ? ui.closeBehavior
       : (ui.closeToTray ? 'tray' : 'ask'); // 旧设置迁移显示
     cbSel.value = curBehavior;
-    ui.closeBehavior = curBehavior;
+    // V4.4：不回写 ui.closeBehavior——旧实现把显示值（含回退 'ask'）写回 ui，
+    // 之后任意 save() 都会把主进程记忆的 tray/quit 覆写成 'ask'，关闭行为记忆被静默抹掉
     cbSel.onchange = function () {
       ui.closeBehavior = cbSel.value;
       if (ui.closeBehavior === 'ask') delete ui.closeBehavior; // 询问=不记忆，主进程读不到键即弹窗
@@ -460,6 +607,31 @@
         window.mine.hotkeysSetEnabled(hkInput.checked).catch(function () { });
       };
     } else hkInput.disabled = true;
+
+    /* —— V4.4：任务栏小组件 + 切歌弹窗（AnnieFlyout 伴侣进程，基于 FluentFlyout GPL-3.0） ——
+     * 数据走 SMTC 通道（mediaSession.js 已在推），主进程只负责拉起/杀掉进程。 */
+    var sFly = section(pgGeneral, '任务栏小组件');
+    var flyRow = markItem(el('label', 'set-check'), '任务栏小组件 切歌弹窗 媒体弹窗 任务栏封面 fluent flyout taskbar widget');
+    var flyInput = document.createElement('input');
+    flyInput.type = 'checkbox';
+    flyRow.appendChild(flyInput);
+    flyRow.appendChild(el('span', '', '任务栏媒体小组件 + 切歌弹窗（FluentFlyout 风格）'));
+    sFly.appendChild(flyRow);
+    sFly.appendChild(el('div', 'set-hint', '开启后任务栏显示封面与曲名（可调出播放控制），切歌/按媒体键时屏幕角落弹出媒体卡片；托盘区有它的图标可细调样式。独占输出下也能用。'));
+    var flyHint = el('div', 'set-hint', '');
+    sFly.appendChild(flyHint);
+    if (window.mine.flyoutGet) {
+      window.mine.flyoutGet().then(function (r) {
+        flyInput.checked = !!(r && r.enabled);
+        if (r && !r.available) flyHint.textContent = '⚠ 未找到 AnnieFlyout.exe（dev 环境需先在 flyout/ 目录编译发布）';
+      }).catch(function () { });
+      flyInput.onchange = function () {
+        window.mine.flyoutSet(flyInput.checked).then(function (ok) {
+          if (flyInput.checked && !ok) { flyHint.textContent = '⚠ 启动失败：未找到 AnnieFlyout.exe'; flyInput.checked = false; }
+          else flyHint.textContent = '';
+        }).catch(function () { });
+      };
+    } else flyInput.disabled = true;
 
     // —— V4.3.12：局域网手机遥控（脑暴 9.1） ——
     var sRm = section(pgGeneral, '手机遥控');
@@ -533,10 +705,10 @@
     refreshThemeCards();
     document.addEventListener('annie-theme-changed', refreshThemeCards);
 
-    // —— 强调色自定义（V3.5.17：AM/粒子舞台变量驱动主题生效，FB2K 保持经典配色） ——
+    // —— 强调色自定义（V3.5.17：AM/粒子舞台变量驱动主题生效；V4.4 第三层起 FB2K 经 --f2-accent 同步接入） ——
     var accRow = markItem(el('div', 'set-row'), '强调色 主题色 accent 颜色自定义');
     var accLab = el('div'); accLab.appendChild(el('div', '', '强调色'));
-    accLab.appendChild(el('div', 'set-hint', '按钮/进度条/选中高亮的颜色；作用于 AM 与粒子舞台主题（FB2K 保持经典）'));
+    accLab.appendChild(el('div', 'set-hint', '按钮/进度条/选中高亮的颜色；作用于 AM、粒子舞台与 FB2K 主题（默认=各主题原色）'));
     var accWrap = el('div', 'set-ctrl'); accWrap.style.gap = '8px'; accWrap.style.flexWrap = 'wrap';
     var accSwatches = [];
     Object.keys(ACCENTS).forEach(function (k) {
@@ -1503,16 +1675,56 @@
     dlSliderRow('字号', 'scale', 0.6, 2.2, 0.05, function (v) { return Math.round(v * 100) + '%'; }, '桌面歌词 字号 大小 font size');
     dlSliderRow('背景深浅', 'bg', 0, 85, 5, function (v) { return Math.round(v) + '%'; }, '桌面歌词 背景 深浅 background');
     dlSliderRow('窗口不透明度', 'opacity', 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + '%'; }, '桌面歌词 不透明度 opacity');
-    lsSliderRow(sLg, 'AM 歌词字号', 'annieplayer.am.lyrscale', 0.7, 1.6, 0.05, 1, fmt2, function () {
+
+    /* ================= V4.4：AM 界面（主题专属设置页） ================= */
+    buildWallpaperSection(pgUiAm);
+    var sAmI = section(pgUiAm, '界面布局');
+    sAmI.appendChild(el('div', 'set-hint', '本页设置仅作用于 AM 主题（切换主题互不影响）'));
+    // —— 顶栏位置（顶部/底部）——
+    var tbRow = markItem(el('div', 'set-row'), 'am 顶栏位置 底部 播放控制 进度条 转移 topbar bottom');
+    var tbLab = el('div'); tbLab.appendChild(el('div', '', '顶栏位置'));
+    tbLab.appendChild(el('div', 'set-hint', '播放控制/进度条/工具按钮所在横条；选「底部」则整条移到窗口下方'));
+    var tbSel = document.createElement('select');
+    [['', '顶部（默认）'], ['bottom', '底部']].forEach(function (kv) {
+      var op = document.createElement('option'); op.value = kv[0]; op.textContent = kv[1];
+      tbSel.appendChild(op);
+    });
+    tbSel.value = ui.amTopbarBottom ? 'bottom' : '';
+    tbSel.onchange = function () { ui.amTopbarBottom = tbSel.value === 'bottom'; applyInterface(); save(); };
+    tbRow.appendChild(tbLab); tbRow.appendChild(tbSel);
+    sAmI.appendChild(tbRow);
+    // —— AM 歌词样式（自「歌词」页迁入本页，V4.4） ——
+    var sAmLyr = section(pgUiAm, '歌词样式');
+    lsSliderRow(sAmLyr, 'AM 歌词字号', 'annieplayer.am.lyrscale', 0.7, 1.6, 0.05, 1, fmt2, function () {
       if (window.amLyrStyle) window.amLyrStyle();
     }, 'am 歌词字号 字体大小 apple music font size');
-    lsSliderRow(sLg, 'AM 歌词行距', 'annieplayer.am.lyrlh', 1.2, 2.2, 0.05, 1.45, fmt2, function () {
+    lsSliderRow(sAmLyr, 'AM 歌词行距', 'annieplayer.am.lyrlh', 1.2, 2.2, 0.05, 1.45, fmt2, function () {
       if (window.amLyrStyle) window.amLyrStyle();
     }, 'am 歌词行距 行高 line height');
-    lsSliderRow(sLg, 'AM 每行词数', 'annieplayer.am.lyrwordlimit', 0, 12, 1, 0,
+    lsSliderRow(sAmLyr, 'AM 每行词数', 'annieplayer.am.lyrwordlimit', 0, 12, 1, 0,
       function (v) { return v === 0 ? '自动' : String(Math.round(v)); }, function () {
         if (window.amLyrRerender) window.amLyrRerender();
       }, 'am 每行词数 折行 word limit');
+
+    /* ================= V4.4：FB2K 界面（主题专属设置页） ================= */
+    buildWallpaperSection(pgUiFb2k);
+    var sF2 = section(pgUiFb2k, '外观');
+    sF2.appendChild(el('div', 'set-hint', '本页设置仅作用于仿 FB2K 主题（FB2K 工具栏 🌙 按钮 / Ctrl+Shift+D 与本开关联动）'));
+    // 暗色模式：fb2k.js 的 LS 是 JSON 序列化（true/false），与 lsCheckRow 的 '1'/'0' 不兼容——自定义读写
+    var f2DarkRow = markItem(el('label', 'set-check'), 'fb2k 暗色模式 夜间 dark mode');
+    var f2DarkInput = document.createElement('input');
+    f2DarkInput.type = 'checkbox';
+    try { f2DarkInput.checked = JSON.parse(localStorage.getItem('annieplayer.fb2k.dark') || 'false'); } catch (e) { }
+    f2DarkInput.onchange = function () {
+      if (window.annieFb2k && window.annieFb2k.setDark) window.annieFb2k.setDark(f2DarkInput.checked);
+      else try { localStorage.setItem('annieplayer.fb2k.dark', JSON.stringify(f2DarkInput.checked)); } catch (e) { }
+    };
+    document.addEventListener('annie-f2-dark-changed', function (e) {
+      f2DarkInput.checked = !!(e.detail && e.detail.dark); // FB2K 内切换后回同步本开关
+    });
+    f2DarkRow.appendChild(f2DarkInput);
+    f2DarkRow.appendChild(el('span', '', '暗色模式'));
+    sF2.appendChild(f2DarkRow);
 
     // —— 在线匹配默认保存项（match 弹窗三个复选框的初始值） ——
     var sMatch = section(pgLyrics, '在线匹配 · 默认保存项');
@@ -1559,6 +1771,7 @@
     checkRow(s3, '辉光粒子', 'lyricGlowParticles', applyLyrics, '辉光粒子 glow particles');
 
     /* ================= 视觉舞台 ================= */
+    buildWallpaperSection(pgVisual);
     var s1 = section(pgVisual, '视觉预设');
     buildPresets(s1);
 
@@ -1571,7 +1784,8 @@
     sliderRow(s2, '色彩增强', 'color', 0.5, 2, 0.05, fmt2, applyVisual, '色彩增强 color');
     sliderRow(s2, '节拍震屏', 'cinemaShake', 0, 1, 0.05, fmt2, applyVisual, '节拍震屏 shake');
     sliderRow(s2, '封面粒子密度', 'coverResolution', 0.75, 1.55, 0.05, fmt2, applyVisual, '封面粒子密度 cover resolution');
-    s2.appendChild(el('div', 'set-hint', '封面粒子密度在切歌后生效'));
+    checkRow(s2, '节拍律动分析', 'beatAnalysis', applyVisual, '节拍律动 相机 鼓点 beat analysis 弱机');
+    s2.appendChild(el('div', 'set-hint', '节拍律动分析关闭后相机不再随鼓点运动（弱机建议关，省整轨解码）；封面粒子密度在切歌后生效'));
 
     /* ================= VST实验区：效果器（VST3 链） ================= */
     (function buildFxPage() {
@@ -2891,6 +3105,8 @@
         for (var k in DEFAULTS) {
           if (saved[k] !== undefined) ui[k] = saved[k];
         }
+        // V4.4：closeBehavior 不在 DEFAULTS 但需从主进程恢复显示（否则重启后设置面板恒显「每次询问」，与真实行为脱节）
+        if (saved.closeBehavior !== undefined) ui.closeBehavior = saved.closeBehavior;
       }
       applyAll();
       syncControls();

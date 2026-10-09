@@ -19,11 +19,11 @@ catch (e) { document.documentElement.dataset.motion = 'full'; }
 <style>
 /* 启动序列开屏（V4.1 仪式感版）：内联保证首帧即显，不依赖外部 CSS 加载。
  * boot.js 在主界面首帧就绪后加 .bs-out 淡出并移除；8s 兜底强制退场。 */
-#boot-splash { position: fixed; inset: 0; z-index: 9999; background: #16181d;
+#boot-splash, #theme-splash { position: fixed; inset: 0; z-index: 9999; background: #16181d;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
   transition: opacity .5s ease;
   font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif; }
-#boot-splash.bs-out { opacity: 0; pointer-events: none; }
+#boot-splash.bs-out, #theme-splash.bs-out { opacity: 0; pointer-events: none; }
 .bs-logo { display: flex; gap: 5px; align-items: flex-end; height: 34px;
   padding: 18px 22px; box-sizing: content-box;
   background: linear-gradient(135deg, #fa2d55, #ff5c7a); border-radius: 22px;
@@ -38,11 +38,29 @@ catch (e) { document.documentElement.dataset.motion = 'full'; }
   animation: bsFadeUp .6s .22s cubic-bezier(.22, 1, .36, 1) backwards; }
 .bs-status { color: rgba(245, 245, 247, .45); font-size: 12px;
   animation: bsFadeUp .6s .38s cubic-bezier(.22, 1, .36, 1) backwards; }
+/* 主题切换过渡屏：进入时立即不透明（无入场延迟，快速盖住旧界面） */
+#theme-splash { opacity: 0; pointer-events: none; }
+#theme-splash.ts-on { opacity: 1; pointer-events: auto; }
+#theme-splash.ts-on .bs-logo { animation: bsLogoIn .5s cubic-bezier(.22, 1, .36, 1) backwards; }
 @keyframes bsBar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
 @keyframes bsLogoIn { from { opacity: 0; transform: scale(.78); } }
 @keyframes bsFadeUp { from { opacity: 0; transform: translateY(10px); } }
-html[data-motion="off"] #boot-splash { transition: none; }
-html[data-motion="off"] #boot-splash * { animation: none !important; }
+html[data-motion="off"] #boot-splash, html[data-motion="off"] #theme-splash { transition: none; }
+html[data-motion="off"] #boot-splash *, html[data-motion="off"] #theme-splash * { animation: none !important; }
+/* 主题切换后「续播」提示条（手动恢复断点播放） */
+#theme-resume { position: fixed; top: 46px; left: 50%; transform: translateX(-50%) translateY(-8px);
+  z-index: 9998; display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+  background: rgba(28, 30, 36, .92); color: #eef0f5; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px; box-shadow: 0 10px 32px rgba(0,0,0,.5); font-size: 13px;
+  opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease;
+  backdrop-filter: blur(10px); cursor: default; max-width: 72vw; }
+#theme-resume.tr-on { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+#theme-resume .tr-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#theme-resume .tr-txt b { color: #ff7d97; font-weight: 600; }
+#theme-resume button { border: none; border-radius: 999px; padding: 4px 14px; font-size: 12px;
+  cursor: pointer; background: #fa2d55; color: #fff; flex: none; }
+#theme-resume button.tr-x { background: transparent; color: rgba(238,240,245,.55); padding: 4px 8px; }
+#theme-resume button.tr-x:hover { color: #fff; }
 </style>
 <script>
 // 渲染层 JS 错误监控：上报主进程环形缓冲，随诊断包导出（V3.5.15）
@@ -82,14 +100,15 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
 <!-- 标题栏 -->
 <header id="titlebar">
   <div class="tb-drag">
-    <span class="tb-logo">安妮播放器 <em>SVLX</em> <span class="tb-ver">1.2.0</span></span>
+    <span class="tb-logo">安妮播放器 <em>SVLX</em> <span class="tb-ver"></span></span><!-- V4.4：版本号由 player.js boot 动态填充（原写死 1.2.0 与实际版本脱节） -->
     <span id="tb-backend" class="tb-badge" title="输出后端">未连接</span>
   </div>
   <div class="tb-btns">
-    <button id="btn-settings" title="设置">⚙</button>
-    <button id="btn-min" title="最小化">—</button>
-    <button id="btn-max" title="最大化">□</button>
-    <button id="btn-close" class="close" title="关闭">×</button>
+    <!-- V4.4：SVG 图标由 player.js boot 按 data-ico 填充（Unicode 字符图标已全部退役） -->
+    <button id="btn-settings" title="设置" data-ico="settings" data-ico-size="15"></button>
+    <button id="btn-min" title="最小化" data-ico="min" data-ico-size="14"></button>
+    <button id="btn-max" title="最大化" data-ico="max" data-ico-size="13"></button>
+    <button id="btn-close" class="close" title="关闭" data-ico="close" data-ico-size="14"></button>
   </div>
 </header>
 
@@ -107,7 +126,7 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
     <div id="panel-local" class="side-panel active">
       <div class="side-actions">
         <button id="btn-add-folder" class="btn-accent">+ 添加音乐文件夹</button>
-        <button id="btn-rescan" class="btn-ghost" title="重新扫描">↻</button>
+        <button id="btn-rescan" class="btn-ghost" title="重新扫描" data-ico="rescan" data-ico-size="14"></button>
       </div>
       <div id="folder-list"></div>
       <!-- V1.1.0：平铺文件夹导航（原 #folder-tree 移除；曲目区在文件夹视图/曲目视图间切换） -->
@@ -124,18 +143,18 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
           <option value="genre">按流派</option>
           <option value="year">按年份</option>
         </select>
-        <button id="btn-view-toggle" class="btn-ghost" title="切换文件夹图标视图">🗂</button>
-        <button id="btn-collapse" title="收起曲库">«</button>
+        <button id="btn-view-toggle" class="btn-ghost" title="切换文件夹图标视图" data-ico="grid" data-ico-size="14"></button>
+        <button id="btn-collapse" title="收起曲库" data-ico="chevsLeft" data-ico-size="14"></button>
       </div>
       <div id="lib-nav" class="hidden">
-        <button id="btn-lib-back" title="返回文件夹列表">←</button>
+        <button id="btn-lib-back" title="返回文件夹列表" data-ico="arrowLeft" data-ico-size="14"></button>
         <span id="lib-nav-name"></span>
       </div>
       <div id="track-list"></div>
       <!-- 文件夹图标网格视图（默认隐藏，🗂 按钮切换） -->
       <div id="grid-view" class="hidden">
         <div id="grid-nav">
-          <button id="grid-back" title="返回上级文件夹">←</button>
+          <button id="grid-back" title="返回上级文件夹" data-ico="arrowLeft" data-ico-size="14"></button>
           <span id="grid-crumb">全部文件夹</span>
         </div>
         <div id="folder-grid"></div>
@@ -180,7 +199,7 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
       <div id="stream-list"></div>
       <div class="side-bar2">
         <span class="stream-hint">在线音源以独占模式解码输出</span>
-        <button id="btn-collapse2" title="收起曲库">«</button>
+        <button id="btn-collapse2" title="收起曲库" data-ico="chevsLeft" data-ico-size="14"></button>
       </div>
     </div>
   </aside>
@@ -208,9 +227,9 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
     <div id="top-right"></div>
 
     <!-- 曲库收起后的展开把手 -->
-    <button id="btn-expand" class="hidden" title="展开曲库">»</button>
+    <button id="btn-expand" class="hidden" title="展开曲库" data-ico="chevsRight" data-ico-size="15"></button>
     <!-- 可视化面板关闭后的恢复把手 -->
-    <button id="btn-viz-restore" class="hidden" title="展开可视化面板">▲ 波形 / 频谱</button>
+    <button id="btn-viz-restore" class="hidden" title="展开可视化面板" data-ico="chevUp" data-ico-size="13"><span>波形 / 频谱</span></button>
   </section>
 
   <!-- 右：双声道电平停靠栏（独立于其他功能区） -->
@@ -228,7 +247,7 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
     <button class="viz-tab" data-vtab="spec">频谱</button>
     <button class="viz-tab" data-vtab="lossless">无损检测</button>
     <span id="viz-status"></span>
-    <button id="btn-viz-close" title="关闭可视化面板">×</button>
+    <button id="btn-viz-close" title="关闭可视化面板" data-ico="close" data-ico-size="12"></button>
   </div>
   <div id="viz-body">
     <canvas id="wave-canvas" class="viz-page active"></canvas>
@@ -251,28 +270,28 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
   <!-- Plus 方案A：传输条三段分层（高频播放 / 中频音频工具 / 低频系统） -->
   <div id="controls">
     <div class="ctl-group transport">
-      <button id="btn-prev" class="ctl" title="上一首">⏮</button>
-      <button id="btn-play" class="ctl big" title="播放/暂停">▶</button>
-      <button id="btn-next" class="ctl" title="下一首">⏭</button>
-      <button id="btn-stop" class="ctl" title="停止">⏹</button>
+      <button id="btn-prev" class="ctl" title="上一首" data-ico="prev" data-ico-size="17"></button>
+      <button id="btn-play" class="ctl big" title="播放/暂停" data-ico="play" data-ico-size="20"></button>
+      <button id="btn-next" class="ctl" title="下一首" data-ico="next" data-ico-size="17"></button>
+      <button id="btn-stop" class="ctl" title="停止" data-ico="stop" data-ico-size="15"></button>
     </div>
     <div class="ctl-group tools">
-      <button id="btn-fav-cur" class="ctl" title="收藏当前曲目">♡</button>
-      <button id="btn-mode" class="ctl" title="播放模式（仅本地播放生效，点击切换）">→</button>
-      <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）">◎</button>
-      <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板">📊</button>
+      <button id="btn-fav-cur" class="ctl" title="收藏当前曲目" data-ico="heart" data-ico-size="16"></button>
+      <button id="btn-mode" class="ctl" title="播放模式（仅本地播放生效，点击切换）" data-ico="modeListSeq" data-ico-size="16"></button>
+      <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）" data-ico="locate" data-ico-size="16"></button>
+      <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板" data-ico="chart" data-ico-size="16"></button>
       <!-- EQ 按钮由 eq.js 注入本组 -->
     </div>
     <div class="ctl-group sys">
       <!-- Pro beat0.0.1：Bit-perfect 直通状态（绿点=直通 / 黄点+原因） -->
       <span id="bp-chip" class="hidden"><i class="bp-dot"></i><span id="bp-text"></span></span>
       <div id="volume-wrap" title="数字音量（独占模式下系统音量无效）">
-        <span>🔊</span><input id="volume" type="range" min="0" max="100" value="100">
+        <span class="vol-ico" data-ico="volume" data-ico-size="15"></span><input id="volume" type="range" min="0" max="100" value="100">
       </div>
-      <button id="btn-device" class="ctl" title="输出设备（WASAPI 独占 / ASIO）">🎧</button>
-      <!-- Pro beat0.0.1：Now Playing 全屏（N 键）与迷你模式（Ctrl+M） -->
-      <button id="btn-npf" class="ctl" title="Now Playing 全屏（N）" onclick="window.annieProUi && annieProUi.toggleNpf()">🖵</button>
-      <button id="btn-mini" class="ctl" title="迷你模式（Ctrl+M）" onclick="window.annieProUi && annieProUi.toggleMini()">🗕</button>
+      <button id="btn-device" class="ctl" title="输出设备（WASAPI 独占 / ASIO）" data-ico="headphones" data-ico-size="16"></button>
+      <!-- Pro beat0.0.1：Now Playing 全屏（N 键）与迷你模式（Ctrl+M）；V4.4：内联 onclick 已清除，绑定在 player.js boot -->
+      <button id="btn-npf" class="ctl" title="Now Playing 全屏（N）" data-ico="expand" data-ico-size="16"></button>
+      <button id="btn-mini" class="ctl" title="迷你模式（Ctrl+M）" data-ico="mini" data-ico-size="16"></button>
     </div>
   </div>
 </footer>
@@ -294,6 +313,20 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
 <!-- 主题切换淡入淡出遮罩 -->
 <div id="theme-fade"></div>
 
+<!-- 主题切换过渡屏（「两个世界」仪式感：logo 动画 + 离开/进入文案；复用启动屏样式） -->
+<div id="theme-splash">
+  <div class="bs-logo"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="bs-name">安妮播放器</div>
+  <div class="bs-status" id="theme-splash-status">正在切换…</div>
+</div>
+
+<!-- 主题切换后「续播」手动恢复条（停止但可恢复；点 ⏵ 从断点续播） -->
+<div id="theme-resume">
+  <span class="tr-txt" id="theme-resume-txt"></span>
+  <button id="theme-resume-play">⏵ 续播</button>
+  <button class="tr-x" id="theme-resume-x" title="不再提示">✕</button>
+</div>
+
 <script src="vendor/three.r128.min.js"></script>
 <script src="vendor/gsap.min.js"></script>
 <script src="vendor/music-tempo.min.js"></script>
@@ -301,6 +334,7 @@ html[data-motion="off"] #boot-splash * { animation: none !important; }
 <script src="js/local/stage-adapter.js"></script>
 <script src="js/local/fx.js"></script>
 <script src="js/local/tagEditor.js"></script>
+<script src="js/local/wallpaper.js"></script><!-- V4.4：全局自定义壁纸（三主题共用，IndexedDB 存图） -->
 <script src="js/local/settings.js"></script>
 <script src="js/local/viz.js"></script>
 <script src="js/local/streaming.js"></script>

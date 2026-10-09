@@ -24,7 +24,7 @@ const state = {
   favorites: new Set(),   // 喜爱曲目路径集合
   tagCache: {},           // 排序用标签缓存（来自 store.metaCache）
   folderFilter: null,     // null=全部音乐 | 'favorites'=我的喜爱 | 文件夹路径
-  treeExpanded: new Set(),// 文件夹树展开状态
+  // V4.4：treeExpanded 已随 renderFolderTree 一并删除（#folder-tree 自 V1.1.0 不存在）
   tagLoading: false,      // 批量标签加载中
   viewMode: 'tree',       // 'tree'=平铺文件夹导航 | 'grid'=文件夹图标网格
   gridPath: null,         // 网格视图当前所在文件夹（null=根层级）
@@ -65,7 +65,6 @@ async function loadLibrary() {
     state.folderFilter = null;
   }
   renderFolders();
-  renderFolderTree();
   renderCurrentView();
 }
 
@@ -75,11 +74,11 @@ function renderFolders() {
   for (const f of state.library.folders) {
     const row = document.createElement('div');
     row.className = 'folder-chip';
-    row.innerHTML = `<span title="${f}">📁 ${f}</span><b title="移除">✕</b>`;
+    row.innerHTML = `<span title="${escHtml(f)}" class="chip-label">${ico('folder', 12)} ${escHtml(f)}</span><b title="移除">${ico('close', 10)}</b>`; // V4.4：路径转义 + SVG 图标
     row.querySelector('b').onclick = async () => {
       state.library = await window.mine.removeFolder(f);
       if (state.folderFilter === f || isPathUnder(state.folderFilter, f)) state.folderFilter = null;
-      renderFolders(); renderFolderTree(); renderCurrentView();
+      renderFolders(); renderCurrentView();
     };
     box.appendChild(row);
   }
@@ -120,64 +119,8 @@ function buildFolderTree() {
   return roots;
 }
 
-function renderFolderTree() {
-  const box = $('#folder-tree');
-  if (!box) return; // V1.1.0：粒子舞台树已替换为平铺导航；FB2K 侧走自己的 rebuildTree
-  box.innerHTML = '';
-  const frag = document.createDocumentFragment();
-
-  // 固定节点：全部音乐 / 我的喜爱
-  const mkSpecial = (key, icon, label, count) => {
-    const row = document.createElement('div');
-    row.className = 'tree-node special' + (state.folderFilter === key ? ' active' : '');
-    row.style.paddingLeft = '14px';
-    const ic = document.createElement('span'); ic.className = 'tree-icon'; ic.textContent = icon;
-    const nm = document.createElement('span'); nm.className = 'tree-name'; nm.textContent = label;
-    const ct = document.createElement('span'); ct.className = 'tree-count'; ct.textContent = count;
-    row.append(ic, nm, ct);
-    row.onclick = () => { state.folderFilter = key; renderFolderTree(); renderTracks(); };
-    frag.appendChild(row);
-  };
-  mkSpecial(null, '🎵', '全部音乐', state.library.tracks.length);
-  mkSpecial('favorites', '♥', '我的喜爱', state.favorites.size);
-
-  // 文件夹节点（递归）
-  const renderNode = (node, depth) => {
-    const hasKids = node.children.size > 0;
-    const expanded = state.treeExpanded.has(node.path);
-    const row = document.createElement('div');
-    row.className = 'tree-node' + (state.folderFilter === node.path ? ' active' : '');
-    row.style.paddingLeft = (14 + depth * 14) + 'px';
-    row.title = node.path;
-    const arrow = document.createElement('span');
-    arrow.className = 'tree-arrow' + (hasKids ? (expanded ? ' open' : '') : ' leaf');
-    arrow.textContent = hasKids ? '▸' : '';
-    arrow.onclick = (e) => {
-      e.stopPropagation();
-      if (expanded) state.treeExpanded.delete(node.path); else state.treeExpanded.add(node.path);
-      renderFolderTree();
-    };
-    const ic = document.createElement('span'); ic.className = 'tree-icon'; ic.textContent = expanded && hasKids ? '📂' : '📁';
-    const nm = document.createElement('span'); nm.className = 'tree-name'; nm.textContent = node.name;
-    const ct = document.createElement('span'); ct.className = 'tree-count'; ct.textContent = node.count;
-    row.append(arrow, ic, nm, ct);
-    row.onclick = () => {
-      state.folderFilter = state.folderFilter === node.path ? null : node.path;
-      renderFolderTree(); renderTracks();
-    };
-    frag.appendChild(row);
-    if (hasKids && expanded) {
-      const kids = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin'));
-      for (const k of kids) renderNode(k, depth + 1);
-    }
-  };
-
-  for (const root of buildFolderTree()) {
-    if (!state.treeExpanded.has(root.path) && state.treeExpanded.size === 0) state.treeExpanded.add(root.path);
-    renderNode(root, 0);
-  }
-  box.appendChild(frag);
-}
+/* V4.4：renderFolderTree 已删除——#folder-tree 在 V1.1.0 就从 HTML 移除（函数体永不可达，
+ * 但 9 处调用空转了三年）；配套 .tree-node CSS 与 state.treeExpanded 一并清除。 */
 
 /* ---------------- 文件夹图标网格视图 ---------------- */
 function findTreeNode(roots, target) {
@@ -231,19 +174,19 @@ function flatFolderRows() {
   const roots = buildFolderTree();
   const cmpZh = (a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin');
   const rows = [
-    { special: 'all', name: '全部音乐', sub: '曲库全部曲目', count: state.library.tracks.length, icon: '🎵' },
-    { special: 'fav', name: '我的喜爱', sub: '收藏的曲目', count: state.favorites.size, icon: '♥' },
+    { special: 'all', name: '全部音乐', sub: '曲库全部曲目', count: state.library.tracks.length, icon: 'music' },
+    { special: 'fav', name: '我的喜爱', sub: '收藏的曲目', count: state.favorites.size, icon: 'heartFill' },
     // Pro beat0.0.1：智能列表 + 媒体库聚合入口
     ...(window.anniePro ? window.anniePro.legacySpecialRows() : []),
   ];
   const walkKids = (nodes, rootName) => {
     nodes.sort(cmpZh).forEach(k => {
-      rows.push({ path: k.path, name: k.name, sub: rootName, count: k.count, icon: '📁' });
+      rows.push({ path: k.path, name: k.name, sub: rootName, count: k.count, icon: 'folder' });
       walkKids([...k.children.values()], rootName);
     });
   };
   roots.forEach(r => {
-    rows.push({ path: r.path, name: r.name, sub: '主文件夹', count: r.count, icon: '📂', isRoot: true });
+    rows.push({ path: r.path, name: r.name, sub: '主文件夹', count: r.count, icon: 'folderOpen', isRoot: true });
     walkKids([...r.children.values()], r.name);
   });
   const kw = $('#search').value.trim().toLowerCase();
@@ -260,7 +203,7 @@ function renderFlatFolders() {
   rows.forEach(r => {
     const row = document.createElement('div');
     row.className = 'folder-row' + (r.special ? ' special' : '');
-    row.innerHTML = `<span class="f-icon">${r.icon}</span><div class="t-body"><div class="t-name">${r.name}</div></div><span class="f-root">${r.sub}</span><span class="f-count">${r.count} 首</span>`;
+    row.innerHTML = `<span class="f-icon">${ico(r.icon, 14)}</span><div class="t-body"><div class="t-name">${escHtml(r.name)}</div></div><span class="f-root">${escHtml(r.sub)}</span><span class="f-count">${r.count} 首</span>`; // V4.4：转义 + SVG 图标
     row.title = r.path || r.name;
     row.onclick = () => enterFolder(r);
     frag.appendChild(row);
@@ -323,6 +266,17 @@ function flashPlayingRowLegacy(attempts) {
   } else if ((attempts || 0) < 4) {
     setTimeout(() => flashPlayingRowLegacy((attempts || 0) + 1), 300);
   }
+}
+/* V4.4：播放行自动跟随（虚拟列表按行号回中；已可见则不打扰用户滚动） */
+function scrollPlayingIntoView() {
+  if (window.__legacyThemeHidden) return;
+  if (!lv || !lv.pathIdx || !state.currentPath) return;
+  const idx = lv.pathIdx.get(state.currentPath);
+  if (idx === undefined) return;
+  const box = $('#track-list');
+  const top = lv.pos[idx], h = box.clientHeight, st = box.scrollTop;
+  if (top >= st && top + LV_ROW_H <= st + h) return; // 已可见
+  box.scrollTop = Math.max(0, top - h / 2);
 }
 async function locatePlayingLegacy() {
   if (!state.currentPath) return false;
@@ -401,8 +355,8 @@ function renderFolderGrid() {
     card.className = 'grid-folder' + (hasKids ? ' has-kids' : '');
     card.title = n.path + (hasKids ? `\n包含 ${n.children.size} 个子文件夹` : '');
     card.innerHTML =
-      `<div class="gf-icon">${hasKids ? '🗂' : '📁'}${hasKids ? `<span class="gf-badge">${n.children.size}</span>` : ''}</div>` +
-      `<div class="gf-name">${n.name}</div>` +
+      `<div class="gf-icon">${ico(hasKids ? 'folderOpen' : 'folder', 30)}${hasKids ? `<span class="gf-badge">${n.children.size}</span>` : ''}</div>` + // V4.4：SVG 图标
+      `<div class="gf-name">${escHtml(n.name)}</div>` + // V4.4：转义
       `<div class="gf-sub">${hasKids ? n.children.size + ' 个子文件夹 · ' : ''}${n.count} 首</div>`;
     card.onclick = () => { state.gridPath = n.path; renderFolderGrid(); };
     frag.appendChild(card);
@@ -420,7 +374,7 @@ function renderFolderGrid() {
       const row = document.createElement('div');
       row.className = 'track-row' + (t.path === state.currentPath ? ' active' : '');
       const fav = state.favorites.has(t.path);
-      row.innerHTML = `<div class="t-body"><div class="t-name">${t.name.replace(/\.[^.]+$/, '')}</div><div class="t-sub">${t.dir}</div></div><span class="fav-btn${fav ? ' on' : ''}" title="${fav ? '取消喜爱' : '添加到喜爱'}">${fav ? '♥' : '♡'}</span>`;
+      row.innerHTML = `<div class="t-body"><div class="t-name">${escHtml(t.name.replace(/\.[^.]+$/, ''))}</div><div class="t-sub">${escHtml(t.dir)}</div></div><span class="fav-btn${fav ? ' on' : ''}" title="${fav ? '取消喜爱' : '添加到喜爱'}">${ico(fav ? 'heartFill' : 'heart', 13)}</span>`; // V4.4：转义 + SVG 图标
       row.querySelector('.fav-btn').onclick = (e) => { e.stopPropagation(); toggleFavorite(t.path); };
       row.onclick = () => { state.queue = tracks; playAt(i); };
       frag.appendChild(row);
@@ -561,7 +515,6 @@ async function toggleFavorite(trackPath) {
   const favs = await window.mine.toggleFavorite(trackPath);
   state.favorites = new Set(favs);
   state._favVer = (state._favVer || 0) + 1; // V3.1：收藏过滤视图缓存失效
-  renderFolderTree(); // 更新"我的喜爱"计数
   renderCurrentView();
   updateFavCurBtn(); // Plus：同步底栏收藏按钮
 }
@@ -583,17 +536,81 @@ function currentViewTracks() {
   return list;
 }
 
+/* V4.4：列表多选（对齐 AM 轻量模式——单击仍即播；Ctrl 切换/Shift 范围选不触发播放）。
+ * 集合存 path（翻页/重排/标签后台替换行节点后身份稳定），选中样式按 path 现算。 */
+const msSel = new Set(); // Set<path>
+let msAnchor = null;
+function refreshMsClasses() {
+  if (!lv || !lv.rowsEl) return;
+  lv.rowsEl.querySelectorAll('.track-row').forEach(r => r.classList.toggle('sel', msSel.has(r.dataset.path)));
+}
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* V4.4：SVG 图标体系（替换 Unicode 字符图标——🖵 等字符在部分字体无字形出豆腐块，
+ * 粗细/对齐随字体漂移不可控）。统一 24 viewBox / stroke 1.8 / currentColor，
+ * 颜色与尺寸由 CSS 上下文控制。顶层 const：playmode.js 等后加载脚本共享全局词法作用域。 */
+const ICONS = {
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.26.6.86 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.65 0-1.25.4-1.51 1z"/>',
+  min: '<path d="M5 12h14"/>',
+  max: '<rect x="5.5" y="5.5" width="13" height="13" rx="2"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  rescan: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/>',
+  chevsLeft: '<path d="M11 7l-5 5 5 5M18 7l-5 5 5 5"/>',
+  chevsRight: '<path d="M6 7l5 5-5 5M13 7l5 5-5 5"/>',
+  chevUp: '<path d="M6 15l6-6 6 6"/>',
+  arrowLeft: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
+  prev: '<path d="M19 20L9 12l10-8v16z" fill="currentColor" stroke="none"/><path d="M5.5 19V5"/>',
+  next: '<path d="M5 4l10 8-10 8V4z" fill="currentColor" stroke="none"/><path d="M18.5 5v14"/>',
+  play: '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
+  pause: '<rect x="6.5" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"/>',
+  heart: '<path d="M12 20.3l-1.45-1.32C5.4 14.36 2 11.28 2 7.5 2 4.42 4.42 2 7.5 2c1.74 0 3.41.81 4.5 2.09C13.09 2.81 14.76 2 16.5 2 19.58 2 22 4.42 22 7.5c0 3.78-3.4 6.86-8.55 11.54L12 20.3z"/>',
+  heartFill: '<path d="M12 20.3l-1.45-1.32C5.4 14.36 2 11.28 2 7.5 2 4.42 4.42 2 7.5 2c1.74 0 3.41.81 4.5 2.09C13.09 2.81 14.76 2 16.5 2 19.58 2 22 4.42 22 7.5c0 3.78-3.4 6.86-8.55 11.54L12 20.3z" fill="currentColor" stroke="none"/>',
+  locate: '<circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  chart: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  volume: '<path d="M11 5L6.5 9H3v6h3.5L11 19V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.4 5.8a9.2 9.2 0 0 1 0 12.4"/>',
+  headphones: '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.6"/><rect x="17" y="14" width="4" height="6" rx="1.6"/>',
+  expand: '<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  mini: '<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12.5" y="11.5" width="6" height="4.5" rx="1" fill="currentColor" stroke="none"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
+  folderOpen: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v1.5"/><path d="M3 7v10a2 2 0 0 0 2 2h13.2a2 2 0 0 0 1.94-1.5l1.5-6a1.5 1.5 0 0 0-1.45-1.86H6.8a2 2 0 0 0-1.94 1.5L3.6 17"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  // 播放模式（playmode.js 动态切换）
+  modeAllSeq: '<path d="M4 6h8M4 12h8M4 18h6"/><path d="M15 14l5 3-5 3z" fill="currentColor" stroke="none"/>',
+  modeListSeq: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  modeAllRand: '<path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/>',
+  modeListRand: '<path d="M4 7h4M4 17h4"/><path d="M14 4h5v5"/><path d="M19 4L4 19"/><path d="M19 20v-5h-5"/><path d="M13 14l6 6"/>',
+  modeRepeatOne: '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/><path d="M10.8 10h1.3v5" stroke-width="1.7"/>',
+  // 智能列表/聚合入口（pro.js legacySpecialRows）与流媒体下载
+  fire: '<path d="M12 22c4.4 0 7-2.9 7-6.5 0-2.5-1.5-4.7-3-6.5-.4 1.2-1.2 2-2.2 2.4.2-2.3-.8-5.4-3.3-7.4.2 3-1.2 4.3-2.5 5.8C6.6 11.5 5 13.4 5 15.5 5 19.1 7.6 22 12 22z"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
+  sparkles: '<path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8L12 4z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
+  mic: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>',
+  download: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/>'
+};
+function ico(name, size) {
+  return '<svg viewBox="0 0 24 24" width="' + (size || 16) + '" height="' + (size || 16) + '" fill="none" stroke="currentColor"'
+    + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || '') + '</svg>';
+}
+
 /* EXP 7.28：曲目行构建（虚拟滚动复用）
  * Plus：点击播放改为容器级 pointerdown/pointerup 委托（见 virtualRenderList）。
  * 原因：标签后台加载会替换行节点，若恰好发生在按下与抬起之间，per-row onclick
  * 永远不会派发（节点已换）；委托在容器上，抬起时命中同路径新节点仍可播放。 */
 function buildTrackRow(t, qi, queueRef) {
   const row = document.createElement('div');
-  row.className = 'track-row' + (t.path === state.currentPath ? ' active' : '');
+  row.className = 'track-row' + (t.path === state.currentPath ? ' active' : '') + (msSel.has(t.path) ? ' sel' : '');
   row.dataset.path = t.path;
   row.dataset.qi = qi;
   const fav = state.favorites.has(t.path);
-  row.innerHTML = `<div class="t-body"><div class="t-name">${t.name.replace(/\.[^.]+$/, '')}</div><div class="t-sub">${t.dir}</div></div><span class="fav-btn${fav ? ' on' : ''}" title="${fav ? '取消喜爱' : '添加到喜爱'}">${fav ? '♥' : '♡'}</span>`;
+  // V4.4：行信息增强——右侧时长列（metaCache 标签后台就绪后随重绘出现）
+  const mc = state.library.metaCache && state.library.metaCache[t.path];
+  const dur = mc && mc.duration ? fmtTime(mc.duration) : '';
+  row.innerHTML = `<div class="t-body"><div class="t-name">${escHtml(t.name.replace(/\.[^.]+$/, ''))}</div><div class="t-sub">${escHtml(t.dir)}</div></div><span class="t-dur">${dur}</span><span class="fav-btn${fav ? ' on' : ''}" title="${fav ? '取消喜爱' : '添加到喜爱'}">${ico(fav ? 'heartFill' : 'heart', 13)}</span>`;
   row.querySelector('.fav-btn').onclick = (e) => { e.stopPropagation(); toggleFavorite(t.path); };
   return row;
 }
@@ -621,10 +638,31 @@ function virtualRenderList(rows) {
     box.addEventListener('pointerup', (e) => {
       const row = e.target.closest('.track-row');
       if (row && pressPath && row.dataset.path === pressPath && !e.target.closest('.fav-btn')) {
-        const i = lv.pathIdx.get(row.dataset.path); // SVLX 同步：Map O(1) 取代 findIndex 线性扫描
-        if (i !== undefined) { state.queue = lv.rows[i].queueRef; playAt(lv.rows[i].qi); }
+        const p = row.dataset.path;
+        // V4.4：多选手势优先（Ctrl 切换 / Shift 范围选，均不触发播放）；普通单击保持即播
+        if (e.ctrlKey || e.metaKey) {
+          if (msSel.has(p)) msSel.delete(p); else msSel.add(p);
+          msAnchor = p; refreshMsClasses();
+        } else if (e.shiftKey && msAnchor && lv.pathIdx.has(msAnchor) && lv.pathIdx.has(p)) {
+          const a = lv.pathIdx.get(msAnchor), b = lv.pathIdx.get(p);
+          const lo = Math.min(a, b), hi = Math.max(a, b);
+          msSel.clear();
+          for (let ri = lo; ri <= hi; ri++) { const rr = lv.rows[ri]; if (rr.type === 'track') msSel.add(rr.t.path); }
+          refreshMsClasses();
+        } else {
+          msSel.clear(); msSel.add(p); msAnchor = p; refreshMsClasses(); // 播放行即选中
+          const i = lv.pathIdx.get(p); // SVLX 同步：Map O(1) 取代 findIndex 线性扫描
+          if (i !== undefined) { state.queue = lv.rows[i].queueRef; playAt(lv.rows[i].qi); }
+        }
       }
       pressPath = null;
+    });
+    // V4.4：曲目右键菜单（共享弹层模式，对齐 FB2K）
+    box.addEventListener('contextmenu', (e) => {
+      const row = e.target.closest('.track-row');
+      if (!row) return;
+      e.preventDefault();
+      openTrackCtxMenu(e.clientX, e.clientY, row.dataset.path);
     });
   }
   lv.rows = rows;
@@ -662,6 +700,87 @@ function renderVirtualWindow() {
   }
   lv.rowsEl.innerHTML = '';
   lv.rowsEl.appendChild(frag);
+}
+
+/* V4.4：曲目右键菜单（主题内单一共享弹层 + 一次注册外点关闭，对齐 FB2K ensureCtxPop 模式；
+ * AM 的 R.pop 挂在隐藏 #am-root 内，粒子舞台不可复用）。 */
+let lvPop = null, lvSubPop = null;
+function closeLvSubPop() { if (lvSubPop) lvSubPop.classList.remove('on'); }
+function closeLvPop() { if (lvPop) lvPop.classList.remove('on'); closeLvSubPop(); }
+function ensureLvPop() {
+  if (!lvPop) {
+    lvPop = document.createElement('div');
+    lvPop.id = 'lv-pop';
+    document.body.appendChild(lvPop);
+    document.addEventListener('pointerdown', (e) => {
+      if (lvPop.classList.contains('on')
+        && !lvPop.contains(e.target) && !(lvSubPop && lvSubPop.contains(e.target))) closeLvPop();
+    }, true);
+  }
+  return lvPop;
+}
+function lvPopItem(parent, label, fn, hasSub, iconName) {
+  const b = document.createElement('button');
+  b.className = 'lv-pop-item';
+  b.innerHTML = (iconName ? ico(iconName, 14) : '') + '<span class="lv-pop-label">' + escHtml(label) + '</span>' + (hasSub ? '<span class="lv-pop-arrow">▸</span>' : '');
+  b.onmouseenter = () => closeLvSubPop();
+  if (fn) b.onclick = () => { closeLvPop(); fn(); };
+  parent.appendChild(b);
+  return b;
+}
+function openPlSubMenu(anchorBtn, paths) {
+  if (!lvSubPop) {
+    lvSubPop = document.createElement('div');
+    lvSubPop.id = 'lv-pop-sub';
+    document.body.appendChild(lvSubPop);
+  }
+  window.mine.playlists().then(pls => {
+    lvSubPop.innerHTML = '';
+    if (!pls || !pls.length) {
+      const d = document.createElement('div');
+      d.className = 'lv-pop-empty';
+      d.textContent = '暂无本地歌单（AM/FB2K 侧栏可新建）';
+      lvSubPop.appendChild(d);
+    } else {
+      pls.forEach(p => {
+        lvPopItem(lvSubPop, `${p.name}（${p.paths.length}）`, () => {
+          window.mine.playlistAdd(p.id, paths).then(() => proToast(`已加入歌单「${p.name}」（${paths.length} 首）`)).catch(() => { });
+        });
+      });
+    }
+    const r = anchorBtn.getBoundingClientRect();
+    lvSubPop.classList.add('on');
+    const sw = lvSubPop.offsetWidth, sh = lvSubPop.offsetHeight;
+    let sx = r.right + 2, sy = r.top;
+    if (sx + sw > innerWidth - 8) sx = Math.max(8, r.left - sw - 2);
+    if (sy + sh > innerHeight - 8) sy = Math.max(8, innerHeight - sh - 8);
+    lvSubPop.style.left = sx + 'px'; lvSubPop.style.top = sy + 'px';
+  }).catch(() => { });
+}
+function openTrackCtxMenu(x, y, path) {
+  if (!lv || !lv.pathIdx) return;
+  if (!msSel.has(path)) { msSel.clear(); msSel.add(path); msAnchor = path; refreshMsClasses(); }
+  const sel = [...msSel];
+  const n = sel.length;
+  const allFav = sel.every(p => state.favorites.has(p));
+  const pop = ensureLvPop();
+  pop.innerHTML = '';
+  lvPopItem(pop, '播放', () => {
+    const i = lv.pathIdx.get(path);
+    if (i !== undefined) { state.queue = lv.rows[i].queueRef; playAt(lv.rows[i].qi); }
+  }, false, 'play');
+  lvPopItem(pop, allFav ? `取消喜爱（${n} 首）` : `加入喜爱（${n} 首）`, () => {
+    sel.forEach(p => { if (state.favorites.has(p) === allFav) toggleFavorite(p); });
+    proToast(allFav ? `已取消喜爱 ${n} 首` : `已加入喜爱 ${n} 首`);
+  }, false, allFav ? 'heart' : 'heartFill');
+  const plBtn = lvPopItem(pop, `加到歌单（${n} 首）`, null, true, 'music');
+  plBtn.onmouseenter = () => openPlSubMenu(plBtn, sel);
+  plBtn.onclick = () => openPlSubMenu(plBtn, sel); // 触屏无 hover，点击同样展开
+  lvPopItem(pop, '在文件夹中显示', () => { if (window.mine.showItemInFolder) window.mine.showItemInFolder(path); }, false, 'folderOpen');
+  pop.classList.add('on');
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(x, innerWidth - pw - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(y, innerHeight - ph - 8)) + 'px';
 }
 
 async function renderTracks() {
@@ -741,12 +860,12 @@ function scanProgressUI(text, cancellable) {
 }
 function renderScanIncremental() { // 批次到达时节流重绘，避免阻塞交互
   clearTimeout(scanRenderTimer);
-  scanRenderTimer = setTimeout(() => { renderFolderTree(); renderCurrentView(); }, 250);
+  scanRenderTimer = setTimeout(() => { renderCurrentView(); }, 250);
 }
 function startLibraryScan() {
   state.library.tracks = [];
   state.libIndex.clear();
-  renderFolderTree(); renderCurrentView();
+  renderCurrentView();
   scanProgressUI('扫描中…已发现 0 首', true);
   window.mine.scanStart().catch(() => scanProgressUI(null));
 }
@@ -765,14 +884,14 @@ window.mine.onScanEvent((m) => {
     for (const t of (m.tracks || [])) {
       if (t.cueMeta) state.library.metaCache[t.path] = { title: t.cueMeta.title, artist: t.cueMeta.artist, album: t.cueMeta.album };
     }
-    renderFolderTree(); renderCurrentView();
+    renderCurrentView();
   } else if (m.type === 'done' || m.type === 'cancelled' || m.type === 'error') {
     scanProgressUI(null);
     if (m.fallback || m.type === 'error') {
       // 同步兜底 / Worker 崩溃：tracks 已在主进程入库，重新拉取
-      window.mine.getLibrary().then(lib => { state.library = lib; rebuildLibIndex(); renderFolderTree(); renderCurrentView(); });
+      window.mine.getLibrary().then(lib => { state.library = lib; rebuildLibIndex(); renderCurrentView(); });
     } else {
-      renderFolderTree(); renderCurrentView();
+      renderCurrentView();
     }
     // V4.3.22：扫描自动识别到 foobar2000 .fpl 播放列表——刷新 AM 侧栏并提示
     if (m.fpl && (m.fpl.added || m.fpl.updated)) {
@@ -791,7 +910,7 @@ window.mine.onScanEvent((m) => {
 
 $('#btn-add-folder').onclick = async () => {
   state.library = await window.mine.pickFolder();
-  renderFolders(); renderFolderTree(); renderCurrentView();
+  renderFolders(); renderCurrentView();
   startLibraryScan(); // EXP 7.28：Worker 异步扫描，不再阻塞主线程
 };
 $('#btn-rescan').onclick = () => startLibraryScan();
@@ -805,7 +924,8 @@ $('#search').addEventListener('keydown', (e) => {
 
 /* ---------------- 侧栏收放 + 排序 ---------------- */
 const SIDEBAR_MIN_W = 120;
-const sidebarMaxW = () => Math.max(SIDEBAR_MIN_W, Math.round(window.innerWidth * 0.3));
+// V4.4：上限与 CSS clamp(240px,24vw,420px) 统一——此前 CSS 380px vs JS 30vw 宽屏互相矛盾
+const sidebarMaxW = () => Math.max(SIDEBAR_MIN_W, Math.min(420, Math.round(window.innerWidth * 0.3)));
 const clampSidebarW = (w) => Math.max(SIDEBAR_MIN_W, Math.min(sidebarMaxW(), Math.round(w)));
 function applySidebarWidth(w) { $('#sidebar').style.width = clampSidebarW(w) + 'px'; }
 
@@ -1004,7 +1124,9 @@ async function playAt(i, offsetSec = 0) {
   if (state.seekPending) { state.seekPending = false; clearTimeout(state.seekTimer); }
   // V1.1.5：取消流媒体侧未执行的切歌合并——否则用户点本地曲目后 150ms 定时器仍会开火，
   // playStreamAt 劫持播放（把刚播的本地曲目换成流媒体曲目）
-  if (typeof cancelStreamSwitch === 'function') cancelStreamSwitch();
+  // V4.4：改走 window.annieStream.cancelSwitch（旧代码引用的全局 cancelStreamSwitch 是
+  // streaming.js IIFE 局部函数，typeof 守卫恒 false，从未生效）；同时作废在途 URL 解析回调
+  if (window.annieStream && typeof window.annieStream.cancelSwitch === 'function') window.annieStream.cancelSwitch();
   state.index = i;
   state.currentPath = t.path;
   state.currentStream = null;
@@ -1053,6 +1175,8 @@ async function playAt(i, offsetSec = 0) {
       if ((wantStage || wantFb2k) && (state.currentPath === _p || state.currentStream?.url === _p)) window.annieViz.analyze(_p, null);
     }, 1200);
   }
+  // V4.4：切歌自动跟随——播放行滚出可视区时回中（自然连播不再"停在半路"）
+  setTimeout(scrollPlayingIntoView, 120);
 }
 
 /* ---------------- 流媒体播放入口（由 streaming.js 调用） ---------------- */
@@ -1106,9 +1230,17 @@ window.annieStreamPlay = async function (track) {
   if (track.cover) {
     if (/^https?:\/\//i.test(track.cover) && window.mine.streamCoverProxy) {
       window.mine.streamCoverProxy(track.cover).then(r => {
-        if (r && r.url && state.currentStream === track) $('#thumb-cover').src = r.url;
+        if (r && r.url && state.currentStream === track) {
+          $('#thumb-cover').src = r.url;
+          document.body.style.setProperty('--lv-bgimage', `url("${r.url}")`); // V4.4+：氛围背景（代理后 dataURL）
+        }
       }).catch(() => { });
-    } else $('#thumb-cover').src = track.cover;
+    } else {
+      $('#thumb-cover').src = track.cover;
+      document.body.style.setProperty('--lv-bgimage', `url("${track.cover}")`); // V4.4+
+    }
+  } else {
+    document.body.style.setProperty('--lv-bgimage', 'none'); // V4.4+：无封面回落极光层
   }
   if (track.duration) { $('#t-total').textContent = fmtTime(track.duration); }
   // 流媒体不做可视化分析：analyze 会让 ffmpeg 全速下载整首网络流，
@@ -1130,6 +1262,8 @@ async function showMeta(p) {
   // V1.1.8：本地无封面时清除残留——旧实现只在新封面存在时赋值，
   // 流媒体带封面 → 本地无封面切换时，上一首封面会残留不消失
   else $('#thumb-cover').removeAttribute('src');
+  // V4.4+：封面氛围渗入全窗口背景（AM 同款 blur 90px 大模糊；base64 dataURL 无引号/括号，内联安全）
+  document.body.style.setProperty('--lv-bgimage', m.cover ? `url("${m.cover}")` : 'none');
   if (m.duration) { state.duration = m.duration; $('#t-total').textContent = fmtTime(m.duration); }
   // Plus：切歌微交互（封面交叉淡入 + 文本逐行滑入）
   const np = $('#np-overlay');
@@ -1150,7 +1284,12 @@ window.mine.onEngineEvent((event, d) => {
         state.position = Math.max(0, d.seconds - cue.start);
         if (cue.end != null && d.seconds >= cue.end - 0.12) {
           if (!state.seeking) updateProgress();
-          playAt(state.index + 1);
+          /* V4.4：分轨到界=自然播完——交播放模式接管（单曲循环/睡眠定时对 CUE 分轨生效，
+           * 旧实现直接 playAt(index+1) 全部绕过）；队尾无下一曲时显式停引擎
+           * （旧实现静默 return，引擎继续解码底层整轨，越界音频漏出直到文件结束） */
+          if (window.annieListenStats) window.annieListenStats.endSession();
+          if (window.annieAutoNext && window.annieAutoNext()) { /* 播放模式/定时已接管 */ }
+          else { try { window.mine.engine('stop'); } catch (e) { } } // state 事件会同步 UI
           break;
         }
       } else {
@@ -1188,7 +1327,7 @@ window.mine.onEngineEvent((event, d) => {
       break;
     case 'state':
       state.playing = d.state === 'playing';
-      $('#btn-play').textContent = state.playing ? '⏸' : '▶';
+      $('#btn-play').innerHTML = ico(state.playing ? 'pause' : 'play', 20); // V4.4：SVG 图标
       reportPlayerState(); // V3.5.8：同步任务栏缩略图图标
       { const bp = $('#btn-play'); bp.classList.remove('pop'); void bp.offsetWidth; bp.classList.add('pop'); } // Plus：播放键回弹
       // V1.1.7：暂停→停止插值（position 冻结）；恢复→重置锚点（下一 position 事件重新起算）
@@ -1290,7 +1429,8 @@ function reportPlayerState() {
 }
 
 function setFormatChips(chips) {
-  $('#np-format').innerHTML = chips.map(c => `<span class="fmt-chip ${c.cls}">${c.text}</span>`).join('');
+  // V4.4：设备名/codec 转义（含 <&" 的设备名会破坏 DOM）
+  $('#np-format').innerHTML = chips.map(c => `<span class="fmt-chip ${c.cls}">${escHtml(c.text)}</span>`).join('');
 }
 
 /* ---------------- 传输控制 ---------------- */
@@ -1450,7 +1590,7 @@ function updateFavCurBtn() {
   const b = $('#btn-fav-cur');
   if (!b) return;
   const on = !!(state.currentPath && state.favorites.has(state.currentPath));
-  b.textContent = on ? '♥' : '♡';
+  b.innerHTML = ico(on ? 'heartFill' : 'heart', 16); // V4.4：SVG 图标
   b.classList.toggle('on', on);
 }
 $('#btn-fav-cur').onclick = () => {
@@ -1468,9 +1608,13 @@ $('#btn-min').onclick = () => window.mine.winMin();
 $('#btn-max').onclick = () => window.mine.winMax();
 $('#btn-close').onclick = () => window.mine.winClose();
 
-/* ---------------- 快捷键 ---------------- */
+/* ---------------- 快捷键（粒子舞台/AM 主题；FB2K 激活时由 fb2k.js 自管，此处让位避免双击/双seek） ---------------- */
 window.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  // V4.4：补 TEXTAREA / contenteditable / IME 组词排除——旧实现只排除 INPUT/SELECT，
+  // AM 歌单行内重命名（contenteditable DIV）敲空格触发播放暂停、方向键变 seek
+  const tg = e.target;
+  if (tg.tagName === 'INPUT' || tg.tagName === 'SELECT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable || e.isComposing) return;
+  if (document.documentElement.getAttribute('data-theme') === 'fb2k') return; // 主题独立：FB2K 用自己的快捷键层
   if (e.code === 'Space') { e.preventDefault(); $('#btn-play').click(); }
   // V1.1.5：方向键 seek 复用 seekPending 保护——旧实现直接发 seek 无保护，
   // 引擎 seek 期间旧 position 事件把进度条拉回（乱跳）
@@ -1490,6 +1634,20 @@ window.addEventListener('keydown', (e) => {
 
 /* ---------------- 启动 ---------------- */
 (async function boot() {
+  // V4.4：SVG 图标填充（data-ico 占位 → 内联 SVG；按钮已有文字内容时图标插到最前）
+  document.querySelectorAll('[data-ico]').forEach(b => {
+    b.insertAdjacentHTML('afterbegin', ico(b.dataset.ico, +(b.dataset.icoSize || 16)));
+  });
+  // V4.4：标题栏版本号动态填充（原 HTML 写死 1.2.0 与实际版本脱节；proUi 连击调试入口保留）
+  try {
+    const v = await window.mine.appVersion();
+    const tbv = document.querySelector('.tb-ver');
+    if (tbv && v) tbv.textContent = 'V' + v;
+  } catch { }
+  // V4.4：#btn-npf/#btn-mini 内联 onclick 清除（统一 addEventListener 风格）
+  const npfBtn = $('#btn-npf'), miniBtn = $('#btn-mini');
+  if (npfBtn) npfBtn.addEventListener('click', () => { if (window.annieProUi) annieProUi.toggleNpf(); });
+  if (miniBtn) miniBtn.addEventListener('click', () => { if (window.annieProUi) annieProUi.toggleMini(); });
   // ffmpeg 可用性预检
   try {
     const info = await window.mine.engine('engine.info');

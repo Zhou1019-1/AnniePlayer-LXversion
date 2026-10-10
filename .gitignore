@@ -19,13 +19,6 @@ engine/tools/*
 !engine/tools/sacd_extract.exe
 !engine/tools/sacd_extract.cfg
 
-# ---- AnnieFlyout 伴侣进程（源码入库见 flyout/；构建产物与上游克隆缓存不入库）----
-flyout/publish/
-flyout/publish-debug/
-flyout/**/bin/
-flyout/**/obj/
-_flyout-src/
-
 # ---- AnnieEngine 源码构建产物（源码本身入库，见 engine/src/）----
 engine/src/bin/
 engine/src/obj/

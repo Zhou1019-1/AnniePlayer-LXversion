@@ -48,8 +48,15 @@
     QZ.busy = true; QZ.err = ''; refresh();
     window.mine.qobuzParseUrl(text).then(function (r) {
       QZ.busy = false;
-      QZ.parsed = r;
       inp.value = '';
+      // 专辑/歌单：解析成功直接进详情视图（曲目列表可逐首播放/下载，顶部有「下载全部」），不再只挂下载横幅
+      if ((r.kind === 'album' || r.kind === 'playlist') && r.info) {
+        QZ.parsed = null;
+        QZ.detail = { kind: r.kind, id: r.id, info: r.info, tracks: r.tracks };
+        refresh();
+        return;
+      }
+      QZ.parsed = r; // 单曲：保留横幅一键下载
       refresh();
     }).catch(function (e) { QZ.busy = false; setErr(e); refresh(); });
   }

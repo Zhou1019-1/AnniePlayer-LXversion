@@ -610,31 +610,6 @@
       };
     } else hkInput.disabled = true;
 
-    /* —— V4.4：任务栏小组件 + 切歌弹窗（AnnieFlyout 伴侣进程，基于 FluentFlyout GPL-3.0） ——
-     * 数据走 SMTC 通道（mediaSession.js 已在推），主进程只负责拉起/杀掉进程。 */
-    var sFly = section(pgGeneral, '任务栏小组件');
-    var flyRow = markItem(el('label', 'set-check'), '任务栏小组件 切歌弹窗 媒体弹窗 任务栏封面 fluent flyout taskbar widget');
-    var flyInput = document.createElement('input');
-    flyInput.type = 'checkbox';
-    flyRow.appendChild(flyInput);
-    flyRow.appendChild(el('span', '', '任务栏媒体小组件 + 切歌弹窗（FluentFlyout 风格）'));
-    sFly.appendChild(flyRow);
-    sFly.appendChild(el('div', 'set-hint', '开启后任务栏显示封面与曲名（可调出播放控制），切歌/按媒体键时屏幕角落弹出媒体卡片；托盘区有它的图标可细调样式。独占输出下也能用。'));
-    var flyHint = el('div', 'set-hint', '');
-    sFly.appendChild(flyHint);
-    if (window.mine.flyoutGet) {
-      window.mine.flyoutGet().then(function (r) {
-        flyInput.checked = !!(r && r.enabled);
-        if (r && !r.available) flyHint.textContent = '⚠ 未找到 AnnieFlyout.exe（dev 环境需先在 flyout/ 目录编译发布）';
-      }).catch(function () { });
-      flyInput.onchange = function () {
-        window.mine.flyoutSet(flyInput.checked).then(function (ok) {
-          if (flyInput.checked && !ok) { flyHint.textContent = '⚠ 启动失败：未找到 AnnieFlyout.exe'; flyInput.checked = false; }
-          else flyHint.textContent = '';
-        }).catch(function () { });
-      };
-    } else flyInput.disabled = true;
-
     // —— V4.3.12：局域网手机遥控（脑暴 9.1） ——
     var sRm = section(pgGeneral, '手机遥控');
     var rmRow = markItem(el('label', 'set-check'), '手机遥控 局域网 遥控 配对 remote phone lan pair');
@@ -1758,6 +1733,8 @@
     lsCheckRow(sMatch, '保存歌词（旁挂 .lrc）', 'annieplayer.match.def.lrc', true, null, '在线匹配 保存歌词 lrc');
     lsCheckRow(sMatch, '保存封面（cover.jpg）', 'annieplayer.match.def.cover', true, null, '在线匹配 保存封面 cover');
     lsCheckRow(sMatch, '同时嵌入文件标签', 'annieplayer.match.def.embed', false, null, '在线匹配 嵌入标签 embed');
+    lsCheckRow(sMatch, '播放时自动在线补齐缺失歌词', 'annieplayer.lrc.autofetch', true, null, '播放时自动补齐歌词 自动在线歌词 实时歌词 auto lyric fetch');
+    sMatch.appendChild(el('div', 'set-hint', '自动补齐：播放到无歌词的本地歌曲时实时五平台匹配（≥80% 取最高分），歌词与封面仅用于本次显示、不写盘；要写盘请用右键「在线匹配」或下方批量匹配。CUE/ISO 分轨不自动匹配。'));
     sMatch.appendChild(matchHint);
 
     // —— V4.3.4：批量匹配歌词（≥80% 自动存旁挂 .lrc；整个曲库 / 文件夹） ——
@@ -2766,6 +2743,77 @@
           dirVal.textContent = dir; dirVal.title = dir;
         } catch { }
       };
+    })();
+
+    // V4.4：流媒体播放缓存（边播边存 + LRU 上限；目录/大小自定义，主进程 streamCache.js 持久化）
+    (function () {
+      if (!window.mine || !window.mine.streamCacheStats) return;
+      var sc = section(pgDownload, '播放缓存（在线播放）');
+      var st0 = { enabled: true, maxMB: 2048, dir: '', custom: false, count: 0, totalMB: 0 };
+      var refs = {};
+      function refreshStats() {
+        window.mine.streamCacheStats().then(function (s) { if (s) { st0 = s; apply(); } }).catch(function () { });
+      }
+      function apply() {
+        if (refs.en) refs.en.checked = !!st0.enabled;
+        if (refs.dir) { refs.dir.textContent = st0.dir + (st0.custom ? '' : '（默认）'); refs.dir.title = st0.dir; }
+        if (refs.max) refs.max.value = String(st0.maxMB);
+        if (refs.usage) refs.usage.textContent = '已缓存 ' + st0.count + ' 首 · 占用 ' + st0.totalMB + ' MB / 上限 ' + st0.maxMB + ' MB';
+      }
+      // 开关
+      var r1 = markItem(el('div', 'set-row'), '播放缓存 在线播放 边播边存 cache 流媒体');
+      var l1 = el('div');
+      l1.appendChild(el('div', '', '启用播放缓存'));
+      l1.appendChild(el('div', 'set-hint', '在线播放时后台把整首存到本地，下次再播直接解码缓存（秒开、省流量）；超出上限自动清理最久未播的'));
+      r1.appendChild(l1);
+      refs.en = document.createElement('input');
+      refs.en.type = 'checkbox'; refs.en.checked = true;
+      refs.en.onchange = function () { window.mine.streamCacheSetCfg({ enabled: refs.en.checked }).then(refreshStats).catch(function () { }); };
+      r1.appendChild(refs.en);
+      sc.appendChild(r1);
+      // 缓存目录
+      var r2 = markItem(el('div', 'set-row'), '缓存目录 缓存位置 cache dir 播放缓存');
+      var l2 = el('div');
+      l2.appendChild(el('div', '', '缓存目录'));
+      l2.appendChild(el('div', 'set-hint', '默认在用户数据目录下；更改后旧目录文件不迁移（可手动删除）'));
+      r2.appendChild(l2);
+      var card = el('div', 'set-dl-card');
+      refs.dir = el('div', 'set-dl-dir', '读取中…');
+      card.appendChild(refs.dir);
+      var foot = el('div', 'set-dl-foot');
+      var btnRow = el('div', 'set-dl-btns');
+      var bChg = el('button', 'eq-preset', '更改');
+      var bDef = el('button', 'eq-preset', '默认');
+      bChg.style.cssText = 'border-radius:7px;padding:4px 12px;font-size:12px;border:1px solid var(--line);background:var(--bg3);color:var(--text);cursor:pointer';
+      bDef.style.cssText = bChg.style.cssText;
+      bChg.onclick = function () { window.mine.streamCachePickDir().then(function (d) { if (d) refreshStats(); }).catch(function () { }); };
+      bDef.onclick = function () { window.mine.streamCacheSetCfg({ dir: '' }).then(refreshStats).catch(function () { }); };
+      btnRow.appendChild(bChg); btnRow.appendChild(bDef);
+      foot.appendChild(btnRow);
+      card.appendChild(foot);
+      r2.appendChild(card);
+      sc.appendChild(r2);
+      // 上限 + 清空
+      var r3 = markItem(el('div', 'set-row'), '缓存上限 缓存大小 cache size limit 播放缓存 清空');
+      var l3 = el('div');
+      l3.appendChild(el('div', '', '缓存上限'));
+      refs.usage = el('div', 'set-hint', '读取中…');
+      l3.appendChild(refs.usage);
+      r3.appendChild(l3);
+      var right = el('div'); right.style.cssText = 'display:flex;gap:8px;align-items:center';
+      refs.max = el('select', 'am-sort-sel');
+      [['512', '512 MB'], ['1024', '1 GB'], ['2048', '2 GB'], ['5120', '5 GB'], ['10240', '10 GB'], ['20480', '20 GB']].forEach(function (o) {
+        var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; refs.max.appendChild(op);
+      });
+      refs.max.value = '2048';
+      refs.max.onchange = function () { window.mine.streamCacheSetCfg({ maxMB: parseInt(refs.max.value, 10) }).then(refreshStats).catch(function () { }); };
+      var bClr = el('button', 'eq-preset', '清空缓存');
+      bClr.style.cssText = bChg.style.cssText;
+      bClr.onclick = function () { window.mine.streamCacheClear().then(refreshStats).catch(function () { }); };
+      right.appendChild(refs.max); right.appendChild(bClr);
+      r3.appendChild(right);
+      sc.appendChild(r3);
+      refreshStats();
     })();
 
     // V4.3.22：下载任务管理选项（主进程 dlManager 持久化，改并发即时生效）

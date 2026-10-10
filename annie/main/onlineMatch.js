@@ -181,4 +181,24 @@ async function batchStart(win, paths, opts) {
 
 function batchCancel() { batch.canceled = true; }
 
-module.exports = { searchCandidates, applyMatch, batchStart, batchCancel };
+/** 播放时自动补全（V4.4）：无歌词的本地曲目实时五平台匹配（≥80% 取最高分），
+ *  歌词 + 封面仅回显不落盘（落盘仍走手动/批量匹配）。 */
+async function autoLyric({ path: filePath }) {
+  if (!filePath || filePath.includes('#')) return { ok: false };
+  const r = await searchCandidates({ path: filePath }).catch(() => null);
+  if (!r || !r.ok || !r.candidates.length) return { ok: false };
+  const best = r.candidates[0];
+  if (!best || best.score < 80) return { ok: false };
+  let cover = best.cover || (best.song.meta && best.song.meta.img) || '';
+  const lr = await streaming.lyric({ provider: best.provider, song: best.song }).catch(() => null);
+  if (!cover) {
+    const pc = await streaming.getPic({ provider: best.provider, song: best.song }).catch(() => null);
+    if (pc && pc.url) cover = pc.url;
+  }
+  if (lr && lr.lrc && lr.lrc.trim()) {
+    return { ok: true, lrc: lr.lrc, tlyric: lr.tlyric || '', cover, provider: best.providerLabel, score: best.score };
+  }
+  return { ok: false, cover }; // 歌词没拉到也把封面带回去补显
+}
+
+module.exports = { searchCandidates, applyMatch, batchStart, batchCancel, autoLyric };

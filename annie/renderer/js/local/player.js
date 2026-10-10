@@ -1213,7 +1213,26 @@ window.annieStreamPlay = async function (track) {
     // V1.1.4：流媒体切歌同样走 crossfade（设备保持）——与本地 playAt 一致，避免高频设备开关
     const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
     const method = (cf > 0 || gaplessOn()) ? 'play.crossfade' : 'play';
-    await enginePlayRecover(method, { path: track.url, offsetSec: 0, headers: track.headers });
+    // V4.4：流媒体播放缓存——命中则引擎直接解码本地缓存文件（track.url 身份不变，歌词/统计/收藏链路不受影响）；
+    // 未命中后台边播边存（失败静默）。仅洛雪五平台（载荷带 song 原始对象）；Qobuz 不带 song 天然跳过
+    let playPath = track.url, playHeaders = track.headers;
+    if (window.mine && window.mine.streamCacheLookup && track.provider && track.song) {
+      try {
+        const sg = track.song;
+        const ck = {
+          provider: track.provider,
+          songId: String(sg.id != null ? sg.id : ((sg.name || track.title || '') + '-' + (sg.singer || track.artist || ''))),
+          quality: track.quality || '',
+          title: track.title || '', artist: track.artist || ''
+        };
+        const hit = await window.mine.streamCacheLookup(ck);
+        if (hit && hit.path) { playPath = hit.path; playHeaders = null; track.cached = true; }
+        else if (window.mine.streamCacheFill) {
+          window.mine.streamCacheFill(Object.assign({}, ck, { url: track.url, headers: track.headers || null })).catch(() => { });
+        }
+      } catch (e) { }
+    }
+    await enginePlayRecover(method, { path: playPath, offsetSec: 0, headers: playHeaders });
   } catch (e) {
     window.__annieLastStreamError = String(e && e.message || e); // V4.3.10：AM 错误提示带出引擎具体原因
     setFormatChips([{ text: '流媒体播放失败: ' + e.message, cls: 'warn' }]);

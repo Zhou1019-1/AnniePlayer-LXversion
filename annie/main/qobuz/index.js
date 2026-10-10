@@ -147,15 +147,15 @@ async function resolveToTracks(c, kind, id) {
       const tracks = ((a.tracks && a.tracks.items) || []).map((t) => Object.assign({}, t, {
         albumTitle: a.title, albumArtist: (a.artist && a.artist.name) || '',
       }));
-      return { kind: 'album', title: a.title, sub: (a.artist && a.artist.name) || '', tracks };
+      return { kind: 'album', id: String(a.id), info: a, title: a.title, sub: (a.artist && a.artist.name) || '', tracks };
     }
     if (k === 'track') {
       const t = await c.trackGet(id);
-      return { kind: 'track', title: t.title, sub: (t.performer && t.performer.name) || '', tracks: [t] };
+      return { kind: 'track', id: String(t.id), title: t.title, sub: (t.performer && t.performer.name) || '', tracks: [t] };
     }
     if (k === 'playlist') {
       const p = await c.playlistGet(id);
-      return { kind: 'playlist', title: p.name, sub: (p.owner && p.owner.name) || '', tracks: (p.tracks && p.tracks.items) || [] };
+      return { kind: 'playlist', id: String(p.id), info: p, title: p.name, sub: (p.owner && p.owner.name) || '', tracks: (p.tracks && p.tracks.items) || [] };
     }
     return null;
   }

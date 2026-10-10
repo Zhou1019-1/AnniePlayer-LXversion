@@ -258,10 +258,37 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 
 /* V4.3.22：在线音乐多选模式 */
 .am-ms-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.am-ms-bar.am-ms-float {
+  position: sticky; top: -20px; z-index: 8; margin: -20px -28px 10px; padding: 10px 28px;
+  background: var(--am-glass, rgba(28,30,38,.88));
+  border-bottom: 1px solid var(--am-sep);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+}
 .am-ms-count { margin-left: auto; font-size: 12px; color: var(--am-text-2); }
 .am-ms-ck { accent-color: var(--am-accent); width: 15px; height: 15px; cursor: pointer; vertical-align: middle; }
 .am-tr.sel { background: color-mix(in srgb, var(--am-accent) 14%, transparent); }
 .am-tr.sel:hover { background: color-mix(in srgb, var(--am-accent) 20%, transparent); }
+/* V4.4：顶部多选工具条歌单菜单（独立于 R.pop，避免全局外点逻辑；需要实色背景防内容穿透） */
+.am-ms-pl-menu {
+  background: var(--am-panel, rgba(28, 30, 38, .96));
+  color: var(--am-text, #f2f3f5);
+  border: 1px solid var(--am-line, rgba(255,255,255,.16));
+  border-radius: 9px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.32);
+  backdrop-filter: blur(18px);
+  padding: 6px;
+}
+.am-ms-pl-menu .am-pop-head { padding: 7px 10px; white-space: nowrap; }
+.am-ms-pl-menu .am-pop-item { display: block; width: 100%; text-align: left; white-space: nowrap; }
+.am-ms-pl-menu .am-pop-hint { padding: 8px 10px; white-space: nowrap; color: var(--am-text-2); }
+
+/* V4.4：框选选框（fixed 定位，client 坐标，指针穿透） */
+.am-marquee {
+  position: fixed; z-index: 999; pointer-events: none;
+  border: 1px solid var(--am-accent);
+  background: color-mix(in srgb, var(--am-accent) 12%, transparent);
+  border-radius: 2px;
+}
 
 /* V4.3.22：删除确认弹窗 + 危险按钮 */
 .am-btn-danger { color: #e5534b !important; border-color: color-mix(in srgb, #e5534b 45%, transparent) !important; }
@@ -712,13 +739,13 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
   position: absolute; inset: calc((100% - var(--am-vinyl-cover, 73%)) / 2); border-radius: 50%; overflow: hidden;
   border: 5px solid color-mix(in srgb, var(--vc2) 45%, rgba(21,21,28,.6));
   box-shadow: 0 0 0 2px rgba(255,255,255,.10), inset 0 0 30px rgba(0,0,0,.35);
-  background: #15151c;
+  background: #15151c; z-index: 3; /* 压在液体层/反光层之上 */
 }
 .am-vinyl-cover { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* 轴心孔 */
 .am-vinyl::after {
   content: ''; position: absolute; left: 50%; top: 50%; width: 2.6%; aspect-ratio: 1;
-  transform: translate(-50%, -50%); border-radius: 50%;
+  transform: translate(-50%, -50%); border-radius: 50%; z-index: 4; /* 压在液体层之上 */
   background: rgba(12,12,18,.85); box-shadow: 0 0 0 3px rgba(255,255,255,.18);
 }
 .am-imm.am-vinyl-nohole .am-vinyl::after { display: none; } /* 💿 弹层「轴心孔」关 */
@@ -736,6 +763,21 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 .am-imm-vinyl.am-pos-corner .am-vinyl { margin-top: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.24); margin-right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.16); }
 /* 彩胶外观弹层分段按钮（💿） */
 .am-vinylset-seg { display: flex; gap: 6px; flex: 1; }
+/* 盘面图历史缩略图条（仿壁纸历史：点按切回，hover × 删除，当前图 accent 描边） */
+.am-vinylset-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 2px 6px; }
+.am-vinylset-thumb {
+  position: relative; width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
+  cursor: pointer; border: 2px solid transparent; transition: border-color .15s, transform .15s;
+}
+.am-vinylset-thumb:hover { transform: scale(1.08); }
+.am-vinylset-thumb.on { border-color: var(--am-accent, #c9a254); }
+.am-vinylset-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.am-vinylset-thumb-x {
+  position: absolute; top: 0; right: 0; width: 16px; height: 16px; padding: 0;
+  border: none; border-radius: 0 0 0 8px; font-size: 9px; line-height: 16px;
+  background: rgba(0,0,0,.55); color: #fff; cursor: pointer; display: none;
+}
+.am-vinylset-thumb:hover .am-vinylset-thumb-x { display: block; }
 .am-vinylset-segbtn {
   flex: 1; border: 1px solid var(--am-border, rgba(255,255,255,.16)); border-radius: 6px;
   background: transparent; color: var(--am-text); font-size: 12px; padding: 4px 8px; cursor: pointer;

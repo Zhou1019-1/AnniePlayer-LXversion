@@ -185,7 +185,41 @@
       if (S.lyrPath !== path) return;
       S.lyrLines = (r && r.ok && r.text) ? parseLrc(r.text) : [];
       renderLyrics();
+      if (!S.lyrLines.length) tryAutoLyric(path); // V4.4：无歌词时自动在线补全
     }).catch(function () { renderLyrics(); });
+  }
+  /* V4.4：播放时自动在线补全——无歌词的本地曲目实时五平台匹配（≥80% 取最高分），
+     仅回显不落盘（落盘仍走右键「在线匹配」/ 批量匹配）；封面缺失时顺带补显示。
+     会话级缓存（负缓存防重拉）；CUE/ISO 分轨跳过（整文件歌词会张冠李戴）。 */
+  var _autoLrc = {}; // path → undefined(未拉) | 'pending' | null(无结果) | {lrc,tlyric,cover,provider}
+  function autoLrcEnabled() { try { return localStorage.getItem('annieplayer.lrc.autofetch') !== '0'; } catch (e) { return true; } }
+  function tryAutoLyric(path) {
+    if (!path || !autoLrcEnabled()) return;
+    if (!window.mine || !mine.matchAutoLyric) return;
+    if (state.currentCue || state.currentIso) return;
+    var c = _autoLrc[path];
+    if (c === 'pending') { renderLyrics(); return; }
+    if (c !== undefined) { applyAutoLyric(path); return; }
+    _autoLrc[path] = 'pending';
+    renderLyrics(); // 空态文案显示「在线匹配中…」
+    mine.matchAutoLyric(path).then(function (r) {
+      _autoLrc[path] = (r && r.ok) ? r : (r && r.cover ? { cover: r.cover } : null);
+      applyAutoLyric(path);
+    }).catch(function () { _autoLrc[path] = null; if (S.lyrPath === path) renderLyrics(); });
+  }
+  function applyAutoLyric(path) {
+    if (S.lyrPath !== path) return;
+    var c = _autoLrc[path];
+    if (!c || c === 'pending') return;
+    var filled = false;
+    if (c.lrc && !S.lyrLines.length) {
+      S.lyrLines = parseLrc(c.lrc);
+      if (c.tlyric) mergeTly(S.lyrLines, c.tlyric);
+      filled = !!S.lyrLines.length;
+    }
+    renderLyrics();
+    if (filled && typeof proToast === 'function') proToast('已自动补全歌词（' + (c.provider || '在线') + ' · ' + (c.score || '?') + '%）');
+    if (c.cover && AM.autoCoverFill) { try { AM.autoCoverFill(path, c.cover); } catch (e) { } }
   }
   var _lyrManualScrollUntil = 0;
   /* V4.4：彩胶沉浸模式歌词常驻（💬 开关隐藏不用），更新链路的 immLyrOn 判据要带上它。
@@ -200,7 +234,8 @@
     box.innerHTML = '';
     if (!S.lyrLines.length) {
       var emptyText = !state.currentPath ? '播放歌曲以显示歌词'
-        : (state.currentStream ? '歌词加载中…' : '暂无歌词');
+        : (state.currentStream ? '歌词加载中…'
+        : (_autoLrc[S.lyrPath] === 'pending' ? '正在在线匹配歌词…' : '暂无歌词'));
       box.appendChild(el('div', 'am-lyr-empty', emptyText));
       return;
     }

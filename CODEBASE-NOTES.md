@@ -172,14 +172,29 @@
 - **AM 顶栏置底**：ui.amTopbarBottom → applyInterface 给 #am-root 加 `.am-topbar-bottom`，am.css 用 order:99 把 .am-topbar 移底（vizbar order:98 贴其上）。
 - **AM 沉浸真全屏**（V4.4）：ui.amImmFullscreen → `window.mine.winFullScreen(v)` → 主进程 `win:fullscreen`（setFullScreen，重复调用幂等守卫）。挂在 am-render.js `toggleImmersive` 进出点；所有沉浸出口（⤡/迷你互斥/切主题）都汇聚该函数，不会残留全屏。
 - **AM 沉浸样式双模式**（V4.4）：ui.amImmMode = classic|vinyl。am-render.js `buildImmersive` 按 `immMode()` 分支布局（classic 原样；vinyl = 左大歌词常驻 + 右旋转彩胶 + 底部全宽功能栏），传输/进度控件抽成 `buildImmControls`/`buildImmProg` 两模式共用（R.immPlay 等引用不变）。彩胶取色 `paintVinyl()` 在 syncAuxViews 切歌点调 `amVizColor.analyze` 注入 `--vinyl-c1/--vinyl-c2`（黑白封面回落 --am-accent）；旋转纯 CSS `amVinylSpin`，暂停停转靠 refreshAuxProgress 里 `am-vinyl-paused` 类。设置里切换经 `AM.refreshImmMode()` 原地重建（不退出沉浸）。
-- **彩胶外观自定义**（V4.4）：沉浸 closebar 💿 → `R.vinylSetPop`（am-render.js buildVinylSetPop，沿用 lyrSetPop 独立弹层模式，外点关闭在 am-dom.js 统一注册）。四项存 localStorage `annieplayer.am.vinyl.*`（cover 50–86 / scale 0.55–1.15 / op 0.25–1 / pos center|corner），经 `applyVinylStyle()` 写 CSS 变量 `--am-vinyl-cover/scale/op` 到 documentElement + `am-pos-corner` 类到 R.imm。纹路随机化：`_vinylGrooves` 缓存一组随机刻纹（宽度幂分布 0.2–2.1%、明暗纹随机混排——亮纹=封面色 26–54%、暗纹=纯黑压纹 alpha .10–.34、12% 哑光圈），`paintVinylTexture()` 生成 radial-gradient 多停止点内联 backgroundImage（引 `var(--vc1)`+`calc(a% * var(--am-vinyl-op))`）；🎲 重新摇号，封面占比变化按新起点重铺同组纹路。
+- **彩胶外观自定义**（V4.4）：沉浸 closebar 💿 → `R.vinylSetPop`（am-render.js buildVinylSetPop，沿用 lyrSetPop 独立弹层模式，外点关闭在 am-dom.js 统一注册）。存 localStorage `annieplayer.am.vinyl.*`：cover 50–90 / scale 0.55–1.6 / op 0.25–1 / speed 4–60 秒/圈 / pos center|corner / hole / **tex 自定义盘面图**。`applyVinylStyle()` 写 CSS 变量 `--am-vinyl-cover/scale/op/speed` + `am-pos-corner`/`am-vinyl-nohole` 类。纹路随机化：`_vinylGrooves` 缓存随机刻纹（宽度幂分布 0.2–2.1%、明暗纹混排——亮纹=封面色 26–54%、暗纹=纯黑压纹 .10–.34、12% 哑光圈），`VINYL_GROOVE_START=22` 固定半径起铺（**不从封面边缘起——封面调大会把纹路挤出盘面**），`paintVinylTexture()` 生成 radial-gradient 内联 backgroundImage。自定义盘面（tex）：`pickVinylTexture()` 智能裁切（smartCropSquare：四角采样背景色→内容包围盒居中取方内缩 2%，去唱片照片白/黑边；失败回落中心方形）640px JPEG dataURL 存 LS，历史 8 张 `texHist`（缩略图条点选切回/hover ✕ 删），paintVinylTexture 有 tex 时改铺 `sheen + 压暗层(吃 op 滑杆) + url(cover)`，圆形靠盘体 border-radius 遮罩，图随盘转。（~~流沙液体盘面 face=liquid~~：用户判定效果不佳，已整体移除，相关 canvas/引擎代码删净。）
+- **彩胶表把联动**（V4.4）：附加旋转走独立 CSS `rotate` 属性（与底盘匀速动画的 transform 天然叠加，互不干扰）。`bindProgDrag` 第四参 hooks `{onPreview(秒), onSeek(从,到)}`（am.js，其它进度条不传则空转）；`vinylCrownPreview` 拖动跟手转（6°/scrub 秒，暂停也生效），`vinylCrownSeek` 松手甩碟（120°+8°/跳秒，上限 540°，cubic-bezier .55s 到位后整圈归一防回卷）。歌词行点跳经 `AM.vinylCrownSeek` 桥接也甩碟（am-lyrics.js buildLyrLineEl onclick）。
 - ⚠️ **沉浸歌词更新链路的判据是 `S.immLyrOn`**（💬 开关）——彩胶模式歌词常驻但 immLyrOn=false，曾导致歌词不跟随/不高亮。现统一走 am-lyrics.js `immLyrActive()`（immLyrOn || AM.immIsVinyl()），改沉浸歌词相关代码时注意。
+- **播放时自动在线补歌词**（V4.4）：am-lyrics.js `loadLyrics` 本地分支无歌词时 `tryAutoLyric(path)` → IPC `match:autoLyric` → onlineMatch.js `autoLyric`（复用 searchCandidates 五平台打分，≥80% 取最高分 → streaming.lyric 取词 + cover 补显 URL）。仅回显不落盘；会话级缓存 `_autoLrc`（'pending'/null 负缓存/{lrc,tlyric,cover}）；CUE/ISO 分轨跳过（state.currentCue/currentIso 守卫，整文件歌词会张冠李戴）。开关 LS `annieplayer.lrc.autofetch`（'0' 关，默认开），设置 → 歌词 → 在线匹配分区。封面补显走 `AM.autoCoverFill`（am-render.js，已有封面不抢）。
 - AM 歌词三件套（am.lyrscale/lyrlh/lyrwordlimit）从歌词页迁入 AM 界面页。
 - **FB2K 暗色 LS 是 JSON（true/false），与 settings lsCheckRow 的 '1'/'0' 不兼容**——FB2K 页暗色开关是自定义行（JSON 读写 + annieFb2k.setDark + annie-f2-dark-changed 回同步）。
 
 ### 拖文件入歌单 + 打开文件位置（V4.4）✅
 - 「📂 打开文件位置」复用粒子舞台已有 IPC `window.mine.showItemInFolder`（`shell:showItem`）：AM 在 openAddMenu（am-dom.js，本地行右键/⊕ 菜单全视图生效）、FB2K 在 rowCtxMenu 本地分支（「在文件夹中显示」）。
 - 拖外部文件入歌单：am-dom.js `plDroppedPaths`/`addDroppedToPlaylist`（getPathForFile + 扩展名白名单含 cue；playlistAdd 主进程按 path 去重，toast 报实际新增数）。落点两处：① 侧栏歌单 nav 按钮（HTML5 drag，`plDropHasFiles` 判 `Files` 类型——内部行长按排序用 Pointer 事件、行排序拖拽无 Files 类型，互不干扰）；② 歌单视图容器 R.content（`_plDropBound` 标记只挂一次，行内 reorder drop 冒泡到容器同样生效）。高亮样式 `.am-nav.am-nav-drop`（am.css）。
+- **落点插入位**（用户反馈修）：`lib:playlist:add` 第三参 `before`（目标行 path，插到该行之前；无则追加底部）；歌单视图 drop 经 `e.target.closest('tr.am-tr').dataset.path` 取落点行（窗口化垫片行无 .am-tr → 落空白=底部），dragover 时落点行加 `.am-tr.drag-over` outline 高亮（dragleave 离开容器/drop 时清除，`c._plDropRow` 跟踪）。
+- **非曲库 path 占位曲目**（用户反馈修）：AM `currentTracks` / fb2k `baseTracks` 的 pl: 分支对不在曲库的 pl.paths 合成 `{path,name,dir}` stub 照常渲染/播放（标签 ensureMeta 按 path 现读）——否则「从曲库删除」过的文件再拖进歌单会加进了却看不见。
+- ⚠️ **右键删除的两种语义**：`tracksHide`/`lib:deleteFiles` 会把 path 从**所有歌单+收藏**同步剔除（曲库级删除）；歌单视图右键另有「✕ 从本播放列表移除」（`playlistRemove` 只动当前歌单，openAddMenu 内按 `S.view` 是否 pl: 条件渲染）。用户曾用曲库级删除删歌单1的歌把歌单2也删了——歌单视图里默认应引导用前者。
+
+### 流媒体播放缓存（V4.4）🔍
+- 主进程 `streamCache.js`：按 `provider + songId + quality` 建键，URL 只用于本次播放/下载（有时效签名，不能做缓存键）；默认缓存目录 `%APPDATA%/安妮播放器融合版V3/streamCache`，索引 `stream-cache.json`，library store 保存 `streamCache.enabled/maxMB/dir`。
+- 播放路径集中在 renderer `player.js` 的 `annieStreamPlay`：命中缓存则 engine 播本地文件；未命中先正常播网络 URL，同时 IPC 后台整流保存，失败不影响播放。仅国内洛雪五平台载荷带 `song` 时缓存，Qobuz 当前不参与。
+- `streamCache` IPC：lookup/fill/stats/setCfg/pickDir/clear。上限 128MB–50GB，设置 UI 暴露 512MB–20GB；超限 LRU 清理，缓存目录可自定义。待真实播放验证 Electron `net.fetch` Response body → 文件流、各平台 songId/quality 键稳定性及引擎本地缓存格式兼容性后改 ✅。
+- 选择集统一存 `S.msSel`（Set<path>，**存 path 不存索引**）；复选框模式 `S.msOn` 仍保留（右键「☑ 多选」进入），两者共用工具条——`renderTrackTable` 里 `S.msOn || S.msSel.size` 即渲染 `renderMsToolbar`。
+- 行点击逻辑在 `buildTrackRow`：非 msOn 模式单击走 `rowSelClick`（Ctrl/Meta 切换、Shift 从 `S._selAnchor` 连选后替换、普通单击清空选择并记锚点；播放仍双击）；msOn 模式修饰键同样走 rowSelClick，普通点击=勾选切换。
+- 框选：R.content 一次性挂 mousedown（`_marqueeBound`），只在表格视图（songs/favorites/albums详情/pl:）+ 空白处启动（排除 `tr.am-tr/thead/.am-view-head/.am-ms-bar/button/input/a` 及滚动条），6px 位移阈值防抢单击；选框 `.am-marquee`（fixed+pointer-events:none，client 坐标）；松手按 `getBoundingClientRect` 相交命中**已渲染行**（窗口化下垫片区命不中——已知限制），Ctrl=追加否则替换。
+- 换视图清快速选择（`S._msView` 跟踪，msOn 模式维持原跨视图存活行为）；歌单视图工具条批量操作=「从歌单移除选中」（复用 `playlistReorder` 整组替换 paths，不碰曲库），其他视图=「删除选中」走 deleteTracks。
+- **openAddMenu 多选感知**：`selPaths = msSel.size>1 && msSel.has(trackPath) ? 整组 : 单曲`——加入歌单/新建歌单/从本歌单移除/从曲库删除/编辑标签全部按 selPaths 批量（fb2k 侧早有 forEachSel 对等机制）；菜单头部显示「已选 N 首」。工具条也有「📥 加入播放列表…」按钮（openAddMenu 以选中首项为锚打开）。
 
 ---
 
@@ -237,23 +252,11 @@
 
 ---
 
-## 六、AnnieFlyout 伴侣进程（V4.4，基于 FluentFlyout GPL-3.0）
+## 六、AnnieFlyout 伴侣进程（已于 V4.3.29 整体移除）
 
-- **是什么**：fork 自 [FluentFlyout](https://github.com/unchihugo/FluentFlyout)（WPF/.NET 10）的伴侣进程，提供**任务栏媒体小组件**（封面+曲名嵌入任务栏）+ **切歌/媒体键弹窗**。源码入库 `flyout/`（上游浅克隆缓存 `_flyout-src/` 不入库）。
-- **SMTC 桥（关键架构）**：我们的音频走外部 C# 引擎，Chromium Media Session 在页面无 <audio> 出声时**不会**桥到 Windows SMTC（实测播放中会话数=0）→ AnnieFlyout 自持 SMTC 会话（WinRT MediaPlayer.SystemMediaTransportControls，AnnieBridge.cs）。协议=stdin/stdout JSON Lines：宿主推 {"type":"meta"/"state"}（封面 dataURL 在 main 侧落盘 %TEMP%\annie-flyout-cover.img，http 直传），SMTC 按钮回流 {"type":"cmd","cmd":"play|pause|next|prev"}；stdin 断开 AnnieFlyout 自动退出。链路：mediaSession.js（双通道，Chromium 保留）→ mine.flyoutPush → main 'flyout:push' → flyout.js send → stdin；回流反向到 'flyout:cmd' → mediaSession.js 复用按钮点击动作。**独占输出下照常工作**（元数据不走音频管线）。**seek 回流（V4.4）✅**：AnnieBridge 订阅 SMTC `PlaybackPositionChangeRequested` → stdout `{"type":"seek","positionSec":n}` → flyout.js 转成 `{cmd:'seek',positionSec}` 走同一 `'flyout:cmd'` 通道 → mediaSession.js `doSeek`（与 Chromium seekto 共用，绝对 seek 含 CUE start 偏移）；seek 能力由 ApplyState 的 UpdateTimelineProperties（Min/MaxSeekTime=duration）声明，FF 侧判据是 `timeline.MaxSeekTime.TotalSeconds >= 1.0`（MainWindow.xaml.cs:1238）。冷启动兜底：开机续播的首条 meta 会撞进 AnnieFlyout 启动窗口被吞（表现=卡片停在 Song Title 占位符，切歌后自愈）→ main 侧 flyout.js 缓存 lastMeta/lastState 启动 1.5s 后重放 + 渲染层 3s/8s 补推。
-- **伴侣模式补丁**（相对上游的全部改动，搜注释「Annie 伴侣模式」）：
-  - UserSettings.cs CompleteInitialization：Startup=false（不自启）、TaskbarWidgetEnabled=true、LockKeysEnabled=false
-  - SettingsManager.cs：配置目录 %AppData%\AnnieFlyout（与官方版隔离）
-  - MainWindow.xaml.cs：Mutex 名 AnnieFlyout_v2（v2 后缀为避开 dev 测试僵尸进程持有的旧句柄——已退出进程若仍被宿主终端持有句柄，内核进程对象不销毁、Mutex 不放，taskkill 报 Access denied；重启可清）；OpenSettings 事件名 AnnieFlyout_OpenSettings；OnboardingExperiment/CheckForUpdatesOnStartupAsync 空操作；首启 Toast 注释掉
-  - App.xaml.cs：不拉取实验配置；TelemetryService 整体 return
-  - csproj：AssemblyName=AnnieFlyout；**图片/ico 全部 Content→Resource 内嵌**（Content 的 pack URI 在单文件发布下必崩）
-- **发布参数（踩坑记录）**：`dotnet publish -c "GitHub Release" -p:Platform=x64 -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true`。**禁用 IncludeNativeLibrariesForSelfExtract**（会导致 WPF 资源解析失败、启动 XamlParseException 闪崩）；GitHub Release 配置定义 GITHUB_RELEASE → LicenseManager 直接全解锁（无 Store 依赖）。产物 ~80MB exe + 8MB 原生 dll。
-- **构建环境**：需 .NET 10 SDK（本机 winget install Microsoft.DotNet.SDK.10）；上游 net10.0 目标，别降 net9.0（unchihugo.WPF-UI 4.4.2 只支持 net10）。
-- **集成**：annie/main/flyout.js（resolveFlyout 两候选：resourcesPath/flyout ← 打包、flyout/publish ← dev）；main.js IPC `flyout:get`/`flyout:set`（store.ui.flyout）；preload mine.flyoutGet/flyoutSet；settings.js 常规页「任务栏小组件」开关。退出时 before-quit 自动 taskkill 兜底。
-- **打包**：package.json extraResources flyout/publish→resources/flyout；release.yml 装 .NET 9+10 双 SDK，云端编译。
-- **已知现象**：dev 机上反复测试可能留「Access is denied」杀不掉的僵尸实例（托盘图标右键退出或重启即清）；单实例互斥生效时二次启动会弹出设置窗（上游行为）。
-- **频谱条物理限制 ✅已定位（V4.4 排查结论）**：Visualizer.cs 用 `WasapiLoopbackCapture` 录 **Windows 默认渲染设备**回环（Start() 绑 AudioDeviceMonitor.GetDefaultRenderDevice，约 line 218-227）。两类静默：① ASIO / WASAPI 独占输出——音频绕过系统混音器，回环物理抓不到（实测用户 backend=asio|HiBy USB Audio Device，频谱平属预期，无软件解）；② WASAPI 共享但输出到**非默认设备**——回环录错源（当前未做跟随设备，如需可经桥把 Annie 的 MMDevice ID 推给 flyout 改绑）。2s 无回调自动重启 watchdog 只能救"回调卡死"，救不了"录错源/无源"。说明书需标注。
-- 🔍待验证：任务栏小组件在 Win11 24H2 各任务栏对齐模式下的表现；与 ExplorerPatcher 等改任务栏工具的冲突（上游 FAQ 已声明此限制）。
+- **移除原因**：用户群普遍用不了（任务栏嵌入对系统环境敏感），功能整体下线。
+- **移除清单**：`annie/main/flyout.js`、`flyout/` 目录（WPF 源码）删除；main.js IPC `flyout:get/set/push` 与启动联动删除；preload `flyoutGet/flyoutSet/flyoutPush/onFlyoutCmd` 删除；mediaSession.js 回退为纯 Chromium Media Session 单通道（doSeek 保留给 seekto）；settings.js 常规页「任务栏小组件」分区删除；package.json extraResources 的 flyout 项与 copyright 的 FluentFlyout 声明删除；release.yml 删 .NET 10 SDK 与 AnnieFlyout 编译步骤；.gitignore flyout 条目清理。
+- **遗留**：老用户机器上 %AppData%\AnnieFlyout 配置目录与 store.ui.flyout 键残留无害；历史版本（V4.3.27–4.3.28）的安装包仍含 AnnieFlyout，属历史事实。
 
 ---
 

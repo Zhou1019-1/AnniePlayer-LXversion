@@ -1052,6 +1052,15 @@
     } else if (S.activeList.indexOf('pl:') === 0) {
       var pl = S.playlists.find(function (x) { return 'pl:' + x.id === S.activeList; });
       var set = new Set(pl ? pl.paths : []);
+      var byP = {};
+      list.forEach(function (t) { byP[t.path] = t; });
+      // 不在曲库的 path（外部拖入文件）合成占位曲目，否则加进了却看不见（与 AM 歌单视图一致）
+      set.forEach(function (p) {
+        if (!byP[p]) {
+          var nm = String(p).split(/[\\/]/).pop();
+          list.push({ path: p, name: nm, dir: String(p).slice(0, p.length - nm.length).replace(/[\\/]+$/, '') });
+        }
+      });
       list = list.filter(function (t) { return set.has(t.path); });
     } else if (S.activeList.indexOf('spl:') === 0) {
       // V4.4：在线歌单——items 映射为虚拟曲目（__stream 挂原始 song，__splIdx 记原索引供 splRemove）

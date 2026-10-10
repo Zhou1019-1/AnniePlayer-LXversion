@@ -305,6 +305,16 @@
     try { return (window.annieSettings && annieSettings.ui && annieSettings.ui.amImmMode) || 'classic'; } catch (e) { return 'classic'; }
   }
   AM.immIsVinyl = function () { return immMode() === 'vinyl'; }; // 供 am-lyrics 更新链路判「歌词常驻」
+  /* V4.4：自动在线补全的封面补显——当前曲无封面时用匹配到的在线封面（仅显示，不落盘） */
+  AM.autoCoverFill = function (path, coverUrl) {
+    if (!coverUrl || !state.currentPath || state.currentStream) return;
+    var cur = (state.currentCue && state.currentCue.src) || (state.currentIso && state.currentIso.src) || state.currentPath;
+    if (cur !== path) return;
+    if (R.npCover && R.npCover.getAttribute('src')) return; // 已有封面不抢
+    swapCover(R.npCover, coverUrl);
+    swapAtmosphere(coverUrl);
+    syncAuxViews();
+  };
   AM.vinylCrownSeek = function (from, to) { vinylCrownSeek(from, to); }; // 歌词点跳等其它 seek 入口也甩碟（无彩胶时内部空转）
   function buildImmControls() { // 两种布局共用的传输/音量/队列按钮（引用挂 R 上供 syncAux/refreshAux 用）
     var ctl = el('div', 'am-imm-ctl');
@@ -477,7 +487,9 @@
     op: 'annieplayer.am.vinyl.op',        // 盘体不透明度（0.25–1，越低越透）
     pos: 'annieplayer.am.vinyl.pos',      // 唱片位置：center 居中 | corner 右上悬挂（QQ 音乐式，探出屏幕右上）
     hole: 'annieplayer.am.vinyl.hole',    // 轴心孔：'1' 开（默认）| '0' 关
-    speed: 'annieplayer.am.vinyl.speed'   // 转速：秒/圈（4–60，默认 18）
+    speed: 'annieplayer.am.vinyl.speed',  // 转速：秒/圈（4–60，默认 18）
+    tex: 'annieplayer.am.vinyl.tex',      // 自定义盘面图（dataURL，智能裁切 640px JPEG；空=自动刻纹）
+    texHist: 'annieplayer.am.vinyl.texHist' // 盘面图历史（JSON dataURL 数组，上限 8，点选切回）
   };
   function vinylLsNum(key, def) { try { var v = parseFloat(localStorage.getItem(key)); return isFinite(v) ? v : def; } catch (e) { return def; } }
   /* 纹路随机化：缓存一组随机刻纹——宽度幂分布（细多粗少）、明暗纹随机混排
@@ -498,8 +510,112 @@
   }
   var VINYL_SHEEN = 'conic-gradient(from 210deg, transparent 0deg, rgba(255,255,255,.18) 16deg, transparent 38deg, transparent 168deg, rgba(255,255,255,.10) 192deg, transparent 218deg)';
   var VINYL_GROOVE_START = 22; // 纹路固定起点（%半径，标签圈之下；封面大小只决定露多少，不再推走纹路）
+  function vinylTex() { try { return localStorage.getItem(VINYL_LS.tex) || ''; } catch (e) { return ''; } }
+  function vinylTexHist() {
+    try { var a = JSON.parse(localStorage.getItem(VINYL_LS.texHist) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function saveTexHist(a) { try { localStorage.setItem(VINYL_LS.texHist, JSON.stringify(a.slice(0, 8))); } catch (e) { } }
+  function pushTexHist(dataUrl) {
+    var a = vinylTexHist().filter(function (u) { return u !== dataUrl; });
+    a.unshift(dataUrl);
+    saveTexHist(a);
+  }
+  /* 智能裁切：四角采样背景色 → 找内容包围盒（唱片照片自动去掉白/黑边），
+     包围盒居中取方并内缩 2% 去毛边；识别失败回落中心方形裁切 */
+  function smartCropSquare(img) {
+    var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    var fb = Math.min(w, h), out = { sx: (w - fb) / 2, sy: (h - fb) / 2, side: fb };
+    try {
+      var sc = Math.min(1, 360 / Math.max(w, h));
+      var sw = Math.max(8, Math.round(w * sc)), sh = Math.max(8, Math.round(h * sc));
+      var cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
+      var cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, 0, 0, sw, sh);
+      var d = cx.getImageData(0, 0, sw, sh).data;
+      var cn = 0, br = 0, bg = 0, bb = 0;
+      [[2, 2], [sw - 3, 2], [2, sh - 3], [sw - 3, sh - 3]].forEach(function (pt) {
+        var i = (pt[1] * sw + pt[0]) * 4;
+        if (d[i + 3] > 128) { br += d[i]; bg += d[i + 1]; bb += d[i + 2]; cn++; }
+      });
+      if (!cn) return out;
+      br /= cn; bg /= cn; bb /= cn;
+      var minX = sw, minY = sh, maxX = -1, maxY = -1;
+      for (var y = 0; y < sh; y += 2) {
+        for (var x = 0; x < sw; x += 2) {
+          var j = (y * sw + x) * 4;
+          if (d[j + 3] <= 128) continue; // 透明像素视为背景
+          if (Math.abs(d[j] - br) > 42 || Math.abs(d[j + 1] - bg) > 42 || Math.abs(d[j + 2] - bb) > 42) {
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX > minX && maxY > minY) {
+        var bw = maxX - minX, bh = maxY - minY;
+        if (bw * bh < sw * sh * 0.9) { // 内容确实小于整图才启用（整图就是内容时保持原裁切）
+          var cxp = (minX + maxX) / 2 / sc, cyp = (minY + maxY) / 2 / sc;
+          var sd = Math.min(Math.max(bw, bh) / sc * 0.98, w, h); // 内缩 2% 去边缘毛边
+          out.sx = Math.min(Math.max(cxp - sd / 2, 0), w - sd);
+          out.sy = Math.min(Math.max(cyp - sd / 2, 0), h - sd);
+          out.side = sd;
+        }
+      }
+    } catch (e) { }
+    return out;
+  }
+  /* 选盘面图（仿全局壁纸思路）：智能裁切 → 640px JPEG → localStorage 单槽 + 历史 8 张；
+     圆形由盘体 border-radius 遮罩裁出，盘体旋转时图随盘转 */
+  function pickVinylTexture(after) {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/png,image/jpeg,image/webp,image/gif,image/avif';
+    inp.onchange = function () {
+      var f = inp.files && inp.files[0];
+      if (!f || !/^image\//.test(f.type)) return;
+      var url = URL.createObjectURL(f);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var c = smartCropSquare(img);
+          if (!(c.side > 0)) throw new Error('bad image');
+          var cv = document.createElement('canvas');
+          cv.width = cv.height = 640;
+          cv.getContext('2d').drawImage(img, c.sx, c.sy, c.side, c.side, 0, 0, 640, 640);
+          var dataUrl = cv.toDataURL('image/jpeg', 0.88);
+          localStorage.setItem(VINYL_LS.tex, dataUrl);
+          pushTexHist(dataUrl);
+          paintVinylTexture();
+          if (after) after();
+          if (typeof proToast === 'function') proToast('盘面图片已应用');
+        } catch (e) {
+          if (typeof proToast === 'function') proToast('图片处理失败（过大或格式不支持）');
+        }
+        URL.revokeObjectURL(url);
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        if (typeof proToast === 'function') proToast('图片读取失败');
+      };
+      img.src = url;
+    };
+    inp.click();
+  }
   function paintVinylTexture() {
     if (!R.immVinyl) return;
+    var tex = vinylTex();
+    if (tex) {
+      // 自定义盘面：图随盘转；叠磨砂压暗层（吃「盘体不透明」滑杆）+ 亚克力反光带，刻纹层让位
+      var dimA = (1 - vinylLsNum(VINYL_LS.op, 1)) * 0.72;
+      R.immVinyl.style.backgroundImage = VINYL_SHEEN
+        + ', linear-gradient(rgba(10,10,16,' + dimA.toFixed(2) + '), rgba(10,10,16,' + dimA.toFixed(2) + '))'
+        + ', url("' + tex + '")';
+      R.immVinyl.style.backgroundSize = 'auto, auto, cover';
+      R.immVinyl.style.backgroundPosition = 'center, center, center';
+      R.immVinyl.style.backgroundColor = 'rgba(14,14,20,.55)';
+      return;
+    }
+    R.immVinyl.style.backgroundSize = '';
+    R.immVinyl.style.backgroundPosition = '';
     if (!_vinylGrooves) genVinylGrooves();
     var start = VINYL_GROOVE_START;
     var stops = ['transparent 0% ' + start.toFixed(2) + '%'];
@@ -589,7 +705,56 @@
     syncHole();
     hseg.appendChild(bHOn); hseg.appendChild(bHOff);
     hrow.appendChild(hseg); pop.appendChild(hrow);
-    pop._syncSegs = function () { syncSeg(); syncHole(); };
+    // 盘面图片（自定义盘体表面，替代自动刻纹；「盘体不透明」滑杆对其同样生效）
+    var trow = el('div', 'am-pop-row');
+    trow.appendChild(el('span', null, '盘面图片'));
+    var tseg = el('div', 'am-vinylset-seg');
+    var bPickTex = el('button', 'am-vinylset-segbtn', '选择图片…');
+    var bClearTex = el('button', 'am-vinylset-segbtn', '清除');
+    tseg.appendChild(bPickTex); tseg.appendChild(bClearTex);
+    trow.appendChild(tseg); pop.appendChild(trow);
+    var texHint = el('div', 'am-lyrset-v', '');
+    texHint.style.margin = '-4px 2px 4px';
+    pop.appendChild(texHint);
+    var thumbs = el('div', 'am-vinylset-thumbs');
+    pop.appendChild(thumbs);
+    function syncTexRow() {
+      var curTex = vinylTex();
+      texHint.textContent = curTex ? '已应用自定义盘面（智能去边裁切，随盘旋转）' : '未设置：盘面为封面取色随机刻纹';
+      bClearTex.style.opacity = curTex ? '1' : '.45';
+      // 历史缩略图条：点按切回，hover × 删除（仿全局壁纸历史）
+      thumbs.innerHTML = '';
+      var hist = vinylTexHist();
+      if (!hist.length) { thumbs.style.display = 'none'; return; }
+      thumbs.style.display = '';
+      hist.forEach(function (u) {
+        var cell = el('div', 'am-vinylset-thumb' + (u === curTex ? ' on' : ''));
+        var im = document.createElement('img');
+        im.src = u; im.alt = ''; im.draggable = false;
+        cell.appendChild(im);
+        var bx = el('button', 'am-vinylset-thumb-x', '✕');
+        bx.onclick = function (e) {
+          e.stopPropagation();
+          saveTexHist(vinylTexHist().filter(function (x) { return x !== u; }));
+          if (vinylTex() === u) { try { localStorage.removeItem(VINYL_LS.tex); } catch (e2) { } paintVinylTexture(); }
+          syncTexRow();
+        };
+        cell.appendChild(bx);
+        cell.onclick = function () {
+          try { localStorage.setItem(VINYL_LS.tex, u); } catch (e) { }
+          pushTexHist(u); // 置顶
+          paintVinylTexture(); syncTexRow();
+        };
+        thumbs.appendChild(cell);
+      });
+    }
+    bPickTex.onclick = function () { pickVinylTexture(syncTexRow); };
+    bClearTex.onclick = function () {
+      try { localStorage.removeItem(VINYL_LS.tex); } catch (e) { }
+      paintVinylTexture(); syncTexRow();
+    };
+    syncTexRow();
+    pop._syncSegs = function () { syncSeg(); syncHole(); syncTexRow(); };
     // 纹路摇号 / 恢复默认
     var arow = el('div', 'am-pop-row');
     var aseg = el('div', 'am-vinylset-seg');
@@ -601,9 +766,10 @@
         localStorage.removeItem(VINYL_LS.cover); localStorage.removeItem(VINYL_LS.scale);
         localStorage.removeItem(VINYL_LS.op); localStorage.removeItem(VINYL_LS.pos);
         localStorage.removeItem(VINYL_LS.hole); localStorage.removeItem(VINYL_LS.speed);
+        localStorage.removeItem(VINYL_LS.tex); localStorage.removeItem(VINYL_LS.texHist);
       } catch (e) { }
       sliders.forEach(function (sl) { sl._sync(); });
-      syncSeg(); syncHole(); genVinylGrooves(); applyVinylStyle();
+      syncSeg(); syncHole(); syncTexRow(); genVinylGrooves(); applyVinylStyle();
     };
     aseg.appendChild(bDice); aseg.appendChild(bReset);
     arow.appendChild(aseg); pop.appendChild(arow);

@@ -319,7 +319,13 @@
       var paths = pl ? pl.paths : [];
       var byPath = {};
       list.forEach(function (t) { byPath[t.path] = t; });
-      list = paths.map(function (p) { return byPath[p]; }).filter(Boolean);
+      // 不在曲库的 path（如拖入的外部文件被「从曲库删除」过）合成占位曲目照常显示/播放，
+      // 标签由 ensureMeta 按 path 现读——否则拖进来的歌会「加进了却看不见」
+      list = paths.map(function (p) {
+        if (byPath[p]) return byPath[p];
+        var nm = String(p).split(/[\\/]/).pop();
+        return { path: p, name: nm, dir: String(p).slice(0, p.length - nm.length).replace(/[\\/]+$/, '') };
+      }).filter(Boolean);
     } else if (S.view === 'albums' && S.albumKey) {
       list = list.filter(function (t) { return (trackMeta(t).album || '未知专辑') === S.albumKey; });
     } else if (S.view === 'folders' && S.folderPath) {

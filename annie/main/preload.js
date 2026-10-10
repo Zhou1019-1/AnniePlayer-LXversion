@@ -10,16 +10,6 @@ contextBridge.exposeInMainWorld('mine', {
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),
 
-  // V4.4：AnnieFlyout 伴侣进程（任务栏小组件 + 切歌弹窗）
-  flyoutGet: () => ipcRenderer.invoke('flyout:get'),
-  flyoutSet: (on) => ipcRenderer.invoke('flyout:set', on),
-  flyoutPush: (obj) => ipcRenderer.send('flyout:push', obj), // SMTC 桥：曲目/状态推送
-  onFlyoutCmd: (cb) => { // SMTC 桥：按钮命令回流（play/pause/next/prev）
-    const listener = (_e, cmd) => cb(cmd);
-    ipcRenderer.on('flyout:cmd', listener);
-    return () => ipcRenderer.removeListener('flyout:cmd', listener);
-  },
-
   // V3.5.8：全局快捷键 / 播放状态上报（任务栏缩略图）
   hotkeysGet: () => ipcRenderer.invoke('hotkeys:get'),
   hotkeysSetEnabled: (on) => ipcRenderer.invoke('hotkeys:setEnabled', on),
@@ -41,6 +31,7 @@ contextBridge.exposeInMainWorld('mine', {
   matchApply: (params) => ipcRenderer.invoke('match:apply', params),
   matchBatchStart: (paths, opts) => ipcRenderer.invoke('match:batchStart', paths, opts), // V4.3.4：批量匹配歌词
   matchBatchCancel: () => ipcRenderer.invoke('match:batchCancel'),
+  matchAutoLyric: (p) => ipcRenderer.invoke('match:autoLyric', p), // V4.4：播放时自动在线补歌词
   onMatchBatchEvent: (cb) => { const h = (_e, ev) => cb(ev); ipcRenderer.on('match:batch:event', h); return () => ipcRenderer.removeListener('match:batch:event', h); },
   tagPickCover: () => ipcRenderer.invoke('tag:pickCover'),            // V3.5.9：标签编辑选封面
   tagEdit: (params) => ipcRenderer.invoke('tag:edit', params),        // V3.5.9：写回标签
@@ -51,7 +42,7 @@ contextBridge.exposeInMainWorld('mine', {
   playlistCreate: (name) => ipcRenderer.invoke('lib:playlist:create', name),
   playlistRename: (id, name) => ipcRenderer.invoke('lib:playlist:rename', id, name),
   playlistDelete: (id) => ipcRenderer.invoke('lib:playlist:delete', id),
-  playlistAdd: (id, paths) => ipcRenderer.invoke('lib:playlist:add', id, paths),
+  playlistAdd: (id, paths, before) => ipcRenderer.invoke('lib:playlist:add', id, paths, before),
   playlistReorder: (id, paths) => ipcRenderer.invoke('lib:playlist:reorder', id, paths), // V4.3.22：拖拽排序
   // V4.3.22：导入 foobar2000 .fpl 播放列表
   fplImport: () => ipcRenderer.invoke('lib:playlist:importFpl'),
@@ -110,6 +101,13 @@ contextBridge.exposeInMainWorld('mine', {
   streamLyric: (params) => ipcRenderer.invoke('stream:lyric', params),
   streamGetPic: (params) => ipcRenderer.invoke('stream:getPic', params),
   streamCoverProxy: (url) => ipcRenderer.invoke('stream:coverProxy', url),
+  // V4.4：流媒体播放缓存（边播边存 + LRU 上限；目录/大小可调）
+  streamCacheLookup: (ck) => ipcRenderer.invoke('streamCache:lookup', ck),
+  streamCacheFill: (ck) => ipcRenderer.invoke('streamCache:fill', ck),
+  streamCacheStats: () => ipcRenderer.invoke('streamCache:stats'),
+  streamCacheSetCfg: (patch) => ipcRenderer.invoke('streamCache:setCfg', patch),
+  streamCachePickDir: () => ipcRenderer.invoke('streamCache:pickDir'),
+  streamCacheClear: () => ipcRenderer.invoke('streamCache:clear'),
   streamHotSearch: (params) => ipcRenderer.invoke('stream:hotSearch', params),
   streamHotComments: (params) => ipcRenderer.invoke('stream:hotComments', params), // V3.5.19：网易云热门评论
   // 发现音乐：排行榜 / 歌单广场（V3.5.4）

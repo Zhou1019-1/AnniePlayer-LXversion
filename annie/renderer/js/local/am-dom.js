@@ -878,16 +878,90 @@
     if (!R.content || (window.annieTheme && annieTheme.current !== 'am')) return;
     var c = R.content;
     // V4.4：歌单视图整体作为拖放落点（R.content 常驻，监听只挂一次；拖到行上经冒泡同样生效）
+    // 拖到某一行上 = 插入该行之前（落点行 outline 高亮），拖到空白处 = 追加到底部
     if (!c._plDropBound) {
       c._plDropBound = true;
+      function plDropRowOf(e) { return (e.target && e.target.closest) ? e.target.closest('tr.am-tr') : null; }
+      function plDropRowClear() { if (c._plDropRow) { c._plDropRow.classList.remove('drag-over'); c._plDropRow = null; } }
       c.addEventListener('dragover', function (e) {
         if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
         e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch (er) { }
+        var tr = plDropRowOf(e);
+        if (c._plDropRow !== tr) { plDropRowClear(); c._plDropRow = tr; if (tr) tr.classList.add('drag-over'); }
+      });
+      c.addEventListener('dragleave', function (e) {
+        if (!e.relatedTarget || !c.contains(e.relatedTarget)) plDropRowClear();
       });
       c.addEventListener('drop', function (e) {
         if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
         e.preventDefault();
-        addDroppedToPlaylist(S.view.slice(3), plDroppedPaths(e));
+        var tr = plDropRowOf(e);
+        plDropRowClear();
+        addDroppedToPlaylist(S.view.slice(3), plDroppedPaths(e), tr ? tr.dataset.path : null);
+      });
+    }
+    // V4.4：框选多选——空白处按下拖出选框，命中行入 selection（Ctrl 追加、否则替换）；
+    // 行/表头/按钮/输入框上不启动（行要留给点击与拖拽排序）；只命中已渲染行（窗口化限制）
+    if (!c._marqueeBound) {
+      c._marqueeBound = true;
+      c.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        var inTableView = S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey) || S.view.indexOf('pl:') === 0;
+        if (!inTableView) return;
+        if (e.target.closest && e.target.closest('tr.am-tr, thead, .am-view-head, .am-ms-bar, button, input, select, a, .am-az')) return;
+        if (e.target === c && e.offsetX >= c.clientWidth) return; // 滚动条
+        var sx = e.clientX, sy = e.clientY, box = null, rect = null;
+        function mv(ev) {
+          if (!box && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 6) return; // 位移阈值，勿抢单击
+          if (!box) { box = el('div', 'am-marquee'); document.body.appendChild(box); }
+          var x = Math.min(sx, ev.clientX), y = Math.min(sy, ev.clientY);
+          var w = Math.abs(ev.clientX - sx), h = Math.abs(ev.clientY - sy);
+          box.style.cssText = 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px';
+          rect = { l: x, t: y, r: x + w, b: y + h };
+          ev.preventDefault();
+        }
+        function up(ev) {
+          document.removeEventListener('mousemove', mv, true);
+          document.removeEventListener('mouseup', up, true);
+          if (box) box.remove();
+          if (!rect) return;
+          if (!S.msSel) S.msSel = new Set();
+          if (!(ev.ctrlKey || ev.metaKey)) S.msSel.clear();
+          var rows = c.querySelectorAll('tr.am-tr'), hit = 0;
+          for (var ri = 0; ri < rows.length; ri++) {
+            var rr = rows[ri].getBoundingClientRect();
+            if (rr.bottom < rect.t || rr.top > rect.b || rr.right < rect.l || rr.left > rect.r) continue;
+            S.msSel.add(rows[ri].dataset.path); hit++;
+          }
+          var keepScroll = c.scrollTop;
+          var selectedPaths = new Set(S.msSel);
+          // 不重绘整个视图：保留窗口化列表、表头和滚动位置，只同步当前已渲染行的选中状态
+          var allRows = c.querySelectorAll('tr.am-tr');
+          for (var si = 0; si < allRows.length; si++) {
+            var isSel = selectedPaths.has(allRows[si].dataset.path);
+            allRows[si].classList.toggle('sel', isSel);
+            var check = allRows[si].querySelector('.am-ms-ck');
+            if (check) check.checked = isSel;
+          }
+          var cnt = c.querySelector('.am-ms-count');
+          if (cnt) cnt.textContent = '已选 ' + S.msSel.size + ' 首';
+          if (!S.msOn && S.msSel.size) {
+            var tb = c.querySelector('.am-ms-bar');
+            if (!tb) {
+              var beforeH = c.querySelector('.am-ms-bar') ? c.querySelector('.am-ms-bar').offsetHeight : 0;
+              renderView();
+              var afterH = c.querySelector('.am-ms-bar') ? c.querySelector('.am-ms-bar').offsetHeight : 0;
+              c.scrollTop = Math.max(0, keepScroll + afterH - beforeH);
+              if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
+              setTimeout(function () {
+                c.scrollTop = Math.max(0, keepScroll + afterH - beforeH);
+                if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
+              }, 0);
+            }
+          }
+        }
+        document.addEventListener('mousemove', mv, true);
+        document.addEventListener('mouseup', up, true);
       });
     }
     // V4.3.24：同视图同排序重绘时复用旧头部（搜索框），只删头部以外的子节点。
@@ -919,9 +993,11 @@
     }
 
     // V4.3.22：多选模式只在 歌曲/专辑详情/喜爱歌曲 存活，切走即退出
-    if (S.msOn && !(S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey))) {
+    if (S.msOn && !(S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey) || S.view.indexOf('pl:') === 0)) {
       S.msOn = false; if (S.msSel) S.msSel.clear();
     }
+    // V4.4：快速多选（Ctrl/Shift/框选）不换视图沿用，换视图即清空（msOn 复选框模式维持原行为）
+    if (S._msView !== S.view) { S._msView = S.view; if (!S.msOn && S.msSel && S.msSel.size) S.msSel.clear(); }
 
     if (S.view === 'stream') { renderStreamView(c); return; }
     if (S.view === 'downloads') { if (window.annieAMDownload) window.annieAMDownload.render(c); return; } // V4.3.22：下载情况
@@ -1130,7 +1206,7 @@
   var AM_ROW_H_COVER = 52, AM_ROW_H_PLAIN = 41, AM_WINDOW_MIN = 300, AM_OVERSCAN = 15;
   function buildTrackRow(t, i, opts) {
     var m = trackMeta(t);
-    var selected = S.msOn && S.msSel && S.msSel.has(t.path);
+    var selected = S.msSel && S.msSel.has(t.path);
     var tr = el('tr', 'am-tr' + (state.currentPath === t.path && !S.msOn ? ' cur' : '') + (selected ? ' sel' : ''));
     tr.dataset.path = t.path; // 定位播放文件用
     if (S.msOn) { // V4.3.22：多选模式——行首复选框，点击行=切换选中（不播放）
@@ -1193,8 +1269,13 @@
       tr.addEventListener('dragend', function () { S._plDragPath = null; tr.classList.remove('drag-over'); });
     }
     if (S.msOn) {
-      tr.onclick = function () { msToggle(t.path, tr, tr.querySelector('.am-ms-ck')); };
+      tr.onclick = function (e) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) { rowSelClick(e, t, opts); return; } // 修饰键走快速多选
+        msToggle(t.path, tr, tr.querySelector('.am-ms-ck')); S._selAnchor = t.path;
+      };
     } else {
+      // V4.4：单击行 = 快速多选操作（Ctrl 切换 / Shift 连选 / 普通单击清空选择并记锚点）；播放仍双击
+      tr.onclick = function (e) { if (!rowSelClick(e, t, opts)) S._selAnchor = t.path; };
       tr.ondblclick = function () { playList(opts.tracks, i); };
       // V4.3.21：行右键 = ⊕ 菜单（同一入口，坐标取鼠标位置）
       tr.oncontextmenu = function (e) { e.preventDefault(); openAddMenu(e.clientX, e.clientY, t.path); };
@@ -1215,6 +1296,30 @@
     renderView(); // 本地先重排即时反馈，持久化随后
     window.mine.playlistReorder(plId, arr).then(function (pls) { S.playlists = pls; }).catch(function () { });
   }
+  /* V4.4：快速多选单击处理——Ctrl+单击切换选中 / Shift+单击从锚点连选（锚点=上次点击行）/
+     普通单击清空快速选择；返回 true 表示已消费本次点击（false=记锚点后照常） */
+  function rowSelClick(e, t, opts) {
+    if (!S.msSel) S.msSel = new Set();
+    if (e.ctrlKey || e.metaKey) {
+      if (S.msSel.has(t.path)) S.msSel.delete(t.path); else S.msSel.add(t.path);
+      S._selAnchor = t.path;
+      renderView();
+      return true;
+    }
+    if (e.shiftKey && S._selAnchor && opts.tracks) {
+      var a = -1, b = -1;
+      opts.tracks.forEach(function (x, xi) { if (x.path === S._selAnchor) a = xi; if (x.path === t.path) b = xi; });
+      if (a >= 0 && b >= 0) {
+        S.msSel.clear();
+        for (var k = Math.min(a, b); k <= Math.max(a, b); k++) S.msSel.add(opts.tracks[k].path);
+        renderView();
+        return true;
+      }
+      return false;
+    }
+    if (S.msSel.size) { S.msSel.clear(); renderView(); }
+    return false;
+  }
   function msToggle(p, tr, ck) {
     if (!S.msSel) S.msSel = new Set();
     if (S.msSel.has(p)) { S.msSel.delete(p); tr.classList.remove('sel'); if (ck) ck.checked = false; }
@@ -1233,16 +1338,61 @@
       renderView();
     };
     bar.appendChild(bAll);
-    var bDel = el('button', 'am-btn am-btn-danger', '🗑 删除选中');
-    bDel.onclick = function () {
-      if (!S.msSel || !S.msSel.size) { try { proToast('先勾选要删除的歌曲'); } catch (e) { } return; }
-      deleteTracks(Array.from(S.msSel));
+    // V4.4：顶部工具条独立歌单选择器——不复用右键 R.pop，避免全局外点关闭逻辑立即收掉菜单
+    var bAddPl = el('button', 'am-btn', '📥 加入播放列表…');
+    bAddPl.onclick = function (e) {
+      if (!S.msSel || !S.msSel.size) { try { proToast('先选中歌曲'); } catch (er) { } return; }
+      var paths = Array.from(S.msSel);
+      var menu = document.createElement('div');
+      menu.className = 'am-ms-pl-menu';
+      menu.style.cssText = 'position:fixed;z-index:1001;left:' + e.clientX + 'px;top:' + (e.clientY + 8) + 'px;min-width:190px;max-height:320px;overflow:auto';
+      menu.appendChild(el('div', 'am-pop-head', '加入 ' + paths.length + ' 首到播放列表'));
+      if (!S.playlists.length) menu.appendChild(el('div', 'am-pop-hint', '还没有本地播放列表'));
+      S.playlists.forEach(function (pl) {
+        var it = el('button', 'am-pop-item', pl.name + '（' + pl.paths.length + ' 首）');
+        it.onclick = function () {
+          window.mine.playlistAdd(pl.id, paths).then(function (pls) {
+            S.playlists = pls; menu.remove(); renderSidebar();
+            try { if (typeof proToast === 'function') proToast('已加入「' + pl.name + '」'); } catch (er) { }
+          });
+        };
+        menu.appendChild(it);
+      });
+      var close = function (ev) {
+        if (!menu.contains(ev.target) && ev.target !== bAddPl) { menu.remove(); document.removeEventListener('mousedown', close, true); }
+      };
+      document.body.appendChild(menu);
+      document.addEventListener('mousedown', close, true);
     };
-    bar.appendChild(bDel);
-    var bExit = el('button', 'am-btn', '✕ 退出多选');
+    bar.appendChild(bAddPl);
+    if (S.view.indexOf('pl:') === 0) {
+      // 歌单视图：批量「从本歌单移除」（复用 playlistReorder 整组替换 paths，不碰曲库/其他歌单）
+      var bRm = el('button', 'am-btn am-btn-danger', '✕ 从歌单移除选中');
+      bRm.onclick = function () {
+        if (!S.msSel || !S.msSel.size) { try { proToast('先选中歌曲'); } catch (e) { } return; }
+        var plId = S.view.slice(3);
+        var pl = S.playlists.find(function (p) { return p.id === plId; });
+        if (!pl) return;
+        var del = new Set(S.msSel);
+        window.mine.playlistReorder(plId, pl.paths.filter(function (p) { return !del.has(p); })).then(function (pls) {
+          S.playlists = pls; S.msOn = false; if (S.msSel) S.msSel.clear();
+          renderSidebar(); renderView();
+        });
+      };
+      bar.appendChild(bRm);
+    } else {
+      var bDel = el('button', 'am-btn am-btn-danger', '🗑 删除选中');
+      bDel.onclick = function () {
+        if (!S.msSel || !S.msSel.size) { try { proToast('先勾选要删除的歌曲'); } catch (e) { } return; }
+        deleteTracks(Array.from(S.msSel));
+      };
+      bar.appendChild(bDel);
+    }
+    var bExit = el('button', 'am-btn', '✕ 取消选择');
     bExit.onclick = msExit;
     bar.appendChild(bExit);
     bar.appendChild(el('span', 'am-ms-count', '已选 ' + (S.msSel ? S.msSel.size : 0) + ' 首'));
+    bar.classList.add('am-ms-float');
     c.appendChild(bar);
   }
   /* 删除确认：默认仅移出曲库显示；勾选后连同源文件（系统回收站，可恢复） */
@@ -1305,7 +1455,7 @@
       plId: inPlaylist ? S.view.slice(3) : null,
       tracks: tracks
     };
-    if (S.msOn) renderMsToolbar(c, tracks); // V4.3.22：多选工具条（全选/删除选中/退出）
+    if (S.msOn || (S.msSel && S.msSel.size)) renderMsToolbar(c, tracks); // V4.3.22：多选工具条（全选/删除选中/退出）；V4.4 快速多选有选中即显示
     tb.innerHTML = '<thead><tr>' + (S.msOn ? '<th style="width:34px"></th>' : '') + (opts.withCover ? '<th style="width:46px"></th>' : '') +
       '<th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:96px"></th></tr></thead>';
     var body = el('tbody');
@@ -1499,11 +1649,11 @@
       return out;
     } catch (er) { return []; }
   }
-  function addDroppedToPlaylist(plId, paths) {
+  function addDroppedToPlaylist(plId, paths, before) {
     if (!paths.length) { try { if (typeof proToast === 'function') proToast('没有可识别的音频文件'); } catch (e) { } return; }
     var pl0 = S.playlists.find(function (p) { return p.id === plId; });
     var oldLen = pl0 ? pl0.paths.length : 0;
-    window.mine.playlistAdd(plId, paths).then(function (pls) { // 主进程按 path 去重
+    window.mine.playlistAdd(plId, paths, before).then(function (pls) { // 主进程按 path 去重
       S.playlists = pls; renderSidebar();
       if (S.view === 'pl:' + plId) renderView();
       var pl1 = pls.find(function (p) { return p.id === plId; });
@@ -1517,12 +1667,14 @@
   function openAddMenu(x, y, trackPath) {
     var pop = R.pop;
     pop.innerHTML = '';
-    pop.appendChild(el('div', 'am-pop-head', '添加到播放列表')); // V4.4：改不可点分组标题（原 .am-pop-item 可点样式无功能，误导点击）
+    // V4.4：多选感知——右键/⊕ 的目标行在快速选择集合内时，歌单/删除/标签操作作用于整组选中（与 fb2k forEachSel 对齐）
+    var selPaths = (S.msSel && S.msSel.size > 1 && S.msSel.has(trackPath)) ? Array.from(S.msSel) : [trackPath];
+    pop.appendChild(el('div', 'am-pop-head', selPaths.length > 1 ? '已选 ' + selPaths.length + ' 首' : '添加到播放列表')); // V4.4：改不可点分组标题（原 .am-pop-item 可点样式无功能，误导点击）
     pop.appendChild(el('div', 'am-pop-sep'));
     var mte = el('button', 'am-pop-item', '✏️ 编辑标签…');
     mte.onclick = function () {
       pop.classList.remove('on');
-      if (window.annieTagEdit) window.annieTagEdit.open({ path: trackPath });
+      if (window.annieTagEdit) window.annieTagEdit.open(selPaths.length > 1 ? { paths: selPaths } : { path: trackPath });
     };
     pop.appendChild(mte);
     var mch = el('button', 'am-pop-item', '🔎 在线匹配歌词 / 封面…');
@@ -1568,15 +1720,37 @@
       } else annieSimilar.radio.start(trackPath);
     };
     pop.appendChild(mrd);
-    // V4.3.22：多选（歌曲/专辑详情/喜爱歌曲视图）——进入多选模式并选中本行
-    if (S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey)) {
+    // V4.3.22：多选（歌曲/专辑详情/喜爱歌曲/播放列表视图）——进入多选模式并选中本行
+    if (S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey) || S.view.indexOf('pl:') === 0) {
       var mms = el('button', 'am-pop-item', '☑ 多选');
       mms.onclick = function () { pop.classList.remove('on'); S.msOn = true; S.msSel = new Set([trackPath]); renderView(); };
       pop.appendChild(mms);
     }
-    // V4.3.22：删除——弹窗勾选：仅移出曲库显示 / 连同源文件入回收站
-    var mdel = el('button', 'am-pop-item', '🗑 删除…');
-    mdel.onclick = function () { pop.classList.remove('on'); deleteTracks([trackPath]); };
+    // V4.4：歌单视图里右键「移除」默认只移出本歌单（不碰曲库/其他歌单）——
+    // 此前只有「删除…」（tracksHide 全歌单同步剔除），用户删歌单1的歌把歌单2也删了
+    if (S.view.indexOf('pl:') === 0) {
+      var mrm = el('button', 'am-pop-item', selPaths.length > 1 ? '✕ 从本播放列表移除 ' + selPaths.length + ' 首' : '✕ 从本播放列表移除');
+      mrm.onclick = function () {
+        pop.classList.remove('on');
+        var plId = S.view.slice(3);
+        var pl = S.playlists.find(function (p) { return p.id === plId; });
+        if (!pl) return;
+        if (selPaths.length > 1) { // 批量：复用 playlistReorder 整组替换 paths
+          var del = new Set(selPaths);
+          window.mine.playlistReorder(plId, pl.paths.filter(function (p) { return !del.has(p); })).then(function (pls) {
+            S.playlists = pls; if (S.msSel) S.msSel.clear(); renderSidebar(); renderView();
+          });
+        } else {
+          window.mine.playlistRemove(plId, trackPath).then(function (pls) {
+            S.playlists = pls; renderSidebar(); renderView();
+          });
+        }
+      };
+      pop.appendChild(mrm);
+    }
+    // V4.3.22：删除——弹窗勾选：仅移出曲库显示 / 连同源文件入回收站（从曲库删=所有歌单同步移除）
+    var mdel = el('button', 'am-pop-item', selPaths.length > 1 ? '🗑 从曲库删除 ' + selPaths.length + ' 首…' : '🗑 从曲库删除…');
+    mdel.onclick = function () { pop.classList.remove('on'); deleteTracks(selPaths); };
     pop.appendChild(mdel);
     // V4.3.19：歌词海报（仅当前播放且有歌词的行；竖版 1080×1620，含封面/音质/节选歌词/版本号）
     try {
@@ -1593,9 +1767,10 @@
     pop.appendChild(el('div', 'am-pop-sep'));
     // V4.3.26：歌单 >8 个收敛为二级浮层，避免右键菜单被歌单列表顶出屏幕
     function doAddToPl(pl) {
-      window.mine.playlistAdd(pl.id, [trackPath]).then(function (pls) {
+      window.mine.playlistAdd(pl.id, selPaths).then(function (pls) {
         S.playlists = pls;
         if (S.view === 'pl:' + pl.id) renderView();
+        try { if (selPaths.length > 1 && typeof proToast === 'function') proToast('📥 已把 ' + selPaths.length + ' 首加入「' + pl.name + '」'); } catch (e) { }
       });
     }
     if (S.playlists.length > 8) {
@@ -1616,7 +1791,7 @@
       amPrompt('播放列表名称', '新建播放列表', function (name) {
         window.mine.playlistCreate(name).then(function (pls) {
           S.playlists = pls;
-          return window.mine.playlistAdd(pls[pls.length - 1].id, [trackPath]);
+          return window.mine.playlistAdd(pls[pls.length - 1].id, selPaths);
         }).then(function (pls) { S.playlists = pls; renderSidebar(); });
       });
     };

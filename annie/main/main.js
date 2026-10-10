@@ -7,13 +7,13 @@ const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads'); // EXP 7.28：曲库扫描 Worker
 const { EngineClient } = require('./engineClient');
-const flyout = require('./flyout');
 const library = require('./library');
 const streaming = require('./streaming');
 const onlineMatch = require('./onlineMatch');
 const analyzer = require('./analyzer');
 const tagWriter = require('./tagWriter'); // V3.5.9：曲库标签编辑（与下载写标签同一实现）
 const qobuz = require('./qobuz'); // V4.3.6：Qobuz 在线播放/下载（用户登录自己的付费账号）
+const streamCache = require('./streamCache'); // V4.4：流媒体播放缓存（边播边存 + LRU 上限）
 const dlManager = require('./dlManager'); // V4.3.22：下载任务管理器（下载情况视图）
 const remote = require('./remote'); // V4.3.12：局域网手机遥控（脑暴 9.1）
 
@@ -516,25 +516,6 @@ function registerIpc() {
     mainWindow.setFullScreen(!!v);
   });
 
-  /* V4.4：AnnieFlyout 伴侣进程（任务栏小组件 + 切歌弹窗）。
-   * 开关持久化在 store.ui.flyout；启动/停止即拉起/杀掉 AnnieFlyout.exe。
-   * SMTC 桥：'flyout:push' 渲染层推曲目/状态 → stdin；按钮命令 → 'flyout:cmd' 回渲染层。 */
-  const startFlyout = () => flyout.start({
-    onCmd: (cmd) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('flyout:cmd', cmd); } catch { } },
-  });
-  global.__annieStartFlyout = startFlyout;
-  ipcMain.on('flyout:push', (_e, obj) => flyout.send(obj));
-  ipcMain.handle('flyout:get', () => {
-    const st = loadStore();
-    return { enabled: !!(st.ui && st.ui.flyout), available: !!flyout.resolveFlyout(), running: flyout.isRunning() };
-  });
-  ipcMain.handle('flyout:set', (_e, on) => {
-    const st = loadStore(); st.ui = st.ui || {}; st.ui.flyout = !!on; touchStore(); flushStore();
-    if (on) return startFlyout();
-    flyout.stop();
-    return true;
-  });
-
   // V3.5.8：全局快捷键开关（持久化在 store.globalHotkeys，默认开）
   ipcMain.handle('hotkeys:get', () => loadStore().globalHotkeys !== false);
   ipcMain.handle('hotkeys:setEnabled', (_e, on) => {
@@ -787,12 +768,18 @@ function registerIpc() {
     saveStore({ playlists: store.playlists.filter(p => p.id !== id) });
     return loadStore().playlists;
   });
-  ipcMain.handle('lib:playlist:add', (_e, id, paths) => {
+  ipcMain.handle('lib:playlist:add', (_e, id, paths, before) => {
     const store = loadStore();
     const pl = store.playlists.find(p => p.id === id);
     if (pl && Array.isArray(paths)) {
-      for (const p of paths) if (typeof p === 'string' && !pl.paths.includes(p)) pl.paths.push(p);
-      saveStore({ playlists: store.playlists });
+      const add = [];
+      for (const p of paths) if (typeof p === 'string' && !pl.paths.includes(p) && add.indexOf(p) < 0) add.push(p);
+      if (add.length) {
+        // before=目标行路径时插到该行前（拖文件指定落点），否则追加到底部
+        const at = (typeof before === 'string') ? pl.paths.indexOf(before) : -1;
+        if (at >= 0) pl.paths.splice(at, 0, ...add); else pl.paths.push(...add);
+        saveStore({ playlists: store.playlists });
+      }
     }
     return store.playlists;
   });
@@ -1654,6 +1641,7 @@ function registerIpc() {
   // V4.3.4：批量匹配歌词（≥80% 自动存旁挂 .lrc，进度经 match:batch:event 推送）
   ipcMain.handle('match:batchStart', (_e, paths, opts) => onlineMatch.batchStart(mainWindow, paths || [], opts || {}));
   ipcMain.handle('match:batchCancel', () => { onlineMatch.batchCancel(); return { ok: true }; });
+  ipcMain.handle('match:autoLyric', (_e, p) => onlineMatch.autoLyric({ path: p })); // V4.4：播放时自动在线补歌词（仅回显不落盘）
 
   // V3.5.9：曲库标签编辑——选封面图 / 写回标签（ffmpeg 流复制，不重编码）
   ipcMain.handle('tag:pickCover', async () => {
@@ -1971,10 +1959,10 @@ if (global.__svlxBoot) {
   setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
   qobuz.init({ loadStore, flushStore, touchStore });
+  streamCache.init({ loadStore, flushStore, touchStore }); // V4.4：两分支共用，勿漏
   initRemote(); // V4.3.12：手机遥控（两分支共用，勿漏——漏了就是"配对码显示正常但永远不对"）
   setupImageReferer();
   engine.start();
-  if ((loadStore().ui || {}).flyout && global.__annieStartFlyout) global.__annieStartFlyout(); // V4.4：伴侣进程随开关启动
   // 预热：引擎首次 devices.list 需 ~20s（WASAPI 枚举），后台预跑避免 UI 超时
   engine.call('devices.list', {}, 90000).catch(() => { });
   createWindow();
@@ -2009,6 +1997,7 @@ if (!gotLock) {
     setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
     qobuz.init({ loadStore, flushStore, touchStore });
+    streamCache.init({ loadStore, flushStore, touchStore }); // V4.4：流媒体播放缓存
     initRemote(); // V4.3.12：手机遥控
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入
     engine.start(); // 引擎拉起失败不阻塞 UI，调用时再报错

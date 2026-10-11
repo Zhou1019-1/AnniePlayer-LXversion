@@ -405,6 +405,21 @@
   // V4.3.16：进度条拖动——pointerdown/move/up 全程本地预览（填充+时间跟手），松手才 seek。
   // 原三处进度条（顶栏/沉浸/迷你）只有 onclick，无法拖动；在线曲目引擎事件 10Hz 更显迟钝，预览期间以 state.seeking 屏蔽位置回写。
   function bindProgDrag(bar, fillEl, curEl, hooks) { // hooks（可选）：{ onPreview(秒), onSeek(从秒, 到秒) }——V4.4 彩胶表把联动用
+    // V4.4：hover 时间预览气泡（挂父级进度行——主进度条自身 overflow:hidden 会裁掉气泡）
+    var tipHost = bar.parentElement || bar;
+    var tip = el('span', 'am-prog-tip');
+    tip.style.display = 'none';
+    tipHost.appendChild(tip);
+    function showTipAt(clientX) {
+      if (!state.currentPath || !(S.dur > 0)) { tip.style.display = 'none'; return; }
+      var rb = bar.getBoundingClientRect(), rp = tipHost.getBoundingClientRect();
+      var f = rb.width > 0 ? Math.min(1, Math.max(0, (clientX - rb.left) / rb.width)) : 0;
+      tip.textContent = fmtTime(f * S.dur);
+      tip.style.left = (rb.left - rp.left + f * rb.width) + 'px';
+      tip.style.display = 'block';
+    }
+    bar.addEventListener('pointermove', function (ev) { if (!state.seeking) showTipAt(ev.clientX); });
+    bar.addEventListener('pointerleave', function () { if (!state.seeking) tip.style.display = 'none'; });
     bar.addEventListener('pointerdown', function (e) {
       if (!state.currentPath || !(S.dur > 0)) return;
       e.preventDefault();
@@ -414,6 +429,7 @@
         var f = r.width > 0 ? Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)) : 0;
         fillEl.style.width = (f * 100) + '%';
         if (curEl) curEl.textContent = fmtTime(f * S.dur);
+        showTipAt(ev.clientX); // 拖拽中气泡持续跟手
         if (hooks && hooks.onPreview) hooks.onPreview(f * S.dur);
         return f;
       };
@@ -424,6 +440,7 @@
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
         state.seeking = false;
+        tip.style.display = 'none';
         seek(frac * S.dur);
         if (hooks && hooks.onSeek) hooks.onSeek(fromPos, frac * S.dur);
       };

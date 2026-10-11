@@ -49,6 +49,7 @@
   AM.enterMini = enterMini;
   AM.buildMini = buildMini;
   AM.refreshBadge = refreshBadge;
+  AM.refreshCacheBadge = refreshCacheBadge;
 
   /* ================= 播放模式 / 播放定时（仅本地播放生效） ================= */
   function syncModeBtn() {
@@ -135,10 +136,13 @@
   function renderQueuePanel(box) {
     box.innerHTML = '';
     /* V4.3：沉浸队列抽屉收回小标签——贴在抽屉左缘外侧垂直居中（收回指引此前不明确） */
-    if (box === R.immQ) {
+    if (box === R.immQ || box === R.qDrawer) {
       var fold = el('button', 'am-imm-q-fold', '❯');
       fold.title = '收回面板';
-      fold.onclick = function () { setImmQueue(false); };
+      fold.onclick = function () {
+        if (box === R.qDrawer) toggleMainQueue(false);
+        else setImmQueue(false);
+      };
       box.appendChild(fold);
     }
     var tabs = el('div', 'am-q-tabs');
@@ -322,7 +326,15 @@
     vol.appendChild(el('span', null, '🔊'));
     R.immVol = document.createElement('input');
     R.immVol.type = 'range'; R.immVol.min = 0; R.immVol.max = 100; R.immVol.className = 'am-imm-volin';
-    R.immVol.oninput = function () { if (R.vol) { R.vol.value = R.immVol.value; R.vol.oninput(); } };
+    R.immVol.oninput = function () {
+      if (R.vol) { R.vol.value = R.immVol.value; R.vol.oninput(); }
+      // 暂停时没有进度 tick，直接给一次音量 OSD（播放时由 immOsdTick 统一检测，值已同步不会重复弹）
+      if (S.imm) {
+        var v = +R.immVol.value;
+        showImmOsd('<span class="am-imm-osd-ic">' + (v === 0 ? '🔇' : (v < 50 ? '🔈' : '🔊')) + '</span><span class="am-imm-osd-vol">' + v + '%</span>');
+        _immLastVol = v;
+      }
+    };
     vol.appendChild(R.immVol);
     ctl.appendChild(vol);
     var bP = el('button', 'am-imm-btn', '⏮'); bP.onclick = prev;
@@ -348,39 +360,99 @@
     prog.appendChild(R.immCur); prog.appendChild(bar); prog.appendChild(R.immRemain);
     return prog;
   }
-  /* ---------- 彩胶表把联动：附加旋转走 CSS rotate 属性（与 CSS 动画的 transform 天然叠加） ----------
-     拖动进度条 = 表把：按 scrub 的秒数比例跟手转（前顺时针/后逆时针，暂停时也生效）；
-     松手跳转 = 先朝跳转方向甩一段（转幅随跳转距离），到位后按整圈归一（无回卷视觉残留），底盘转速动画照常。 */
+  /* ---------- 彩胶旋转：rAF 惯性物理（暂停减速 / 恢复加速 / 切歌重启）+ 表把联动 ----------
+     旧实现走 CSS animation + animation-play-state（瞬停瞬起）；V4.4 改为逐帧积分：
+     omega 按指数曲线逼近目标转速（播放=360/speedSec，暂停=0），视觉上像真实唱盘的惯性。
+     表把甩碟与跟手转动并入同一角度：transform = rotate(angle + crownOffset)，每帧统一写入。 */
   var _crownOffset = 0, _crownDragBase = null, _crownT = 0;
   var CROWN_DEG_PER_SEC = 6; // 表把手感：每 scrub 1 秒音频转 6°（一分钟音频=一整圈）
+  var _vinylAngle = 0, _vinylOmega = 0, _vinylRAF = 0, _vinylLastT = 0, _vinylSpeedSec = 18, _vinylSeek = null;
+  var VINYL_TAU_SPIN = 1.4;   // 启动加速时间常数（秒，越大越肉）
+  var VINYL_TAU_STOP = 0.85;  // 停转减速时间常数
+  function vinylWriteTransform() {
+    if (R.immVinyl) R.immVinyl.style.transform = 'rotate(' + (_vinylAngle + _crownOffset) + 'deg)';
+  }
+  function vinylStep(t) {
+    // 时间戳倒挂保护：看门狗用 performance.now() 补步后，迟到的 rAF 帧可能带着更早的时间戳
+    // 到达（rAF t 是渲染时刻，可早于回调执行时刻），负 dt 会把 ω 反向修正、盘体越转越慢。
+    if (_vinylLastT && t <= _vinylLastT) return false;
+    if (!_vinylLastT) _vinylLastT = t;
+    var dt = Math.min(0.05, (t - _vinylLastT) / 1000); // t 单位是毫秒，先除 1000 转秒再 clamp（曾把括号括错，dt 缩小 100 倍致盘体几乎不转）
+    _vinylLastT = t;
+    // 表把甩碟推进（easeOutCubic 550ms，结束后整圈归一防数值膨胀）
+    if (_vinylSeek) {
+      var p = Math.min(1, (performance.now() - _vinylSeek.t0) / 550);
+      var e = 1 - Math.pow(1 - p, 3);
+      _crownOffset = _vinylSeek.base + _vinylSeek.delta * e;
+      if (p >= 1) {
+        _crownOffset = ((_crownOffset % 360) + 360) % 360;
+        _vinylSeek = null;
+      }
+    }
+    // 切歌转场期间盘体目标转速视为 0（视觉淡出后从静止启动）
+    var switching = R.imm.classList.contains('am-vinyl-switch');
+    var target = (state.playing && !switching) ? 360 / Math.max(4, _vinylSpeedSec) : 0;
+    var tau = target > _vinylOmega ? VINYL_TAU_SPIN : VINYL_TAU_STOP;
+    _vinylOmega += (target - _vinylOmega) * (1 - Math.exp(-dt / tau));
+    if (target === 0 && _vinylOmega < 0.35) _vinylOmega = 0;
+    // 停稳后挂 still 类（暂停慢速流光）；阈值迟滞避免临界点反复 toggle
+    var still = _vinylOmega === 0 && target === 0;
+    if (R.immVinyl.classList.contains('am-vinyl-still') !== still) R.immVinyl.classList.toggle('am-vinyl-still', still);
+    _vinylAngle = (_vinylAngle + _vinylOmega * dt) % 360000; // 限幅防超长会话数值膨胀
+    vinylWriteTransform();
+  }
+  function vinylFrame(t) {
+    _vinylRAF = 0;
+    if (!R.immVinyl || !S.imm) { _vinylLastT = 0; return; }
+    vinylStep(t);
+    _vinylRAF = requestAnimationFrame(vinylFrame);
+  }
+  /* V4.4：rAF 看门狗——某些环境（窗口遮挡误判/后台节流开关失效）rAF 会被饿到 ~1fps，
+     此时用计时器手工补一步；计时器在 backgroundThrottling:false 下不受遮挡节流影响。 */
+  var _vinylWatch = 0;
+  function vinylWatchTick() {
+    if (!S.imm || !R.immVinyl) { if (_vinylWatch) { clearInterval(_vinylWatch); _vinylWatch = 0; } return; }
+    if (_vinylLastT && performance.now() - _vinylLastT > 60) vinylStep(performance.now());
+  }
+  function vinylStartSpin() {
+    _vinylLastT = 0;
+    if (!_vinylRAF) _vinylRAF = requestAnimationFrame(vinylFrame);
+    if (!_vinylWatch) _vinylWatch = setInterval(vinylWatchTick, 30);
+  }
+  function vinylStopSpin() {
+    if (_vinylRAF) { cancelAnimationFrame(_vinylRAF); _vinylRAF = 0; }
+    if (_vinylWatch) { clearInterval(_vinylWatch); _vinylWatch = 0; }
+    _vinylLastT = 0; _vinylSeek = null;
+  }
+  /* 切歌：盘体短暂淡出微缩再淡入，转速归零后随播放自然加速（rAF 检测 am-vinyl-switch 类） */
+  function vinylSwitch() {
+    if (!R.immVinyl || !R.imm) return;
+    _vinylOmega = 0;
+    R.imm.classList.remove('am-vinyl-switch');
+    void R.immVinyl.offsetWidth;
+    R.imm.classList.add('am-vinyl-switch');
+    clearTimeout(vinylSwitch._t);
+    vinylSwitch._t = setTimeout(function () { if (R.imm) R.imm.classList.remove('am-vinyl-switch'); }, 900);
+  }
   function vinylCrownApply(deg, transition) {
     if (!R.immVinyl) return;
-    R.immVinyl.style.transition = transition || 'none';
-    R.immVinyl.style.rotate = deg + 'deg';
+    _crownOffset = deg; // transition 参数已废弃（rAF 统一驱动，保留签名兼容调用处）
+    vinylWriteTransform();
   }
   function vinylCrownPreview(sec) {
     if (!R.immVinyl) return;
+    _vinylSeek = null; // 跟手打断甩碟动画
     if (_crownDragBase == null) _crownDragBase = { sec: sec, offset: _crownOffset };
     clearTimeout(_crownT);
     _crownOffset = _crownDragBase.offset + (sec - _crownDragBase.sec) * CROWN_DEG_PER_SEC;
-    vinylCrownApply(_crownOffset);
+    vinylWriteTransform();
   }
   function vinylCrownSeek(from, to) {
     if (!R.immVinyl) { _crownDragBase = null; return; }
     _crownDragBase = null;
     var dir = to >= from ? 1 : -1;
     var burst = dir * Math.min(540, 120 + Math.abs(to - from) * 8); // 跳得越远甩得越多，上限一圈半
-    _crownOffset += burst;
-    // 加速段：快甩到位（transition 接管，从当前角度平滑加速）
-    vinylCrownApply(_crownOffset, 'rotate .55s cubic-bezier(.2,.7,.25,1)');
-    clearTimeout(_crownT);
-    _crownT = setTimeout(function () {
-      if (!R.immVinyl) return;
-      // 归一段：去掉整圈（视觉原位），后续增量从干净角度继续累积——不做反向回卷
-      var norm = ((_crownOffset % 360) + 360) % 360;
-      _crownOffset = norm;
-      vinylCrownApply(norm);
-    }, 580);
+    _vinylSeek = { t0: performance.now(), base: _crownOffset, delta: burst };
   }
   function buildImmersive() {
     if (R.imm) return;
@@ -453,19 +525,52 @@
       vbar.appendChild(vctl);
       ov.appendChild(vbar);
       _crownOffset = 0; _crownDragBase = null; clearTimeout(_crownT); // 重建盘面清零表把状态
+      _vinylAngle = 0; _vinylOmega = 0; _vinylSeek = null; // 重建盘面从静止起步
       applyVinylStyle(); // 应用自定义（封面占比/盘体大小/透明度/位置/转速）并铺随机纹路
+      vinylStartSpin();  // rAF 惯性旋转（含暂停减速/恢复加速）
     }
     R.immQ = el('div', 'am-imm-queue');
     ov.appendChild(R.immQ);
+    buildImmDock(ov);   // V4.4：底部热区悬浮控制 dock（静止隐藏 chrome 后唤出）
+    R.immOsd = el('div', 'am-imm-osd'); // 中央状态提示（播放/暂停/音量）
+    ov.appendChild(R.immOsd);
     root.appendChild(ov);
     R.imm = ov;
+  }
+  /* ---------- V4.4：底部悬浮 dock（视频式：静止隐藏全部 chrome，鼠标探入屏幕底部热区唤出） ---------- */
+  function buildImmDock(ov) {
+    var zone = el('div', 'am-imm-dockzone');
+    var dock = el('div', 'am-imm-dock');
+    var prog = el('div', 'am-imm-prog');
+    R.immDockCur = el('span', 'am-imm-time', '0:00');
+    var bar = el('div', 'am-imm-bar');
+    R.immDockFill = el('div', 'am-imm-fill');
+    bar.appendChild(R.immDockFill);
+    bindProgDrag(bar, R.immDockFill, R.immDockCur, { onPreview: vinylCrownPreview, onSeek: vinylCrownSeek });
+    R.immDockRemain = el('span', 'am-imm-time', '-0:00');
+    prog.appendChild(R.immDockCur); prog.appendChild(bar); prog.appendChild(R.immDockRemain);
+    var ctl = el('div', 'am-imm-ctl');
+    var dP = el('button', 'am-imm-btn', '⏮');
+    dP.onclick = function () { prev(); };
+    R.immDockPlay = el('button', 'am-imm-btn am-imm-play', '▶');
+    R.immDockPlay.onclick = function () { togglePlay(); };
+    var dN = el('button', 'am-imm-btn', '⏭');
+    dN.onclick = function () { next(); };
+    ctl.appendChild(dP); ctl.appendChild(R.immDockPlay); ctl.appendChild(dN);
+    dock.appendChild(prog); dock.appendChild(ctl);
+    zone.appendChild(dock);
+    ov.appendChild(zone);
+    R.immDockZone = zone;
+    // 热区容器本身 pointer-events:none（不挡歌词点击）；进出判定在 window mousemove 里按 clientY 处理
   }
   /* 彩胶取色：复用频谱条的封面调色板分析（主色=胶片刻纹基色，强调色=标签圈描边），黑白封面回落主题强调色 */
   var _vinylUrl = undefined;
   function paintVinyl(url) {
     if (!R.immVinyl) return;
     if (url === _vinylUrl) return;
+    var first = _vinylUrl === undefined; // 进入沉浸/重建后的首次同步=当前曲，不做切歌转场
     _vinylUrl = url;
+    if (!first) vinylSwitch(); // 切歌：盘体淡出再从静止启动
     if (!url || !window.amVizColor) {
       R.immVinyl.style.removeProperty('--vinyl-c1'); R.immVinyl.style.removeProperty('--vinyl-c2');
       return;
@@ -640,7 +745,14 @@
       rs.setProperty('--am-vinyl-cover', vinylLsNum(VINYL_LS.cover, 73) + '%');
       rs.setProperty('--am-vinyl-scale', String(vinylLsNum(VINYL_LS.scale, 1)));
       rs.setProperty('--am-vinyl-op', String(vinylLsNum(VINYL_LS.op, 1)));
-      rs.setProperty('--am-vinyl-speed', String(vinylLsNum(VINYL_LS.speed, 18)));
+      var speedSec = vinylLsNum(VINYL_LS.speed, 18);
+      // V4.4：转速合法区间 4–60 秒/圈；旧版可能遗留越界值（如 198）导致盘体肉眼几乎不转，越界即回落默认并纠正存储
+      if (!(speedSec >= 4 && speedSec <= 60)) {
+        speedSec = 18;
+        try { localStorage.setItem(VINYL_LS.speed, '18'); } catch (e2) { }
+      }
+      rs.setProperty('--am-vinyl-speed', String(speedSec));
+      _vinylSpeedSec = speedSec; // rAF 惯性旋转读这个目标转速
     } catch (e) { }
     if (R.imm) {
       var corner = false, holeOff = false;
@@ -789,6 +901,9 @@
   /* 设置里切换沉浸样式：沉浸中立即重建布局（不退出沉浸，不打断播放） */
   AM.refreshImmMode = function () {
     if (!R.imm) return;
+    var wasVinyl = R.imm.classList.contains('am-imm-vinyl');
+    saveImmLayout(wasVinyl); // 重建前先存旧样式（immMode() 此刻已是新值）
+    vinylStopSpin();         // 旧盘 rAF 循环停掉（buildImmersive 内会按新样式重启）
     R.imm.remove(); R.imm = null; R.immVinyl = null; _vinylUrl = undefined;
     buildImmersive();
     var root = document.getElementById('am-root');
@@ -798,14 +913,161 @@
       syncAuxViews(); refreshAuxProgress();
       if (S.immLyrOn || immMode() === 'vinyl') buildLyrInto(R.immLyrBox);
       if (S.immQOn) renderQueuePanel(R.immQ);
+      restoreImmLayout(immMode() === 'vinyl');
     }
   };
+  /* ================= 沉浸模式：静止自动隐藏鼠标+chrome（视频式体验） =================
+   * 静止 2.5s：隐藏鼠标、顶栏、底部控制栏（经典内联 prog/ctl、彩胶 vbar）；
+   * 静止后把鼠标探入屏幕底部热区 → 悬浮 dock 淡入（含进度条+三键，可拖拽/点击）；
+   * 在非热区移动鼠标/按键/滚轮 → 完整 chrome 立即回来并重新计时。 */
+  var IMM_CURSOR_IDLE_MS = 2500, IMM_DOCK_ZONE_PX = 104, IMM_DOCK_LEAVE_MS = 450;
+  var immCursorTimer = 0, immDockLeaveT = 0;
+  function immRoot() { return document.getElementById('am-root'); }
+  function immChromeOff() {
+    var root = immRoot();
+    return !!(root && root.classList.contains('am-imm-chrome-off'));
+  }
+  function immPopOpen() {
+    // 弹层/右键菜单开着时不藏 chrome（💿 彩胶外观、歌词外观等正在交互）
+    return !!document.querySelector('#am-root .am-pop.on');
+  }
+  function immGoIdle() {
+    var root = immRoot();
+    if (!root || !S.imm || immPopOpen() || S.immQOn) return; // 弹层/待播面板交互中不藏
+    root.classList.add('am-imm-chrome-off', 'am-imm-cursor-off');
+    root.classList.remove('am-imm-dock-on');
+  }
+  function immShowChrome() {
+    var root = immRoot();
+    if (!root) return;
+    root.classList.remove('am-imm-chrome-off', 'am-imm-cursor-off', 'am-imm-dock-on');
+    clearTimeout(immCursorTimer);
+    immCursorTimer = setTimeout(immGoIdle, IMM_CURSOR_IDLE_MS);
+  }
+  function immDockEnter() {
+    if (!S.imm) return;
+    clearTimeout(immDockLeaveT);
+    clearTimeout(immCursorTimer); // dock 交互期间静止计时暂停
+    var root = immRoot();
+    // 只有静止隐藏后探入热区才唤出 dock；chrome 已显示时（内联/vbar 可见）不重复弹
+    if (root && root.classList.contains('am-imm-chrome-off')) {
+      root.classList.add('am-imm-dock-on');
+      root.classList.remove('am-imm-cursor-off');
+    }
+  }
+  function immDockLeave() {
+    if (!S.imm) return;
+    clearTimeout(immDockLeaveT);
+    immDockLeaveT = setTimeout(function () {
+      var root = immRoot();
+      if (!root || !S.imm) return;
+      root.classList.remove('am-imm-dock-on');
+      clearTimeout(immCursorTimer);
+      immCursorTimer = setTimeout(immGoIdle, 600);
+    }, IMM_DOCK_LEAVE_MS);
+  }
+  function immOnCursorActivity(e) {
+    if (!S.imm) return;
+    if (state.seeking) return; // 拖进度条期间不切换 chrome/dock（防止手拖出热区打断拖拽）
+    var inZone = e && (e.type === 'mousemove' || e.type === 'mousedown') &&
+      e.clientY != null && e.clientY >= window.innerHeight - IMM_DOCK_ZONE_PX;
+    var root = immRoot();
+    // 静止隐藏后探入热区，或已在 dock 中且仍在热区 → 维持 dock，不恢复其余 chrome
+    if (inZone && root && (root.classList.contains('am-imm-chrome-off') || root.classList.contains('am-imm-dock-on'))) {
+      immDockEnter();
+      return;
+    }
+    immShowChrome();
+  }
+  var IMM_CURSOR_EVENTS = ['mousemove', 'mousedown', 'wheel', 'touchstart', 'keydown'];
+  function immWinLeave() { immDockLeave(); } // 鼠标移出窗口：dock 延迟收起，进入静止
+  function immStartCursorWatch() {
+    clearTimeout(immCursorTimer);
+    IMM_CURSOR_EVENTS.forEach(function (ev) {
+      window.addEventListener(ev, immOnCursorActivity, { passive: true });
+    });
+    document.documentElement.addEventListener('mouseleave', immWinLeave);
+    immShowChrome();
+  }
+  function immStopCursorWatch() {
+    clearTimeout(immCursorTimer);
+    clearTimeout(immDockLeaveT);
+    IMM_CURSOR_EVENTS.forEach(function (ev) {
+      window.removeEventListener(ev, immOnCursorActivity);
+    });
+    document.documentElement.removeEventListener('mouseleave', immWinLeave);
+    var root = immRoot();
+    if (root) root.classList.remove('am-imm-chrome-off', 'am-imm-cursor-off', 'am-imm-dock-on');
+  }
+  /* ---------- V4.4：沉浸中央 OSD（播放/暂停、音量百分比，1.2s 后淡出） ---------- */
+  var _immOsdT = 0;
+  function showImmOsd(html) {
+    if (!R.immOsd) return;
+    R.immOsd.innerHTML = html;
+    R.immOsd.classList.remove('am-imm-osd-out');
+    void R.immOsd.offsetWidth;
+    R.immOsd.classList.add('am-imm-osd-in');
+    clearTimeout(_immOsdT);
+    _immOsdT = setTimeout(function () {
+      R.immOsd.classList.remove('am-imm-osd-in');
+      R.immOsd.classList.add('am-imm-osd-out');
+    }, 1100);
+  }
+  var _immLastPlaying = null, _immLastVol = null;
+  function immOsdTick() {
+    if (!S.imm) { _immLastPlaying = null; _immLastVol = null; return; }
+    if (_immLastPlaying !== null && state.playing !== _immLastPlaying) {
+      showImmOsd('<span class="am-imm-osd-ic">' + (state.playing ? '⏸' : '▶') + '</span>');
+    }
+    _immLastPlaying = state.playing;
+    var vol = R.vol ? +R.vol.value : null;
+    if (vol != null && _immLastVol !== null && vol !== _immLastVol) {
+      var ic = vol === 0 ? '🔇' : (vol < 50 ? '🔈' : '🔊');
+      showImmOsd('<span class="am-imm-osd-ic">' + ic + '</span><span class="am-imm-osd-vol">' + vol + '%</span>');
+    }
+    _immLastVol = vol;
+  }
+  /* ---------- V4.4：沉浸布局记忆（经典/彩胶各自记忆面板展开 + 歌词滚动比例） ---------- */
+  function immLayoutKey(vinyl) { return 'annieplayer.imm.layout.' + (vinyl ? 'vinyl' : 'classic'); }
+  function saveImmLayout(vinylForce) {
+    if (!R.imm) return;
+    var vinyl = vinylForce != null ? vinylForce : (immMode() === 'vinyl');
+    var box = R.immLyrBox;
+    var ratio = 0;
+    if (box && box.scrollHeight > box.clientHeight) ratio = box.scrollTop / (box.scrollHeight - box.clientHeight);
+    try {
+      localStorage.setItem(immLayoutKey(vinyl), JSON.stringify({
+        lyr: vinyl ? true : !!S.immLyrOn, // 彩胶歌词常驻恒为开
+        q: !!S.immQOn,
+        sr: +ratio.toFixed(4),
+        v: 1
+      }));
+    } catch (e) { }
+  }
+  function restoreImmLayout(vinyl) {
+    var cfg = null;
+    try { cfg = JSON.parse(localStorage.getItem(immLayoutKey(vinyl)) || 'null'); } catch (e) { }
+    if (!cfg) { if (vinyl) setImmLyr(true); return; } // 彩胶首次进入：歌词常驻
+    // 有存档时严格同步（避免经典→彩胶→经典后 S.immLyrOn 被彩胶置 true 残留）
+    setImmLyr(vinyl ? true : !!cfg.lyr);
+    setImmQueue(!!cfg.q);
+    if (cfg.sr > 0 && R.immLyrBox) {
+      requestAnimationFrame(function () {
+        if (!R.immLyrBox) return;
+        var v = cfg.sr * Math.max(0, R.immLyrBox.scrollHeight - R.immLyrBox.clientHeight);
+        (AM.progScrollTop || function (b, x) { b.scrollTop = x; })(R.immLyrBox, v);
+      });
+    }
+  }
   function toggleImmersive(force) {
     var want = force !== undefined ? force : !S.imm;
     if (want === !!S.imm) return;
     if (want && S.mini) { exitMini(); } // 沉浸与迷你互斥
+    if (!want && R.imm) saveImmLayout(); // V4.4：退出沉浸前保存当前样式的布局
     buildImmersive();
     S.imm = want;
+    if (want) immStartCursorWatch(); else immStopCursorWatch(); // 静止自动隐藏鼠标随沉浸进出
+    if (want && R.immVinyl) vinylStartSpin(); // 复用旧沉浸层（buildImmersive 早退）时重启盘体 rAF；退出后循环靠 S.imm 自停
     // V4.4：沉浸模式真全屏（设置 → AM 界面 开关；退出沉浸无条件复位，非全屏时为无害空操作）
     try {
       var fsOn = !!(window.annieSettings && annieSettings.ui && annieSettings.ui.amImmFullscreen);
@@ -819,6 +1081,7 @@
       syncAuxViews(); refreshAuxProgress();
       if (S.immLyrOn || immMode() === 'vinyl') buildLyrInto(R.immLyrBox); // 彩胶模式歌词常驻
       if (S.immQOn) renderQueuePanel(R.immQ);
+      restoreImmLayout(immMode() === 'vinyl'); // V4.4：按沉浸样式恢复面板展开/歌词滚动（buildLyrInto 之后）
     }
   }
   function setImmLyr(on) {
@@ -831,8 +1094,136 @@
     S.immQOn = on;
     document.getElementById('am-root').classList.toggle('am-imm-q-on', on && S.imm);
     R.immBtnQ.classList.toggle('on', on);
-    if (on && S.imm) renderQueuePanel(R.immQ);
+    if (on && S.imm) { renderQueuePanel(R.immQ); immShowChrome(); } // 打开队列即退出静止隐藏态
   }
+
+  /* ================= V4.4：主界面待播清单抽屉 ================= */
+  function buildQDrawer(root) {
+    if (R.qDrawer) return;
+    R.qDrawer = el('div', 'am-q-drawer');
+    root.appendChild(R.qDrawer);
+  }
+  function toggleMainQueue(force) {
+    if (!R.qDrawer) return;
+    var on = force !== undefined ? force : !S.qOn;
+    S.qOn = on;
+    document.getElementById('am-root').classList.toggle('am-q-on', on);
+    if (R.btnQ) R.btnQ.classList.toggle('on', on);
+    if (on) renderQueuePanel(R.qDrawer);
+  }
+  AM.toggleMainQueue = toggleMainQueue;
+  /* 队列剩余条数角标（流媒体=当前之后的曲目数；本地=当前索引之后） */
+  function refreshQBadge() {
+    if (!R.btnQBadge) return;
+    var n = 0;
+    if (state.currentStream) {
+      var rs = S._playList || S.stResults || [];
+      n = Math.max(0, rs.length - 1 - S.stIndex);
+    } else {
+      n = Math.max(0, (state.queue || []).length - 1 - state.index);
+    }
+    R.btnQBadge.textContent = n > 99 ? '99+' : String(n);
+    R.btnQBadge.style.display = n > 0 ? '' : 'none';
+  }
+  /* 抽屉开着时的轻刷新：切歌/队列增删后更新高亮与角标（仅 queue 页签需要，评论/历史各自有事件或手动切回） */
+  function refreshQDrawerIfOpen() {
+    refreshQBadge();
+    if (S.qOn && R.qDrawer && S.qTab !== 'cmt') renderQueuePanel(R.qDrawer);
+  }
+
+  /* ================= V4.4：重启恢复播放（本地 + 流媒体） =================
+   * 双 localStorage 键：meta（队列快照/索引/播放态，切歌时写）+ pos（高频进度，5s 节流写）。
+   * 启动 mount 时恢复：本地直接 playAt(idx,pos)；流媒体重建队列快照后重新解析 URL 播放，
+   * 首个 position 事件到达再 seek。上次退出为暂停态 → 引擎开播后立刻 pause（不出整曲等待）。 */
+  var RESUME_META = 'annieplayer.resume.v1', RESUME_POS = 'annieplayer.resume.pos';
+  var _resumeSeek = null;   // 流媒体恢复：开播后首个 position 事件到达时 seek 到该秒
+  var _resumePause = false; // 恢复目标为暂停态：检测到引擎 playing 后立即 pause
+  function resumeEnabled() {
+    try { return !(window.annieSettings && annieSettings.ui && annieSettings.ui.amResume === false); } catch (e) { return true; }
+  }
+  function writeResumeMeta() {
+    if (!resumeEnabled()) return;
+    try {
+      if (state.currentStream) {
+        var list = S._playList || S.stResults || [];
+        if (!list.length || S.stIndex < 0 || !list[S.stIndex]) return;
+        localStorage.setItem(RESUME_META, JSON.stringify({
+          v: 1, kind: 'stream', quality: S.stQuality || 'flac',
+          idx: S.stIndex, playing: !!state.playing, path: state.currentPath,
+          songs: list.slice(0, 200) // 快照上限 200 首（约 100~300KB，localStorage 容量内）
+        }));
+      } else if (state.currentPath && state.queue && state.queue.length && state.index >= 0) {
+        localStorage.setItem(RESUME_META, JSON.stringify({
+          v: 1, kind: 'local', idx: state.index, playing: !!state.playing, path: state.currentPath,
+          paths: state.queue.map(function (t) { return t && t.path; }).filter(Boolean)
+        }));
+      }
+    } catch (e) { /* 配额超限等：静默放弃本次保存 */ }
+  }
+  var _resumeSaveT = 0;
+  function writeResumePosThrottled() {
+    if (!resumeEnabled() || !state.currentPath) return;
+    var now = Date.now();
+    if (now - _resumeSaveT < 5000) return;
+    _resumeSaveT = now;
+    try { localStorage.setItem(RESUME_POS, JSON.stringify({ path: state.currentPath, pos: S.pos || state.position || 0 })); } catch (e) { }
+  }
+  function writeResumePosNow() {
+    _resumeSaveT = 0;
+    writeResumePosThrottled();
+  }
+  function resetResumePos(path) { // 切歌瞬间 S.pos 仍是旧曲值，位置键显式归零
+    try { localStorage.setItem(RESUME_POS, JSON.stringify({ path: path || state.currentPath, pos: 0 })); } catch (e) { }
+    _resumeSaveT = Date.now();
+  }
+  function restoreResume() {
+    if (S._resumeDone) return;
+    S._resumeDone = true;
+    if (!resumeEnabled()) return;
+    var meta = null;
+    try { meta = JSON.parse(localStorage.getItem(RESUME_META) || 'null'); } catch (e) { }
+    if (!meta || meta.v !== 1) return;
+    var pos = 0;
+    try {
+      var pp = JSON.parse(localStorage.getItem(RESUME_POS) || 'null');
+      if (pp && pp.path === meta.path) pos = Math.max(0, pp.pos || 0);
+    } catch (e) { }
+    if (meta.kind === 'local') {
+      var byPath = state.libIndex || null;
+      var tracks = (meta.paths || []).map(function (p) { return byPath ? byPath.get(p) : null; }).filter(Boolean);
+      var idx = -1;
+      tracks.forEach(function (t, i) { if (t.path === meta.path) idx = i; });
+      if (idx < 0 || !tracks.length) return; // 曲目已不在媒体库（移动/移除）→ 放弃恢复
+      state.queue = tracks;
+      state.queueCtx = 'list'; // 手动恢复的队列不视为全库（全文件顺序模式不越权接管）
+      _resumePause = !meta.playing;
+      playAt(idx, pos);
+    } else if (meta.kind === 'stream' && Array.isArray(meta.songs) && meta.songs[meta.idx]) {
+      S.stQuality = meta.quality || S.stQuality;
+      S._playList = meta.songs; // 纯快照队列，不污染搜索视图 stResults
+      S.stIndex = meta.idx;
+      _resumeSeek = pos;
+      _resumePause = !meta.playing;
+      playStreamAt(meta.idx, meta.songs);
+    }
+  }
+  /* 引擎 state 事件里调用：恢复目标为暂停时，等引擎真正起播后立刻暂停（只播极短一瞬） */
+  function resumeHandleState() {
+    if (_resumePause && state.playing) {
+      _resumePause = false;
+      window.mine.engine('pause').catch(function () { });
+    }
+  }
+  /* 引擎 position 事件里调用：流媒体恢复开播后补 seek（本地走 playAt offsetSec，不用这里） */
+  function resumeHandlePosition() {
+    if (_resumeSeek != null && state.currentStream && state.playing) {
+      var target = _resumeSeek;
+      _resumeSeek = null;
+      if (target > 1) seek(target);
+    }
+  }
+  window.addEventListener('pagehide', function () { writeResumeMeta(); writeResumePosNow(); });
+  document.addEventListener('annie-app-before-quit', function () { writeResumeMeta(); writeResumePosNow(); });
 
   /* ================= 迷你模式（AM 风格，窗口形态切换） ================= */
   var MINI_BOUNDS_LS = 'annieplayer.pro.mini.bounds'; // 与粒子舞台迷你模式共享位置记忆
@@ -928,9 +1319,17 @@
   }
   function exitMini() {
     if (!S.mini) return;
-    window.mine.miniExit().then(function (r) {
+    var pr = window.mine.miniExit();
+    exitMiniUI(null); // 保持旧行为：S.mini 立即置 false、UI 立即卸载，IPC 仅负责窗口形态
+    pr.then(function (r) {
       if (r && r.miniBounds) { try { localStorage.setItem(MINI_BOUNDS_LS, JSON.stringify(r.miniBounds)); } catch (e) { } }
     }).catch(function () { });
+  }
+  /* 迷你 UI 卸载（不碰主进程窗口形态）：⤢ 退出时 mini:enter 的逆操作；
+   * V4.4 迷你下 ✕ 收进托盘时主进程已在隐藏状态还原窗口，经 onMiniHiddenToTray 走这里。 */
+  function exitMiniUI(miniBounds) {
+    if (!S.mini) return;
+    if (miniBounds) { try { localStorage.setItem(MINI_BOUNDS_LS, JSON.stringify(miniBounds)); } catch (e) { } }
     S.mini = false;
     S.miniLyrOn = false; S.miniQOn = false;
     document.getElementById('am-root').classList.remove('am-mini-on', 'am-mini-lyr-on', 'am-mini-q-on');
@@ -938,9 +1337,13 @@
      * 期间切歌/重建会以 clientHeight=0 算出错误窗口（只渲染顶部几行+巨大垫片），
      * 回来后浏览器又可能把 scrollTop 恢复到旧位置 → 视口落在垫片上=整片空白，
      * 直到下次轮询/切歌才自愈（用户回报「回主界面歌曲不显示，等一下就好」）。
-     * 两遍：rAF 补布局恢复后的当帧，300ms 补 OS 窗口尺寸还原落定后。 */
+     * 两遍：rAF 补布局恢复后的当帧，300ms 补 OS 窗口尺寸还原落定后。
+     * 托盘隐藏路径下窗口不可见也照常执行——下次 show 时主界面已是正确窗口。 */
     requestAnimationFrame(function () { if (S._tbl) { S._tbl.lastStart = -1; renderAmWindow(); } });
     setTimeout(function () { if (S._tbl) { S._tbl.lastStart = -1; renderAmWindow(); } }, 300);
+  }
+  if (window.mine && mine.onMiniHiddenToTray) {
+    mine.onMiniHiddenToTray(function (payload) { if (S.mini) exitMiniUI(payload && payload.miniBounds); });
   }
   function miniResize() {
     var h = (S.miniLyrOn || S.miniQOn) ? 560 : 170;
@@ -969,11 +1372,34 @@
     miniResize();
   }
 
+  /* V4.4：沉浸封面切歌交叉转场——旧封面克隆为 ghost 淡出微缩，新封面从模糊放大态淡入；
+   * 经典（.am-imm-cover 方角）与彩胶（.am-vinyl-cover 圆形标签）共用，ghost 克隆原 class 继承圆角。
+   * 无封面/首次/切到无封面不交叉（直接走 swapCover），避免空层闪烁。 */
+  function immCoverCrossfade(url) {
+    var img = R.immCover;
+    if (!img) return;
+    var old = img.getAttribute('src') || '';
+    var nu = url || '';
+    if (old === nu) return;
+    if (!old || !nu) { img.classList.remove('am-cov-in'); swapCover(img, nu || null); return; }
+    var host = img.parentElement;
+    var ghost = img.cloneNode(false);
+    ghost.removeAttribute('id');
+    ghost.className += ' am-imm-cov-ghost';
+    host.appendChild(ghost);
+    img.classList.remove('am-swap', 'am-cov-in');
+    img.src = nu;
+    void img.offsetWidth;
+    img.classList.add('am-cov-in');
+    void ghost.offsetWidth;
+    ghost.classList.add('am-cov-out');
+    setTimeout(function () { if (ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 560);
+  }
   /* 沉浸/迷你界面字段同步（封面/标题/参数 与 进度/播放键）；封面走 swapCover 弹入动画 */
   function syncAuxViews() {
     var cover = R.npCover && R.npCover.getAttribute('src');
     if (R.imm) {
-      swapCover(R.immCover, cover || null);
+      immCoverCrossfade(cover || null); // V4.4：沉浸封面交叉转场（替代单图 swap）
       if (R.immVinyl) paintVinyl(cover || null); // 彩胶颜色跟随封面
       R.immTitle.textContent = R.npTitle.textContent;
       R.immSub.textContent = R.npSub.textContent;
@@ -997,7 +1423,13 @@
       R.immCur.textContent = cur; R.immRemain.textContent = rem;
       R.immFill.style.width = (pct * 100) + '%';
       setPlayIcon(R.immPlay);
-      if (R.immVinyl) R.imm.classList.toggle('am-vinyl-paused', !state.playing); // 暂停时唱片停转
+      if (R.immDockFill) { // V4.4：底部悬浮 dock 同步进度（拖动预览期间同样被函数头的 seeking 守卫挡住）
+        R.immDockCur.textContent = cur; R.immDockRemain.textContent = rem;
+        R.immDockFill.style.width = (pct * 100) + '%';
+        setPlayIcon(R.immDockPlay);
+      }
+      if (R.immVinyl) { /* V4.4：盘体转/停由 rAF 惯性物理读 state.playing 驱动，不再切 CSS play-state */ }
+      immOsdTick(); // 播放/暂停、音量 OSD 检测
     }
     if (R.mini && S.mini) {
       R.miniCur.textContent = cur; R.miniRemain.textContent = rem;
@@ -1073,6 +1505,15 @@
     R.npBadge.textContent = S.fmt;
     R.npBadge.style.display = S.fmt ? '' : 'none';
   }
+  // V4.4：流媒体命中本地播放缓存时，主/沉浸/迷你三处音质徽标点亮「缓存」态
+  function refreshCacheBadge() {
+    var on = !!(state.currentStream && S.cacheHit);
+    [R.npBadge, R.immFmt, R.miniFmt].forEach(function (elm) {
+      if (!elm) return;
+      elm.classList.toggle('am-fmt-cache', on);
+      elm.title = on ? '命中本地播放缓存，秒开且不耗流量' : '';
+    });
+  }
   function refreshTimes() {
     if (!R.npCur) return;
     if (state.seeking) return; // V4.3.16：拖动预览期间不覆盖
@@ -1125,6 +1566,8 @@
     S.playing = !!state.playing;
     setPlayIcon(R.btnPlay);
     refreshAuxProgress();
+    refreshQBadge(); // V4.4：待播数角标（高频轮询调用，内部仅写文本）
+    refreshCacheBadge(); // V4.4：切回本地（currentStream 清空）时灭缓存灯
   }
   function refresh() {
     refreshNowPlaying();
@@ -1164,8 +1607,12 @@
           : (data.duration || (state.currentStream && state.duration) || 0);
         refreshTimes();
         tickLyrics();
+        resumeHandlePosition();   // V4.4：流媒体重启恢复的补 seek
+        writeResumePosThrottled(); // V4.4：播放进度持久化（5s 节流）
+        if (AM.maybePreloadNext) AM.maybePreloadNext(); // V4.4：接近曲尾预解析下一首 URL
       } else if (event === 'state') {
         refreshTransport();
+        resumeHandleState(); // V4.4：恢复为暂停态时，引擎起播即暂停
       } else if (event === 'format' && data && !state.currentStream) {
         // 音质徽标：本地播放显示 编码 · 位深/采样率（流式音质由 playStreamAt 直接设置）
         var parts = [];
@@ -1190,11 +1637,23 @@
       }
     });
     // state.currentPath 变化（playAt 触发后无专用事件）——轮询兜底 + 主题切换时刷新
-    var lastPath = null;
+    var lastPath = null, lastPlaying = null;
     setInterval(function () {
       if (!window.annieTheme || annieTheme.current !== 'am' || !S.mounted) return;
+      if (state.playing !== lastPlaying) { // V4.4：播放/暂停态变化即持久化（恢复时按此决定起播还是暂停）
+        lastPlaying = state.playing;
+        writeResumeMeta();
+      }
       if (state.currentPath !== lastPath) {
         lastPath = state.currentPath; refresh();
+        writeResumeMeta();   // V4.4：切歌即存队列快照与索引
+        resetResumePos(state.currentPath); // 新曲位置键归零（此刻 S.pos 仍是旧曲值）
+        // V4.4：任何打开的队列面板随切歌刷新（评论页签不打断，历史/待播更新当前行高亮）
+        if (S.qTab !== 'cmt') {
+          if (S.qOn && R.qDrawer) renderQueuePanel(R.qDrawer);
+          if (S.immQOn && R.immQ && S.imm) renderQueuePanel(R.immQ);
+          if (S.miniQOn && R.miniQ && S.mini) renderQueuePanel(R.miniQ);
+        }
         // V4.1：切歌后自动定位到当前播放行（随机/顺序播放跳转到远处时滚动跟随；
         // 行已在可视区则不打扰；流媒体与专辑/文件夹网格视图跳过）
         var p2 = state.currentPath;
@@ -1302,9 +1761,11 @@
   function mount() {
     if (!S.mounted) {
       build();
+      buildQDrawer(document.getElementById('am-root')); // V4.4：主界面待播清单抽屉
       bindGlobal();
       patchStreamPlayNext();
       S.mounted = true;
+      restoreResume(); // V4.4：重启恢复上次播放（曲目/队列/进度，本地+流媒体）
       // V4.1：主界面入场错峰动画（仅首次挂载；1s 后移除类，避免后续 DOM 重建重放）
       var root0 = document.getElementById('am-root');
       if (root0) { root0.classList.add('am-enter'); setTimeout(function () { root0.classList.remove('am-enter'); }, 1000); }

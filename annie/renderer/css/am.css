@@ -149,14 +149,37 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
   color: var(--am-accent); border: 1px solid var(--am-accent); border-radius: 5px;
   padding: 2px 6px; opacity: .9; white-space: nowrap;
 }
+/* V4.4：流媒体命中本地播放缓存——音质徽标变绿带圆点（主界面药丸 / 沉浸 / 迷你纯文本） */
+.am-badge.am-fmt-cache { color: #33c98f; border-color: #33c98f; }
+.am-badge.am-fmt-cache::before {
+  content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor; margin-right: 4px; vertical-align: 1px;
+}
+.am-imm-fmt.am-fmt-cache, .am-mini-fmt.am-fmt-cache { color: #4ad295; }
+.am-imm-fmt.am-fmt-cache::before, .am-mini-fmt.am-fmt-cache::before {
+  content: '●'; font-size: 8px; margin-right: 4px; vertical-align: 1px;
+}
 .am-np-progrow { display: flex; align-items: center; gap: 8px; }
 .am-np-time {
   flex: none; width: 40px; font-size: 10px; color: var(--am-text-2);
   font-variant-numeric: tabular-nums; text-align: center; user-select: none;
 }
-.am-np-prog { flex: 1; height: 4px; border-radius: 2px; background: var(--am-sep); overflow: hidden; cursor: pointer; }
+.am-np-prog { flex: 1; height: 4px; border-radius: 2px; background: var(--am-sep); overflow: hidden; cursor: pointer; position: relative; }
 .am-np-prog i { display: block; height: 100%; width: 0; background: var(--am-text-2); border-radius: 2px; }
 .am-np-prog:hover i { background: var(--am-accent); }
+/* V4.4：进度条 hover 时间预览气泡（三处进度行共用；挂进度行容器，相对其定位） */
+.am-np-progrow, .am-imm-prog { position: relative; }
+.am-prog-tip {
+  position: absolute; bottom: calc(100% + 7px); transform: translateX(-50%);
+  z-index: 20; pointer-events: none; white-space: nowrap;
+  padding: 3px 8px; border-radius: 6px;
+  background: rgba(20,20,24,.92); color: #fff; font-size: 11px; font-style: normal;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+.am-prog-tip::after {
+  content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  border: 4px solid transparent; border-top-color: rgba(20,20,24,.92);
+}
 
 .am-tb-right { display: flex; align-items: center; gap: 6px; }
 .am-vol { display: flex; align-items: center; gap: 6px; }
@@ -418,9 +441,25 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
   transform-origin: left center;
 }
 .am-lyr-line .tly { display: block; font-size: calc(14px * var(--am-tly-scale, 1)); font-weight: 500; opacity: .8; margin-top: 2px; }
+/* V4.4 双语歌词布局：主界面（含迷你）祖先类 am-m-dual-*，沉浸 am-i-dual-*（行类名共享，靠祖先隔离） */
+.am-m-dual-side .am-lyr-scroll .tly,
+.am-m-dual-side .am-mini-lyr .tly,
+.am-i-dual-side .am-imm-lyr .tly { display: inline-block; margin: 0 0 0 16px; vertical-align: baseline; }
+.am-m-dual-src .am-lyr-scroll .tly,
+.am-m-dual-src .am-mini-lyr .tly,
+.am-i-dual-src .am-imm-lyr .tly { display: none !important; }
+/* 仅译文：译文继承原文字号/字重/行距，按主行形态显示（沉浸行有独立 tly 字号规则，需提权覆盖） */
+.am-lyr-line .tly.tly-main,
+.am-imm-lyr .am-lyr-line .tly.tly-main {
+  display: inline; font-size: inherit; font-weight: inherit; line-height: inherit;
+  letter-spacing: inherit; opacity: 1; margin: 0; color: inherit;
+}
 .am-lyr-line.far { filter: blur(1.6px); opacity: .55; }
 /* 歌词虚化开关（默认开）：关闭后非当前行仅压暗不模糊 */
-#am-root.am-no-lyrblur .am-lyr-line.far, #am-root.am-no-lyrblur .am-imm-lyr .am-lyr-line.far { filter: none; }
+/* 歌词虚化两套开关：主界面（右栏+迷你）与沉浸各自独立 */
+#am-root.am-no-lyrblur .am-lyr-scroll .am-lyr-line.far,
+#am-root.am-no-lyrblur .am-mini-lyr .am-lyr-line.far { filter: none; }
+#am-root.am-no-imm-lyrblur .am-imm-lyr .am-lyr-line.far { filter: none; }
 .am-lyr-line.near { color: var(--am-text-2); }
 .am-lyr-line.cur { color: var(--am-text); transform: scale(1.04); filter: none; }
 .am-lyr-line:hover { color: var(--am-text-2); }
@@ -466,6 +505,19 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 .am-lyrset-pop { min-width: 250px; }
 .am-lyrset-slider { flex: 1; accent-color: var(--am-accent); }
 .am-lyrset-v { min-width: 38px; text-align: right; font-size: 11px; color: var(--am-text-3); }
+/* V4.4：弹层内分段按钮组（预设/双语/跟随位置/歌词背景） */
+.am-pop-row-wrap { flex-wrap: wrap; row-gap: 6px; }
+.am-seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.am-seg .am-tbtn {
+  width: auto; height: auto; padding: 4px 11px; font-size: 12px; font-weight: 500;
+  border-radius: 7px; background: var(--am-glass-2); color: var(--am-text-2);
+}
+.am-seg .am-tbtn:hover { background: var(--am-hover); color: var(--am-text); }
+.am-seg .am-tbtn.on {
+  color: var(--am-accent);
+  background: color-mix(in srgb, var(--am-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--am-accent) 45%, transparent);
+}
 
 /* "添加到播放列表"弹出菜单 */
 .am-pop {
@@ -616,6 +668,60 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
   overflow: hidden; /* 裁剪外溢的模糊背景层 */
 }
 #am-root.am-imm-on .am-imm { display: flex; }
+/* 沉浸模式静止一段时间自动隐藏鼠标（视频式）；任意鼠标/滚轮/触摸/键盘操作立即恢复 */
+#am-root.am-imm-cursor-off .am-imm,
+#am-root.am-imm-cursor-off .am-imm * { cursor: none !important; }
+/* V4.4：静止隐藏 chrome——顶栏淡出上移，彩胶底栏/经典内联控制淡出，纯透明度不引发布局跳动 */
+.am-imm-closebar { transition: opacity .32s ease, transform .32s ease; }
+.am-imm-vbar { transition: opacity .32s ease, transform .32s ease; }
+.am-imm-left .am-imm-prog, .am-imm-left .am-imm-ctl { transition: opacity .32s ease; }
+#am-root.am-imm-chrome-off .am-imm-closebar { opacity: 0; pointer-events: none; transform: translateY(-8px); }
+#am-root.am-imm-chrome-off .am-imm-vbar { opacity: 0; pointer-events: none; transform: translateY(16px); }
+#am-root.am-imm-chrome-off .am-imm-left .am-imm-prog,
+#am-root.am-imm-chrome-off .am-imm-left .am-imm-ctl { opacity: 0; pointer-events: none; }
+/* 底部热区：透明且 pointer-events:none（不挡歌词），dock 本体才接收事件 */
+.am-imm-dockzone {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 104px; z-index: 6;
+  display: flex; justify-content: center; align-items: flex-end;
+  pointer-events: none;
+}
+.am-imm-dock {
+  pointer-events: auto;
+  width: min(720px, 88vw); margin: 0 16px 20px; padding: 13px 24px 15px;
+  display: flex; flex-direction: column; gap: 9px;
+  border-radius: 18px; border: 1px solid rgba(255,255,255,.16);
+  background: rgba(20,20,28,.52);
+  backdrop-filter: blur(30px) saturate(1.5); -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  box-shadow: 0 20px 70px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.14);
+  opacity: 0; pointer-events: none; transform: translateY(20px);
+  transition: opacity .34s cubic-bezier(.25,.8,.3,1), transform .34s cubic-bezier(.25,.8,.3,1);
+}
+.am-imm-dock .am-imm-bar { height: 6px; }
+#am-root.am-imm-dock-on .am-imm-dock { opacity: 1; pointer-events: auto; transform: translateY(0); }
+/* 中央状态 OSD（播放/暂停、音量） */
+.am-imm-osd {
+  position: absolute; left: 50%; top: 42%; z-index: 5;
+  display: flex; align-items: center; gap: 16px;
+  padding: 24px 38px; border-radius: 22px;
+  background: rgba(18,18,24,.40);
+  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255,255,255,.12);
+  color: #fff; pointer-events: none;
+  opacity: 0; transform: translate(-50%, -50%) scale(.92);
+  transition: opacity .28s ease, transform .28s ease;
+}
+.am-imm-osd-ic { font-size: 52px; line-height: 1; }
+.am-imm-osd-vol { font-size: 30px; font-weight: 700; letter-spacing: .5px; }
+.am-imm-osd.am-imm-osd-in { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.am-imm-osd.am-imm-osd-out { opacity: 0; transform: translate(-50%, -50%) scale(.96); }
+/* V4.4：封面切歌交叉转场——ghost=旧封面淡出微缩（克隆原节点继承方角/圆角），新封面从模糊放大态淡入 */
+.am-imm-cov-ghost { position: absolute; pointer-events: none; z-index: 2; margin: 0; }
+.am-imm-left .am-imm-cov-ghost { top: 0; left: 0; right: 0; aspect-ratio: 1; }
+.am-vinyl-label .am-imm-cov-ghost { inset: 0; width: 100%; height: 100%; }
+.am-imm-cov-ghost.am-cov-out { animation: amCovOut .52s ease forwards; }
+.am-imm-cover.am-cov-in, .am-vinyl-cover.am-cov-in { animation: amCovIn .52s ease; }
+@keyframes amCovIn { from { opacity: 0; filter: blur(10px); transform: scale(1.045); } to { opacity: 1; filter: blur(0); transform: scale(1); } }
+@keyframes amCovOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(.965); } }
 .am-imm-bg {
   position: absolute; inset: -6%; z-index: 0;
   background-image: var(--am-bgimage, none); background-size: cover; background-position: center;
@@ -641,7 +747,7 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 /* V4.3.26：沉浸布局整体居中——两栏改为等分 grid，各自以屏幕左右半区中轴对称。
    旧版 flex+justify-center 把「固定宽封面列 + 46% 歌词列」整体居中，两栏宽度不等导致视觉左重右轻。 */
 .am-imm-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 56px 40px 40px; }
-.am-imm-left { width: min(44vh, 480px); flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; justify-self: center; }
+.am-imm-left { position: relative; width: min(44vh, 480px); flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; justify-self: center; }
 .am-imm-cover {
   width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
   box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);
@@ -684,8 +790,8 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 /* V4.4：沉浸模式未开歌词时，封面+信息+控制栏整体居中
  *（.am-imm-main 恒为 1fr 1fr 双列，歌词隐藏后左列仍停在左半屏，右半全空） */
 #am-root.am-imm-on:not(.am-imm-lyr-on) .am-imm-main { grid-template-columns: 1fr; }
-.am-imm-lyr .am-lyr-line { font-size: calc(26px * var(--am-lyr-scale, 1)); font-weight: 700; padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
-.am-imm-lyr .am-lyr-line .tly { font-size: calc(16px * var(--am-tly-scale, 1)); }
+.am-imm-lyr .am-lyr-line { font-size: calc(26px * var(--am-imm-lyr-scale, 1)); font-weight: 700; line-height: var(--am-imm-lyr-lh, 1.45); padding: 12px 0; color: rgba(255,255,255,.9); transform-origin: left center; }
+.am-imm-lyr .am-lyr-line .tly { font-size: calc(16px * var(--am-imm-tly-scale, 1)); }
 .am-imm-lyr .am-lyr-line.far { filter: blur(2px); opacity: .45; }
 .am-imm-lyr .am-lyr-line.near { color: rgba(255,255,255,.65); }
 .am-imm-lyr .am-lyr-line.cur { color: #fff; transform: scale(1.03); filter: none; }
@@ -729,11 +835,34 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
   box-shadow: 0 30px 90px rgba(0,0,0,.45),
     inset 0 0 70px color-mix(in srgb, var(--vc1) 16%, transparent),
     inset 0 1px 0 rgba(255,255,255,.25);
-  animation: amVinylSpin calc(var(--am-vinyl-speed, 18) * 1s) linear infinite; /* 💿 弹层「转速」秒/圈 */
+  /* V4.4：旋转改 rAF 惯性物理（am-render.js vinylFrame，inline transform 逐帧写入）；
+     暂停≈0 速时盘体带 am-vinyl-still，光泽动画同步暂停 */
   will-change: transform;
 }
-@keyframes amVinylSpin { to { transform: rotate(360deg); } }
-.am-imm.am-vinyl-paused .am-vinyl { animation-play-state: paused; }
+/* 慢速流光：一道比盘体转速慢 7 倍的同向高光带，screen 混合只做提亮，制造亚克力材质流动感 */
+.am-vinyl::before {
+  content: ''; position: absolute; inset: 0; border-radius: 50%; z-index: 2; pointer-events: none;
+  background: conic-gradient(from 30deg,
+    transparent 0deg, rgba(255,255,255,.14) 10deg, rgba(255,255,255,.03) 24deg, transparent 46deg,
+    transparent 198deg, rgba(255,255,255,.09) 212deg, transparent 236deg);
+  mix-blend-mode: screen;
+  animation: amVinylSheen calc(var(--am-vinyl-speed, 18) * 7s) linear infinite;
+}
+@keyframes amVinylSheen { to { transform: rotate(360deg); } }
+.am-imm .am-vinyl.am-vinyl-still::before { animation-play-state: paused; }
+/* 切歌换碟：盘体短暂沉暗再亮起（只动 opacity，旋转角度始终归 rAF 管，不跳角） */
+.am-imm.am-vinyl-switch .am-vinyl { animation: amVinylSwitch .9s ease; }
+@keyframes amVinylSwitch {
+  0% { opacity: 1; }
+  38% { opacity: .12; }
+  100% { opacity: 1; }
+}
+/* 右上悬挂：盘体探出右上，阴影投向左下（光从左上来），比居中模式更具悬浮感 */
+.am-imm-vinyl.am-pos-corner .am-vinyl {
+  box-shadow: -20px 42px 90px rgba(0,0,0,.52),
+    inset 0 0 70px color-mix(in srgb, var(--vc1) 16%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.25);
+}
 /* 标签圈（圆形封面区，随盘一起转）：占比由 💿 弹层「封面大小」控制（胶圈宽度随之反向） */
 .am-vinyl-label {
   position: absolute; inset: calc((100% - var(--am-vinyl-cover, 73%)) / 2); border-radius: 50%; overflow: hidden;
@@ -792,6 +921,23 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
   border-left: 1px solid rgba(255,255,255,.12);
 }
 #am-root.am-imm-q-on .am-imm-queue { display: flex; }
+/* V4.4：主界面待播清单抽屉（贴顶栏下沿右侧滑入；与沉浸队列同视觉语言） */
+.am-q-drawer {
+  position: absolute; top: 64px; right: 0; bottom: 0; width: 340px; z-index: 6;
+  display: none; flex-direction: column;
+  background: color-mix(in srgb, var(--am-bg) 82%, transparent);
+  backdrop-filter: blur(36px) saturate(1.4); -webkit-backdrop-filter: blur(36px) saturate(1.4);
+  border-left: 1px solid var(--am-sep);
+  box-shadow: -18px 0 50px rgba(0,0,0,.28);
+}
+#am-root.am-q-on .am-q-drawer { display: flex; animation: amQDrawerIn .22s var(--ease-out); }
+@keyframes amQDrawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* 顶栏队列按钮角标 */
+.am-q-badge {
+  position: absolute; right: 1px; top: 2px; min-width: 14px; height: 14px; padding: 0 3px;
+  border-radius: 7px; background: var(--am-accent); color: #fff;
+  font-size: 9px; line-height: 14px; text-align: center; font-style: normal; pointer-events: none;
+}
 /* 收回小标签：抽屉左缘外侧、垂直居中 */
 .am-imm-q-fold {
   position: absolute; left: -26px; top: 50%; transform: translateY(-50%);
@@ -856,6 +1002,24 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 #am-root.am-light.am-mini-on .am-q-title { color: var(--am-text); }
 #am-root.am-light.am-mini-on .am-q-sub, #am-root.am-light.am-mini-on .am-q-dur { color: var(--am-text-3); }
 #am-root.am-light.am-mini-on .am-q-empty { color: var(--am-text-3); }
+
+/* V4.4：主界面待播清单抽屉亮色主题覆盖（沉浸抽屉恒为深色玻璃，不跟亮） */
+#am-root.am-light .am-q-drawer .am-q-tab { background: rgba(0,0,0,.07); color: var(--am-text-2); }
+#am-root.am-light .am-q-drawer .am-q-tab.cur { background: var(--am-accent); color: #fff; }
+#am-root.am-light .am-q-drawer .am-q-row:hover { background: rgba(0,0,0,.06); }
+#am-root.am-light .am-q-drawer .am-q-row.cur { background: rgba(250,45,85,.14); }
+#am-root.am-light .am-q-drawer .am-q-title { color: var(--am-text); }
+#am-root.am-light .am-q-drawer .am-q-sub,
+#am-root.am-light .am-q-drawer .am-q-dur { color: var(--am-text-3); }
+#am-root.am-light .am-q-drawer .am-q-empty { color: var(--am-text-3); }
+#am-root.am-light .am-q-drawer .am-q-del { color: var(--am-text-3); }
+#am-root.am-light .am-q-drawer .am-q-del:hover { color: var(--am-text); background: rgba(250,45,85,.18); }
+#am-root.am-light .am-q-drawer .am-cmt-text { color: var(--am-text); }
+#am-root.am-light .am-q-drawer .am-cmt-meta { color: var(--am-text-3); opacity: 1; }
+#am-root.am-light .am-q-drawer .am-imm-q-fold {
+  background: var(--am-bg); color: var(--am-text-3); border-color: var(--am-sep);
+}
+#am-root.am-light .am-q-drawer .am-imm-q-fold:hover { color: var(--am-text); background: rgba(0,0,0,.05); }
 
 /* ================= V3.5.8：在线歌曲下载按钮 / 歌单收藏 ================= */
 .am-dl-btn { background:none; border:none; color:rgba(255,255,255,.45); font-size:14px; cursor:pointer; padding:2px 6px; border-radius:6px; min-width:30px; }
@@ -948,9 +1112,13 @@ html[data-motion="off"] #am-root::before {
 .am-vol input[type="range"] {
   position: absolute; left: 32px; top: 50%; transform: translateY(-50%);
   width: 96px; height: auto; padding: 9px 8px; /* 加大命中区：裸条只有 4px 高很难点 */
+  border-radius: 8px;
   opacity: 0; pointer-events: none; z-index: 6;
-  background: var(--am-card, rgba(28,28,34,.92)); border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  /* 底色走主题玻璃变量（--am-card 未定义，旧写法黑色兜底在亮色模式下黑块看不清） */
+  background: var(--am-glass, rgba(30,30,30,.92));
+  border: 1px solid var(--am-sep, rgba(255,255,255,.08));
+  backdrop-filter: var(--am-blur, blur(24px)); -webkit-backdrop-filter: var(--am-blur, blur(24px));
+  box-shadow: var(--am-shadow, 0 4px 14px rgba(0,0,0,.3));
   transition: opacity var(--dur-micro);
 }
 .am-vol:hover input[type="range"], .am-vol input[type="range"]:focus,

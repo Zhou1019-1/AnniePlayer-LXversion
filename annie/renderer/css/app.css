@@ -831,6 +831,12 @@ html, body, button, input, select, textarea {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
 .set-dl-btns { display: flex; gap: 8px; }
+/* V4.4：播放缓存分组（平台/音质） */
+.set-sc-groups { display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto; }
+.set-sc-grow { display: flex; align-items: center; gap: 10px; padding: 3px 2px; font-size: 12px; }
+.set-sc-gname { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-sc-grow .set-hint { flex: none; margin: 0; }
+.set-sc-grow .eq-preset { flex: none; }
 .set-dl-opts { display: flex; align-items: center; gap: 12px; }
 .set-dl-opt {
   display: flex; align-items: center; gap: 5px;

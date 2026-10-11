@@ -58,6 +58,61 @@
   function stToast(msg) { try { if (typeof proToast === 'function') proToast(msg); } catch (e) { } }
   /* V4.3.5：播放队列泛化——搜索/榜单/专辑用 S.stResults（live 引用，加载更多自然续播）；
      在线歌单用独立快照数组（歌单编辑不影响进行中的队列）。S._playList 记录当前队列。 */
+  /* V4.4：下一首播放地址预解析（仅 URL，不预下载音频——签名 URL 有时效，预取音频风险大）。
+   * 播到曲尾前提前拿下一首的 r.url 存内存（TTL 90s），切歌时直接命中，省 300~1500ms 的「获取播放地址」空窗。 */
+  var PRE_TTL = 90000;
+  var _preUrl = null, _preKey = '', _preAt = 0, _preLoading = false, _preAt2 = 0;
+  function preKeyOf(song, quality) {
+    return (song.provider || '') + '|' + quality + '|' + songKey(song);
+  }
+  function consumePreload(song) {
+    _preLoading = false;
+    if (_preUrl && _preKey === preKeyOf(song, S.stQuality) && Date.now() - _preAt < PRE_TTL) {
+      var hit = _preUrl;
+      _preUrl = null; _preKey = '';
+      return hit;
+    }
+    _preUrl = null; _preKey = ''; // 手动切到别的歌：旧预取作废
+    return null;
+  }
+  /* 计算按当前播放模式的下一首索引（无下一首返回 -1）；与 nextStream 同一套规则 */
+  function nextStreamIndex(list) {
+    var m = window.anniePlayMode ? window.anniePlayMode.get() : 'list-seq';
+    if (m === 'repeat-one') return S.stIndex; // 单曲循环不预取（下一首还是自己，缓存无意义）→ 调用方按同曲跳过
+    if (m === 'list-rand' || m === 'all-rand') {
+      if (list.length <= 1) return -1;
+      var ri;
+      do { ri = Math.floor(Math.random() * list.length); } while (ri === S.stIndex);
+      return ri;
+    }
+    return S.stIndex < list.length - 1 ? S.stIndex + 1 : -1;
+  }
+  function maybePreloadNext() {
+    if (!state.playing || !state.currentStream) return;
+    // 只在接近曲尾时预取（过半且剩余 < 75s）；时长未知（0）的流不预取，避免刚切歌就浪费解析次数
+    var dur = S.dur || state.duration || 0;
+    if (!(dur > 0) || S.pos < dur * 0.5 || dur - S.pos > 75) return;
+    var list = S._playList || S.stResults;
+    if (!list || !list.length || S.stIndex < 0) return;
+    var ni = nextStreamIndex(list);
+    if (ni < 0 || ni === S.stIndex) return;
+    var song = list[ni];
+    if (!song) return;
+    var key = preKeyOf(song, S.stQuality);
+    if (_preLoading || (_preKey === key && (_preUrl || Date.now() - _preAt2 < 8000))) return; // 已取到/8s 内刚试过
+    if (Date.now() - _preAt2 < 4000) return; // 全局节流：至少间隔 4s 才发起一次预解析
+    _preAt2 = Date.now();
+    _preLoading = true; _preKey = key; _preUrl = null;
+    window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }).then(function (r) {
+      _preLoading = false;
+      if (!r || !r.playable || !r.url) { _preKey = ''; return; }
+      // 慢回调守卫：期间队列/当前曲/目标已变则丢弃（nextStreamIndex 重算即可，不做复杂比对）
+      var nowList = S._playList || S.stResults;
+      if (nowList !== list || S.stIndex < 0 || state.currentStream.song !== list[S.stIndex]) { _preKey = ''; _preUrl = null; return; }
+      _preUrl = r; _preAt = Date.now();
+    }).catch(function () { _preLoading = false; _preKey = ''; });
+  }
+  AM.maybePreloadNext = maybePreloadNext;
   function playStreamAt(i, queue) {
     var list = queue || S.stResults;
     var song = list[i];
@@ -67,7 +122,11 @@
     highlightStreamRow();
     scrollStreamRowIntoView(true); // V4.3.13：切歌滚动跟随（含随机播放跳到远处）
     renderStreamStatus('正在获取播放地址：' + song.name + '…');
-    window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }).then(function (r) {
+    // V4.4：命中下一首预解析则跳过 IPC 请求（promise 链统一走同一个 then/catch）
+    var preHit = consumePreload(song);
+    var urlP = preHit ? Promise.resolve(preHit)
+      : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song });
+    urlP.then(function (r) {
       if (S.stIndex !== i || S._playList !== list) return;
       if (!r || !r.playable || !r.url) { renderStreamStatus(song.name + '：' + ((r && r.message) || '无法播放'), true); return; }
       S.fmt = (r.quality || '') + (r.format ? ' · ' + String(r.format).toUpperCase() : '');
@@ -77,13 +136,19 @@
       if (window.annieStreamPlay) {
         // 单击即播（与洛雪流媒体面板一致）；annieStreamPlay 返回 false 表示引擎拒绝流地址
         // song 原样带上：播放中一键收藏需要洛雪原始曲目对象（含平台 ID/meta 供日后再解析）
-        Promise.resolve(window.annieStreamPlay({
+        S.cacheHit = false; // V4.4：命中本地缓存标识（annieStreamPlay 内 lookup 成功会置 playTrack.cached）
+        AM.refreshCacheBadge && AM.refreshCacheBadge();
+        var playTrack = {
           url: r.url, headers: r.headers || null,
           title: song.name, artist: song.artist, album: song.album || '',
           cover: song.cover || '', duration: song.duration ? song.duration / 1000 : 0,
           provider: song.provider, quality: r.quality || '', song: song
-        })).then(function (ok) {
+        };
+        Promise.resolve(window.annieStreamPlay(playTrack)).then(function (ok) {
           if (ok === false) { renderStreamStatus(song.name + '：播放失败，' + (window.__annieLastStreamError || '引擎未接受流地址'), true); return; }
+          S.cacheHit = !!playTrack.cached;
+          AM.refreshCacheBadge && AM.refreshCacheBadge();
+          if (S.cacheHit) renderStreamStatus(PLATFORMS[song.provider] + ' · ' + (r.quality || '') + ' · 本地缓存秒开');
           // 播放确认后取歌词：注入缓存 + 广播给 AM 歌词面板 + 同步粒子舞台
           if (window.mine.streamLyric) {
             window.mine.streamLyric({ provider: song.provider, song: song }).then(function (ly) {

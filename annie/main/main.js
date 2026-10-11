@@ -3,6 +3,13 @@
 // 职责：窗口、引擎子进程生命周期、曲库/标签/歌词 IPC。
 
 const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut, nativeImage, shell } = require('electron');
+// V4.4：Windows 原生遮挡检测（CalculateNativeWinOcclusion）会在全屏切换/窗口被遮挡后误判，
+// 把渲染器 rAF 节流到 ~1fps——彩胶惯性旋转因此停死（视觉上只有表把/点击能动）。
+// 在 app ready 前关闭遮挡与后台节流（webPreferences.backgroundThrottling:false 只管隐藏态）。
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads'); // EXP 7.28：曲库扫描 Worker
@@ -768,13 +775,26 @@ function registerIpc() {
     saveStore({ playlists: store.playlists.filter(p => p.id !== id) });
     return loadStore().playlists;
   });
-  ipcMain.handle('lib:playlist:add', (_e, id, paths, before) => {
+  ipcMain.handle('lib:playlist:add', async (_e, id, paths, before, sort) => {
     const store = loadStore();
     const pl = store.playlists.find(p => p.id === id);
     if (pl && Array.isArray(paths)) {
       const add = [];
       for (const p of paths) if (typeof p === 'string' && !pl.paths.includes(p) && add.indexOf(p) < 0) add.push(p);
       if (add.length) {
+        // V4.4：资源管理器多选拖入顺序无序——sort=true 时先按曲目号（回退自然文件名）排序再插入
+        if (sort) {
+          try {
+            const r = await library.orderAudioPaths(add, store.metaCache);
+            add.length = 0; r.paths.forEach(p => add.push(p));
+            if (r.filled && Object.keys(r.filled).length) {
+              for (const [p, f] of Object.entries(r.filled)) {
+                store.metaCache[p] = { ...(store.metaCache[p] || {}), track: f.track, disc: f.disc };
+              }
+              saveStore({ metaCache: store.metaCache });
+            }
+          } catch (e) { console.error('[playlist] 拖入排序失败，按原始顺序加入:', e); }
+        }
         // before=目标行路径时插到该行前（拖文件指定落点），否则追加到底部
         const at = (typeof before === 'string') ? pl.paths.indexOf(before) : -1;
         if (at >= 0) pl.paths.splice(at, 0, ...add); else pl.paths.push(...add);
@@ -1159,7 +1179,7 @@ function registerIpc() {
       if (!fresh) fresh = await library.readMetaBatch(missing);
       for (const [p, m] of Object.entries(fresh)) {
         if (m && m.ok) {
-          cache[p] = { ...(cache[p] || {}), title: m.title, artist: m.artist, album: m.album, genre: m.genre || '', year: m.year || 0, ...(p.toLowerCase().endsWith('.wav') ? { wv: 2 } : {}) };
+          cache[p] = { ...(cache[p] || {}), title: m.title, artist: m.artist, album: m.album, genre: m.genre || '', year: m.year || 0, track: m.track || '', disc: m.disc || '', ...(p.toLowerCase().endsWith('.wav') ? { wv: 2 } : {}) };
         }
       }
       saveStore({ metaCache: cache });
@@ -1281,9 +1301,37 @@ function registerIpc() {
   });
 
   /* ---------------- Pro beat0.0.1：迷你模式（主窗口形态切换，位置记忆） ---------------- */
-  let miniSaved = null, miniWasMax = false, miniActive = false;
+  let miniSaved = null, miniWasMax = false, miniActive = false, miniHideBound = false;
+  /* V4.4：迷你模式下点 ✕ 收进托盘后，用户从托盘再打开期望看到主界面而不是迷你窗。
+   * 窗口 hide 时若仍处于迷你形态：先抓取当前迷你 bounds（位置记忆），隐藏状态下还原置顶/
+   * 最小尺寸/正常 bounds（不可见，无闪窗），最大化形态延迟到下次 show 时恢复（隐藏中
+   * maximize 在部分 Windows 环境不可靠），再通知渲染层拆掉迷你 UI。miniActive 同步复位，
+   * 与 mini:exit 路径互斥。最小化按钮（minimize）不触发 hide，任务栏恢复仍是迷你——符合预期。
+   * 惰性绑定：registerIpc 执行早于主窗口创建，mainWindow 此时为 null。 */
+  function bindMiniHideWatch(win) {
+    if (miniHideBound || !win) return;
+    miniHideBound = true;
+    win.on('hide', () => {
+      if (!win || win.isDestroyed?.() || !miniActive) return;
+      let miniBounds = null;
+      try { miniBounds = win.getBounds(); } catch { }
+      const wasMax = miniWasMax;
+      try {
+        win.setAlwaysOnTop(false);
+        win.setMinimumSize(1120, 680);
+        if (!wasMax && miniSaved) win.setBounds(miniSaved);
+      } catch { }
+      miniActive = false; miniSaved = null; miniWasMax = false;
+      if (wasMax) {
+        const maxOnShow = () => { try { win.maximize(); } catch { } win.removeListener('show', maxOnShow); };
+        win.on('show', maxOnShow);
+      }
+      try { win.webContents.send('mini:hiddenToTray', { ok: true, miniBounds }); } catch { }
+    });
+  }
   ipcMain.handle('mini:enter', (_e, miniBounds) => {
     if (!mainWindow) return { ok: false };
+    bindMiniHideWatch(mainWindow);
     // 最大化窗口 setSize/setBounds 无效：先记录并退出最大化（修复：最大化进迷你变"全屏"）
     miniWasMax = mainWindow.isMaximized();
     if (!miniSaved) miniSaved = mainWindow.getNormalBounds();

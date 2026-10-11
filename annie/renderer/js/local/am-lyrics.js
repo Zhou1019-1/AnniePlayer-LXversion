@@ -66,12 +66,18 @@
   }
   /* 逐字歌词总开关（设置中心·歌词页，LS annieplayer.karaoke，默认开） */
   function karaOn() { try { return localStorage.getItem('annieplayer.karaoke') !== '0'; } catch (e) { return true; } }
-  /* 构建一行歌词元素（逐字时每词一个 span 可折行），主歌词/沉浸/迷你共用 */
-  function buildLyrLineEl(l, i, cls) {
+  /* 构建一行歌词元素（逐字时每词一个 span 可折行），主歌词/沉浸/迷你共用。
+   * wordLimit 显式指定每行词数（主面板/沉浸各自独立），未传时取主界面配置（兼容旧调用） */
+  function buildLyrLineEl(l, i, cls, wordLimit, dual) {
     var d = el('div', cls + ' far');
-    if (l.words && l.words.length && l.text && karaOn()) {
+    var tlyOnly = dual === 'tly' && l.tly;
+    if (tlyOnly) {
+      // 仅译文：译文按原文字号/字重渲染（CSS .tly-main），不插原文节点
+      var tm = el('span', 'tly tly-main', l.tly);
+      d.appendChild(tm);
+    } else if (l.words && l.words.length && l.text && karaOn()) {
       d.classList.add('kara');
-      var limit = S.lyrWordLimit | 0; // 每行词数限制（0=按容器宽度自然折行）
+      var limit = wordLimit == null ? (S.lyrWordLimit | 0) : (wordLimit | 0); // 每行词数限制（0=按容器宽度自然折行）
       var wspans = [];
       l.words.forEach(function (w, wi) {
         if (limit > 0 && wi > 0 && wi % limit === 0) d.appendChild(document.createElement('br'));
@@ -86,7 +92,7 @@
     } else {
       d.appendChild(document.createTextNode(l.text));
     }
-    if (l.tly) d.appendChild(el('span', 'tly', l.tly));
+    if (l.tly && !tlyOnly && dual !== 'src') d.appendChild(el('span', 'tly', l.tly));
     d.onclick = function () {
       var from = S.pos;
       seek(l.t);
@@ -227,7 +233,7 @@
   function immLyrActive() { return !!(S.immLyrOn || (AM.immIsVinyl && AM.immIsVinyl())); }
   function renderLyrics() {
     _lyrManualScrollUntil = 0;
-    // 沉浸/迷你里打开的歌词容器同步刷新
+    // 沉浸/迷你里打开的歌词容器同步刷新（沉浸用独立的每行词数，迷你跟随主界面）
     if (R.imm && S.imm && immLyrActive()) buildLyrInto(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
     var box = R.lyrScroll;
@@ -240,7 +246,7 @@
       return;
     }
     S.lyrLines.forEach(function (l, i) {
-      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line'));
+      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line', S.lyrWordLimit | 0, S.lyrDual || 'row'));
     });
     fitLyrLines(box);
     tickLyrics();
@@ -272,10 +278,10 @@
       n.classList.toggle('far', dist > 1);
     }
     if (cur >= 0 && nodes[cur] && Date.now() >= _lyrManualScrollUntil) {
-      R.lyrScroll.scrollTop = nodes[cur].offsetTop - R.lyrScroll.clientHeight * 0.42;
+      progScrollTop(R.lyrScroll, nodes[cur].offsetTop - R.lyrScroll.clientHeight * lyrPosRate(S.lyrPos, 0.42));
     }
-    // 沉浸/迷你歌词容器跟随同一 S.lyrCur
-    if (R.imm && S.imm && immLyrActive()) paintLyrBox(R.immLyrBox, cur, 0.35);
+    // 沉浸/迷你歌词容器跟随同一 S.lyrCur（迷你不提供跟随位置设置，固定 0.40）
+    if (R.imm && S.imm && immLyrActive()) paintLyrBox(R.immLyrBox, cur, lyrPosRate(S.immLyrPos, 0.35));
     if (R.mini && S.mini && S.miniLyrOn) paintLyrBox(R.miniLyr, cur, 0.40);
   }
 
@@ -314,37 +320,78 @@
     if (R.mini && S.mini && S.miniLyrOn) fitLyrLines(R.miniLyr);
   }
   /* 滚动条仅滚动时出现（停滚 800ms 后隐藏） */
+  // V4.4：程序驱动（歌词跟随/恢复位置）的 scrollTop 写入窗口内不显示自动隐藏滚动条，
+  // 否则逐行跟随滚动会持续触发 scroll 事件让滚动条竖条常驻
+  var _progScrollUntil = new WeakMap();
+  function progScrollTop(box, val) {
+    if (!box) return;
+    _progScrollUntil.set(box, Date.now() + 150);
+    box.scrollTop = val;
+  }
+  AM.progScrollTop = progScrollTop;
   function autoHideScrollbar(box) {
     if (!box) return;
     var t = 0;
     box.addEventListener('scroll', function () {
+      if (Date.now() < (_progScrollUntil.get(box) || 0)) return; // 跟随播放的自动滚动：不亮滚动条
       if (box === R.lyrScroll) _lyrManualScrollUntil = Date.now() + 5000;
       box.classList.add('scrolling');
       clearTimeout(t);
       t = setTimeout(function () { box.classList.remove('scrolling'); }, 800);
     }, { passive: true });
   }
-  /* 字号/行距/每行词数自定义（localStorage 持久化，CSS 变量驱动，三处歌词容器同效） */
-  function applyLyrStyle() {
-    var sc = 1, lh = 1.45, wl = 0, blurOn = true, tlySc = 1, coverOn = true;
+  /* 字号/行距/每行词数自定义（localStorage 持久化，CSS 变量驱动）。
+   * 主界面歌词（右栏，迷你跟随）与沉浸模式歌词两套配置独立：
+   * 主界面键前缀 annieplayer.am.；沉浸键前缀 annieplayer.imm.（首次使用取与主界面相同的默认值） */
+  function readLyrProfile(prefix, seed) {
+    var p = { sc: 1, lh: 1.45, wl: 0, blur: true, tly: 1, dual: 'row', pos: 'upper' };
+    if (seed) { p.sc = seed.sc; p.lh = seed.lh; p.wl = seed.wl; p.blur = seed.blur; p.tly = seed.tly; p.dual = seed.dual; p.pos = seed.pos; }
     try {
-      sc = Math.min(1.6, Math.max(0.7, parseFloat(localStorage.getItem('annieplayer.am.lyrscale')) || 1));
-      lh = Math.min(2.2, Math.max(1.2, parseFloat(localStorage.getItem('annieplayer.am.lyrlh')) || 1.45));
-      wl = Math.min(20, Math.max(0, parseInt(localStorage.getItem('annieplayer.am.lyrwordlimit'), 10) || 0));
-      blurOn = localStorage.getItem('annieplayer.am.lyrblur') !== '0'; // 歌词虚化默认开
-      tlySc = Math.min(1.6, Math.max(0.7, parseFloat(localStorage.getItem('annieplayer.am.tlyscale')) || 1)); // 译文字号独立缩放
-      coverOn = localStorage.getItem('annieplayer.am.lyrcover') !== '0'; // V4.3.22：面板封面默认开
+      var v;
+      v = parseFloat(localStorage.getItem(prefix + 'lyrscale')); if (isFinite(v)) p.sc = Math.min(1.6, Math.max(0.7, v));
+      v = parseFloat(localStorage.getItem(prefix + 'lyrlh')); if (isFinite(v)) p.lh = Math.min(2.2, Math.max(1.2, v));
+      v = parseInt(localStorage.getItem(prefix + 'lyrwordlimit'), 10); if (!isNaN(v)) p.wl = Math.min(20, Math.max(0, v));
+      v = localStorage.getItem(prefix + 'lyrblur'); if (v !== null) p.blur = v !== '0'; // 歌词虚化默认开
+      v = parseFloat(localStorage.getItem(prefix + 'tlyscale')); if (isFinite(v)) p.tly = Math.min(1.6, Math.max(0.7, v)); // 译文字号独立缩放
+      v = localStorage.getItem(prefix + 'dual'); if (v === 'row' || v === 'side' || v === 'src' || v === 'tly') p.dual = v; // 双语布局
+      v = localStorage.getItem(prefix + 'lyrpos'); if (v === 'upper' || v === 'center' || v === 'lower') p.pos = v;       // 当前行跟随位置
     } catch (e) { }
+    return p;
+  }
+  /* 当前行跟随位置 → 滚动定位比例（null 表示调用方用各自默认） */
+  function lyrPosRate(pos, def) {
+    if (pos === 'center') return 0.5;
+    if (pos === 'lower') return 0.62;
+    return def;
+  }
+  function applyLyrStyle() {
+    var m = readLyrProfile('annieplayer.am.');
+    // 沉浸配置从未设置时跟随主界面现有调校（老用户升级无感）；在沉浸弹层调过一次后即独立
+    var im = readLyrProfile('annieplayer.imm.', m);
+    var coverOn = true;
+    try { coverOn = localStorage.getItem('annieplayer.am.lyrcover') !== '0'; } catch (e) { } // V4.3.22：面板封面默认开（仅主界面面板）
     S.lyrFsV = (S.lyrFsV || 0) + 1; // 递增使各行字号缓存失效
-    S.lyrScale = sc; S.lyrLh = lh; S.lyrWordLimit = wl; S.lyrBlur = blurOn; S.lyrTlyScale = tlySc;
+    S.lyrScale = m.sc; S.lyrLh = m.lh; S.lyrWordLimit = m.wl; S.lyrBlur = m.blur; S.lyrTlyScale = m.tly;
+    S.lyrDual = m.dual; S.lyrPos = m.pos;
+    S.immLyrScale = im.sc; S.immLyrLh = im.lh; S.immLyrWordLimit = im.wl; S.immLyrBlur = im.blur; S.immTlyScale = im.tly;
+    S.immLyrDual = im.dual; S.immLyrPos = im.pos;
     S.lyrCoverOn = coverOn;
     var root = document.getElementById('am-root');
     if (root) {
-      root.style.setProperty('--am-lyr-scale', sc);
-      root.style.setProperty('--am-lyr-lh', lh);
-      root.style.setProperty('--am-tly-scale', tlySc);
-      root.classList.toggle('am-no-lyrblur', !blurOn);
+      root.style.setProperty('--am-lyr-scale', m.sc);
+      root.style.setProperty('--am-lyr-lh', m.lh);
+      root.style.setProperty('--am-tly-scale', m.tly);
+      root.style.setProperty('--am-imm-lyr-scale', im.sc);
+      root.style.setProperty('--am-imm-lyr-lh', im.lh);
+      root.style.setProperty('--am-imm-tly-scale', im.tly);
+      root.classList.toggle('am-no-lyrblur', !m.blur);
+      root.classList.toggle('am-no-imm-lyrblur', !im.blur);
       root.classList.toggle('am-lyrcover-off', !coverOn);
+      // 双语布局：主界面（含迷你）am-m-dual-*，沉浸 am-i-dual-*（祖先类隔离，行类名共享）
+      ['row', 'side', 'src', 'tly'].forEach(function (d) {
+        root.classList.toggle('am-m-dual-' + d, m.dual === d);
+        root.classList.toggle('am-i-dual-' + d, im.dual === d);
+      });
     }
     refitAllLyr();
   }
@@ -355,108 +402,169 @@
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
   }
   /* V4.4：支持沉浸模式锚点——同一弹层可从主面板 ⚙ 或沉浸右上角 ⚙ 打开；
-   * 开着时换锚点=改挂新位置，同一锚点再点=收起 */
+   * 开着时换锚点=改挂新位置，同一锚点再点=收起。
+   * 两个锚点编辑的是两套独立配置：主面板 ⚙ 改主界面歌词，沉浸 ⚙ 改沉浸歌词。 */
   function toggleLyrSetPop(anchor) {
-    if (!R.lyrSetPop) buildLyrSetPop();
-    var pop = R.lyrSetPop;
     var btn = anchor || R.btnLyrSet;
-    if (pop.classList.contains('on') && pop._anchor === btn) { pop.classList.remove('on'); return; }
+    var ctx = (R.immBtnLyrSet && btn === R.immBtnLyrSet) ? 'imm' : 'main';
+    if (R.lyrSetPop) {
+      if (R.lyrSetPop.classList.contains('on') && R.lyrSetPop._anchor === btn) { R.lyrSetPop.classList.remove('on'); return; }
+      R.lyrSetPop.remove(); // 切换上下文时按新配置重建
+      R.lyrSetPop = null;
+    }
+    buildLyrSetPop(ctx);
+    var pop = R.lyrSetPop;
     pop._anchor = btn;
     var r = btn.getBoundingClientRect();
     pop.style.left = Math.max(8, r.right - 250) + 'px';
     pop.style.top = (r.bottom + 8) + 'px';
     pop.classList.add('on');
   }
-  function buildLyrSetPop() {
+  function buildLyrSetPop(ctx) {
+    var imm = ctx === 'imm';
+    // 当前上下文对应的配置（键前缀 + S 中已应用的值）
+    var prefix = imm ? 'annieplayer.imm.' : 'annieplayer.am.';
+    var cur = imm
+      ? { sc: S.immLyrScale || 1, lh: S.immLyrLh || 1.45, wl: S.immLyrWordLimit || 0, blur: S.immLyrBlur !== false, tly: S.immTlyScale || 1 }
+      : { sc: S.lyrScale || 1, lh: S.lyrLh || 1.45, wl: S.lyrWordLimit || 0, blur: S.lyrBlur !== false, tly: S.lyrTlyScale || 1 };
     var pop = el('div', 'am-pop am-lyrset-pop');
-    pop.appendChild(el('div', 'am-pop-h', '歌词外观'));
-    var row1 = el('div', 'am-pop-row');
-    row1.appendChild(el('span', null, '字号'));
-    var sl1 = document.createElement('input');
-    sl1.type = 'range'; sl1.min = 70; sl1.max = 160; sl1.step = 5;
-    sl1.value = Math.round((S.lyrScale || 1) * 100);
-    sl1.className = 'am-lyrset-slider';
-    var v1 = el('span', 'am-lyrset-v', sl1.value + '%');
-    sl1.oninput = function () {
-      v1.textContent = sl1.value + '%';
-      try { localStorage.setItem('annieplayer.am.lyrscale', String(sl1.value / 100)); } catch (e) { }
-      applyLyrStyle();
-    };
-    row1.appendChild(sl1); row1.appendChild(v1);
-    pop.appendChild(row1);
-    // 译文字号（独立缩放，与原文同款滑条）
-    var rowT = el('div', 'am-pop-row');
-    rowT.appendChild(el('span', null, '译文字号'));
-    var slT = document.createElement('input');
-    slT.type = 'range'; slT.min = 70; slT.max = 160; slT.step = 5;
-    slT.value = Math.round((S.lyrTlyScale || 1) * 100);
-    slT.className = 'am-lyrset-slider';
-    var vT = el('span', 'am-lyrset-v', slT.value + '%');
-    slT.oninput = function () {
-      vT.textContent = slT.value + '%';
-      try { localStorage.setItem('annieplayer.am.tlyscale', String(slT.value / 100)); } catch (e) { }
-      applyLyrStyle();
-    };
-    rowT.appendChild(slT); rowT.appendChild(vT);
-    pop.appendChild(rowT);
-    var row2 = el('div', 'am-pop-row');
-    row2.appendChild(el('span', null, '行距'));
-    var sl2 = document.createElement('input');
-    sl2.type = 'range'; sl2.min = 120; sl2.max = 220; sl2.step = 5;
-    sl2.value = Math.round((S.lyrLh || 1.45) * 100);
-    sl2.className = 'am-lyrset-slider';
-    var v2 = el('span', 'am-lyrset-v', (sl2.value / 100).toFixed(2));
-    sl2.oninput = function () {
-      v2.textContent = (sl2.value / 100).toFixed(2);
-      try { localStorage.setItem('annieplayer.am.lyrlh', String(sl2.value / 100)); } catch (e) { }
-      applyLyrStyle();
-    };
-    row2.appendChild(sl2); row2.appendChild(v2);
-    pop.appendChild(row2);
-    // 每行词数（卡拉OK行生效；0=按容器宽度自然折行）
-    var row3 = el('div', 'am-pop-row');
-    row3.appendChild(el('span', null, '每行词数'));
-    var sl3 = document.createElement('input');
-    sl3.type = 'range'; sl3.min = 0; sl3.max = 12; sl3.step = 1;
-    sl3.value = S.lyrWordLimit || 0;
-    sl3.className = 'am-lyrset-slider';
-    var v3 = el('span', 'am-lyrset-v', (S.lyrWordLimit || 0) === 0 ? '自动' : String(S.lyrWordLimit));
-    sl3.oninput = function () {
-      var n = +sl3.value;
-      v3.textContent = n === 0 ? '自动' : String(n);
-      try { localStorage.setItem('annieplayer.am.lyrwordlimit', String(n)); } catch (e) { }
-      S.lyrWordLimit = n;
-      rerenderAllLyr();
-    };
-    row3.appendChild(sl3); row3.appendChild(v3);
-    pop.appendChild(row3);
-    // 歌词虚化开关（默认开；非当前行模糊，关闭后仅压暗，沉浸页同步生效）
+    pop.appendChild(el('div', 'am-pop-h', imm ? '歌词外观 · 沉浸模式' : '歌词外观 · 主界面'));
+    if (imm) pop.appendChild(el('div', 'am-pop-hint', '此处设置仅作用于沉浸模式（含彩胶唱片）歌词，与主界面右栏歌词各自独立'));
+    function sliderRow(label, keySuffix, min, max, step, value, fmt, oninput) {
+      var row = el('div', 'am-pop-row');
+      row.appendChild(el('span', null, label));
+      var sl = document.createElement('input');
+      sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step;
+      sl.value = value;
+      sl.className = 'am-lyrset-slider';
+      var v = el('span', 'am-lyrset-v', fmt(sl.value));
+      sl.oninput = function () { v.textContent = fmt(sl.value); oninput(sl.value); };
+      row.appendChild(sl); row.appendChild(v);
+      pop.appendChild(row);
+      return sl;
+    }
+    function saveKey(suffix, val) { try { localStorage.setItem(prefix + suffix, String(val)); } catch (e) { } }
+    sliderRow('字号', 'lyrscale', 70, 160, 5, Math.round(cur.sc * 100),
+      function (x) { return x + '%'; },
+      function (x) { saveKey('lyrscale', x / 100); applyLyrStyle(); });
+    sliderRow('译文字号', 'tlyscale', 70, 160, 5, Math.round(cur.tly * 100),
+      function (x) { return x + '%'; },
+      function (x) { saveKey('tlyscale', x / 100); applyLyrStyle(); });
+    sliderRow('行距', 'lyrlh', 120, 220, 5, Math.round(cur.lh * 100),
+      function (x) { return (x / 100).toFixed(2); },
+      function (x) { saveKey('lyrlh', x / 100); applyLyrStyle(); });
+    sliderRow('每行词数', 'lyrwordlimit', 0, 12, 1, cur.wl,
+      function (x) { return (+x) === 0 ? '自动' : String(x); },
+      function (x) {
+        var n = +x;
+        saveKey('lyrwordlimit', n);
+        if (imm) S.immLyrWordLimit = n; else S.lyrWordLimit = n;
+        rerenderAllLyr();
+      });
+    // 歌词虚化开关（默认开；非当前行模糊，关闭后仅压暗）
     var rowB = el('div', 'am-pop-row');
     rowB.appendChild(el('span', null, '歌词虚化'));
-    var bBlur = el('button', 'am-tbtn', S.lyrBlur !== false ? '开' : '关');
+    var bBlur = el('button', 'am-tbtn', cur.blur ? '开' : '关');
     bBlur.title = '非当前歌词行的模糊效果（默认打开）';
     bBlur.onclick = function () {
-      var on = !(S.lyrBlur !== false);
+      var on = !cur.blur;
+      cur.blur = on;
       bBlur.textContent = on ? '开' : '关';
-      try { localStorage.setItem('annieplayer.am.lyrblur', on ? '1' : '0'); } catch (e) { }
+      saveKey('lyrblur', on ? '1' : '0');
       applyLyrStyle();
     };
     rowB.appendChild(bBlur);
     pop.appendChild(rowB);
-    // V4.3.22：面板封面开关（默认开；歌词区顶部显示当前曲目封面）
-    var rowC = el('div', 'am-pop-row');
-    rowC.appendChild(el('span', null, '面板封面'));
-    var bCover = el('button', 'am-tbtn', S.lyrCoverOn !== false ? '开' : '关');
-    bCover.title = '在歌词面板顶部显示当前播放曲目的封面（默认打开）';
-    bCover.onclick = function () {
-      var on = !(S.lyrCoverOn !== false);
-      bCover.textContent = on ? '开' : '关';
-      try { localStorage.setItem('annieplayer.am.lyrcover', on ? '1' : '0'); } catch (e) { }
-      applyLyrStyle();
+    /* ---- V4.4：显示预设（一键套字号/行距/虚化；仅覆盖这三项，双语/位置/背景不动） ---- */
+    function reopenPop() { // 预设改动后重建弹层，让滑条同步到新值
+      if (R.lyrSetPop) { R.lyrSetPop.classList.remove('on'); R.lyrSetPop.remove(); R.lyrSetPop = null; }
+      buildLyrSetPop(ctx);
+      var p = R.lyrSetPop;
+      p._anchor = btn;
+      var rr = btn.getBoundingClientRect();
+      p.style.left = Math.max(8, rr.right - 250) + 'px';
+      p.style.top = (rr.bottom + 8) + 'px';
+      p.classList.add('on');
+    }
+    var PRESETS = {
+      comfort: { sc: 1.05, lh: 1.7, blur: '1' },
+      cinema:  { sc: 1.25, lh: 1.95, blur: '0' },
+      compact: { sc: 0.9, lh: 1.3, blur: '1' }
     };
-    rowC.appendChild(bCover);
-    pop.appendChild(rowC);
-    // V3.5.15：歌词偏移微调（±0.5s，按曲记忆；AM/FB2K/桌面歌词三处同一生效）
+    var rowP = el('div', 'am-pop-row am-pop-row-wrap');
+    rowP.appendChild(el('span', null, '预设'));
+    var segP = el('div', 'am-seg');
+    [['comfort', '舒适'], ['cinema', '影院'], ['compact', '紧凑']].forEach(function (kv) {
+      var b = el('button', 'am-tbtn', kv[1]);
+      b.title = kv[0] === 'comfort' ? '字号略大、行距宽松、虚化非当前行'
+        : kv[0] === 'cinema' ? '大字号大行距、关闭虚化（只突出当前行）'
+        : '小字号窄行距，一屏看更多行';
+      b.onclick = function () {
+        var s = PRESETS[kv[0]];
+        saveKey('lyrscale', s.sc); saveKey('lyrlh', s.lh); saveKey('lyrblur', s.blur);
+        applyLyrStyle();
+        reopenPop();
+      };
+      segP.appendChild(b);
+    });
+    rowP.appendChild(segP);
+    pop.appendChild(rowP);
+    /* ---- V4.4：双语歌词布局（上下/左右/仅原文/仅译文；主界面与沉浸各自独立） ---- */
+    function segRow(label, options, value, onPick) {
+      var row = el('div', 'am-pop-row am-pop-row-wrap');
+      row.appendChild(el('span', null, label));
+      var seg = el('div', 'am-seg');
+      options.forEach(function (o) {
+        var b = el('button', 'am-tbtn' + (o.v === value ? ' on' : ''), o.t);
+        if (o.hint) b.title = o.hint;
+        b.onclick = function () {
+          onPick(o.v);
+          seg.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
+          b.classList.add('on');
+        };
+        seg.appendChild(b);
+      });
+      row.appendChild(seg);
+      pop.appendChild(row);
+    }
+    var dualNow = imm ? (S.immLyrDual || 'row') : (S.lyrDual || 'row');
+    segRow('双语', [
+      { v: 'row', t: '上下', hint: '译文显示在原文下方（默认）' },
+      { v: 'side', t: '左右', hint: '译文排在原文右侧（原文短时同排）' },
+      { v: 'src', t: '仅原文', hint: '隐藏译文行' },
+      { v: 'tly', t: '仅译文', hint: '只看译文，译文按原文字号显示' }
+    ], dualNow, function (v) {
+      saveKey('dual', v);
+      applyLyrStyle();
+      rerenderAllLyr(); // 仅译文为结构级变更，三处容器统一重建
+    });
+    /* ---- V4.4：当前行跟随位置（偏上/居中/偏下） ---- */
+    var posNow = imm ? (S.immLyrPos || 'upper') : (S.lyrPos || 'upper');
+    segRow('跟随位置', [
+      { v: 'upper', t: '偏上', hint: '当前行靠视口上方，下方显示更多后续歌词（默认）' },
+      { v: 'center', t: '居中', hint: '当前行始终在视口中央' },
+      { v: 'lower', t: '偏下', hint: '当前行靠视口下方，上方显示更多歌词' }
+    ], posNow, function (v) {
+      saveKey('lyrpos', v);
+      applyLyrStyle();
+      tickLyrics(); // 立即按新比例重新定位
+    });
+    // 面板封面开关仅主界面面板有（沉浸模式无此结构）
+    if (!imm) {
+      var rowC = el('div', 'am-pop-row');
+      rowC.appendChild(el('span', null, '面板封面'));
+      var bCover = el('button', 'am-tbtn', S.lyrCoverOn !== false ? '开' : '关');
+      bCover.title = '在歌词面板顶部显示当前播放曲目的封面（默认打开）';
+      bCover.onclick = function () {
+        var on = !(S.lyrCoverOn !== false);
+        bCover.textContent = on ? '开' : '关';
+        try { localStorage.setItem('annieplayer.am.lyrcover', on ? '1' : '0'); } catch (e) { }
+        applyLyrStyle();
+      };
+      rowC.appendChild(bCover);
+      pop.appendChild(rowC);
+    }
+    // V3.5.15：歌词偏移微调（±0.5s，按曲记忆；时间轴校准，不属于外观，两处共享）
     if (window.annieLyrOff) {
       var row4 = el('div', 'am-pop-row');
       row4.appendChild(el('span', null, '歌词偏移'));
@@ -483,17 +591,22 @@
   }
 
   /* ================= 歌词行：沉浸/迷你共享渲染 ================= */
-  function buildLyrInto(box) {
+  function buildLyrInto(box, wordLimit) {
+    var isImm = box === R.immLyrBox;
+    // 默认按容器身份选词数/双语布局：沉浸歌词用独立配置，其余（迷你等）跟随主界面
+    if (wordLimit == null) wordLimit = isImm ? (S.immLyrWordLimit | 0) : (S.lyrWordLimit | 0);
+    var dual = isImm ? (S.immLyrDual || 'row') : (S.lyrDual || 'row');
     box.innerHTML = '';
     if (!S.lyrLines.length) {
       box.appendChild(el('div', 'am-lyr-empty', !state.currentPath ? '播放歌曲以显示歌词' : (state.currentStream ? '歌词加载中…' : '暂无歌词')));
       return;
     }
     S.lyrLines.forEach(function (l, i) {
-      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line'));
+      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line', wordLimit, dual));
     });
     fitLyrLines(box);
-    paintLyrBox(box, S.lyrCur, 0.35);
+    var initRate = isImm ? lyrPosRate(S.immLyrPos, 0.35) : 0.4;
+    paintLyrBox(box, S.lyrCur, initRate);
     // V4.1：整组重建时逐行浮入（重放 class 触发动画）
     box.classList.remove('am-lyr-fresh'); void box.offsetWidth; box.classList.add('am-lyr-fresh');
   }
@@ -509,7 +622,7 @@
       n.classList.toggle('far', dist > 1);
     }
     paintKara(box, cur, S.pos);
-    if (cur >= 0 && nodes[cur]) box.scrollTop = nodes[cur].offsetTop - box.clientHeight * rate;
+    if (cur >= 0 && nodes[cur]) progScrollTop(box, nodes[cur].offsetTop - box.clientHeight * rate);
   }
 
 

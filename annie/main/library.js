@@ -453,6 +453,67 @@ async function readMetaBatch(paths, limit = 4) {
   return out;
 }
 
+/* V4.4：拖入歌单的多文件自动排序。
+ * 资源管理器多选拖入时 CF_HDROP 顺序无序（鼠标按住的"焦点文件"排第一，其余也不保证显示序）。
+ * 规则：≥60% 文件带有效曲目号（至少 2 首、≥2 个不同曲目号）→ 按 专辑(标签缺失回落目录)→碟号→曲目号→文件名；
+ * 否则回退 目录→自然文件名（数字感知：track2 在 track10 前，与资源管理器显示序一致）。
+ * CUE/ISO 虚拟分轨（path 含 #cue/#iso）不触碰文件系统，直接走自然序（...#cue-2 < ...#cue-10）。
+ * cache 中 track 字段 === undefined 视为老缓存从未填充，需现读；空字符串 '' 表示已确认无曲目号。
+ * 返回 { paths, mode:'track'|'name', filled:{path:{track,disc}} 供调用方回填 metaCache }。 */
+async function orderAudioPaths(rawPaths, cache0) {
+  const cache = cache0 || {};
+  const uniq = [];
+  for (const p of rawPaths) { if (typeof p === 'string' && uniq.indexOf(p) < 0) uniq.push(p); }
+  const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  const parseNo = (s) => { const n = parseInt(String(s || '').split('/')[0], 10); return isFinite(n) && n > 0 ? n : 0; };
+  const isVirtual = (p) => p.includes('#cue') || p.includes('#iso');
+  const info = new Map();
+  for (const p of uniq) {
+    const c = (!isVirtual(p) && cache && cache[p]) || null;
+    info.set(p, {
+      dir: path.dirname(p), base: path.basename(p),
+      album: (c && c.album) || '',
+      trackNo: c ? parseNo(c.track) : 0,
+      discNo: c ? parseNo(c.disc) : 0
+    });
+  }
+  // 老缓存无曲目号字段 → 批量现读（readMetaBatch 4 并发，结果仅取文本字段回填）
+  const need = uniq.filter(p => !isVirtual(p) && (!cache[p] || cache[p].track === undefined));
+  const filled = {};
+  if (need.length) {
+    let batch = null;
+    try { batch = await readMetaBatch(need); } catch { batch = {}; }
+    for (const [p, m] of Object.entries(batch || {})) {
+      if (m && m.ok) {
+        filled[p] = { track: m.track || '', disc: m.disc || '' };
+        const inf = info.get(p);
+        if (inf) { inf.trackNo = parseNo(m.track); inf.discNo = parseNo(m.disc); if (!inf.album) inf.album = m.album || ''; }
+      }
+    }
+  }
+  const withNo = uniq.filter(p => info.get(p).trackNo > 0);
+  let mode = 'name';
+  if (uniq.length >= 2 && withNo.length / uniq.length >= 0.6 && new Set(withNo.map(p => info.get(p).trackNo)).size >= 2) mode = 'track';
+  const sorted = uniq.slice();
+  if (mode === 'track') {
+    sorted.sort((a, b) => {
+      const x = info.get(a), y = info.get(b);
+      let d = nat(x.album || x.dir, y.album || y.dir); if (d) return d; // 同专辑聚拢（无专辑标签按目录）
+      d = (x.trackNo > 0 ? 0 : 1) - (y.trackNo > 0 ? 0 : 1); if (d) return d; // 组内无号的沉底
+      d = (x.discNo || 0) - (y.discNo || 0); if (d) return d;
+      d = (x.trackNo || 0) - (y.trackNo || 0); if (d) return d;
+      return nat(x.base, y.base);
+    });
+  } else {
+    sorted.sort((a, b) => {
+      const x = info.get(a), y = info.get(b);
+      const d = nat(x.dir, y.dir); if (d) return d;
+      return nat(x.base, y.base);
+    });
+  }
+  return { paths: sorted, mode, filled };
+}
+
 /* 性能优化：歌词结果内存缓存（含"无歌词"负缓存），audioPath -> { am, lm, result }。
  * am = 音频文件 mtime，lm = 同名 .lrc 的 mtime（无 .lrc 记 -1）——
  * 两者都校验，之后新增/修改 .lrc 或替换音频文件都会正确失效。 */
@@ -537,4 +598,4 @@ function readFileBuffer(filePath) {
   return fs.readFileSync(filePath);
 }
 
-module.exports = { scanFolders, readMeta, readMetaBatch, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, getDiskCover, setDiskCover, initCoverDiskCache, readWavInfo, pickWavField, cleanWavTitle, ffprobeTags };
+module.exports = { scanFolders, readMeta, readMetaBatch, orderAudioPaths, readLyrics, readFileBuffer, isAudio, getCachedCover, setCachedCover, getDiskCover, setDiskCover, initCoverDiskCache, readWavInfo, pickWavField, cleanWavTitle, ffprobeTags };

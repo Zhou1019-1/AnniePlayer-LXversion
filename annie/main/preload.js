@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld('mine', {
   playlistCreate: (name) => ipcRenderer.invoke('lib:playlist:create', name),
   playlistRename: (id, name) => ipcRenderer.invoke('lib:playlist:rename', id, name),
   playlistDelete: (id) => ipcRenderer.invoke('lib:playlist:delete', id),
-  playlistAdd: (id, paths, before) => ipcRenderer.invoke('lib:playlist:add', id, paths, before),
+  playlistAdd: (id, paths, before, sort) => ipcRenderer.invoke('lib:playlist:add', id, paths, before, sort),
   playlistReorder: (id, paths) => ipcRenderer.invoke('lib:playlist:reorder', id, paths), // V4.3.22：拖拽排序
   // V4.3.22：导入 foobar2000 .fpl 播放列表
   fplImport: () => ipcRenderer.invoke('lib:playlist:importFpl'),
@@ -107,7 +107,8 @@ contextBridge.exposeInMainWorld('mine', {
   streamCacheStats: () => ipcRenderer.invoke('streamCache:stats'),
   streamCacheSetCfg: (patch) => ipcRenderer.invoke('streamCache:setCfg', patch),
   streamCachePickDir: () => ipcRenderer.invoke('streamCache:pickDir'),
-  streamCacheClear: () => ipcRenderer.invoke('streamCache:clear'),
+  streamCacheGroups: () => ipcRenderer.invoke('streamCache:groups'),
+  streamCacheClear: (filter) => ipcRenderer.invoke('streamCache:clear', filter || null),
   streamHotSearch: (params) => ipcRenderer.invoke('stream:hotSearch', params),
   streamHotComments: (params) => ipcRenderer.invoke('stream:hotComments', params), // V3.5.19：网易云热门评论
   // 发现音乐：排行榜 / 歌单广场（V3.5.4）
@@ -227,6 +228,12 @@ contextBridge.exposeInMainWorld('mine', {
   // Pro beat0.0.1：迷你模式 / 桌面歌词 / 拖放 / 托盘
   miniEnter: (miniBounds) => ipcRenderer.invoke('mini:enter', miniBounds),
   miniExit: () => ipcRenderer.invoke('mini:exit'),
+  // V4.4：迷你模式收进托盘后主进程已静默还原主窗口形态，通知渲染层拆迷你 UI
+  onMiniHiddenToTray: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('mini:hiddenToTray', listener);
+    return () => ipcRenderer.removeListener('mini:hiddenToTray', listener);
+  },
   miniSetSize: (w, h) => ipcRenderer.invoke('mini:setSize', w, h),
   miniPin: (on) => ipcRenderer.invoke('mini:pin', on), // V3.5.15：迷你窗口置顶开关
   dlyricsToggle: () => ipcRenderer.invoke('dlyrics:toggle'),

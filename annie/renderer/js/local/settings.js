@@ -22,6 +22,7 @@
     amTopbarBottom: false, // V4.4：AM 顶栏置底（AM 界面页开关）
     amImmFullscreen: false, // V4.4：沉浸模式真全屏（隐藏任务栏；默认关=窗口最大化）
     amImmMode: 'classic',   // V4.4：沉浸模式样式 classic 经典双栏 | vinyl 彩胶唱片
+    amResume: true,         // V4.4：重启恢复上次播放（曲目/队列/进度；上次暂停则恢复为暂停态）
     amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
     amFavSort: 'az',        // V4.3.22：AM 喜爱歌曲视图排序（选项同歌曲视图）
     amAlbumSort: 'az',      // V4.3.22：AM 专辑视图排序 az|azArtist|countDesc|countAsc
@@ -1678,6 +1679,15 @@
         if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(!!ui.amImmFullscreen && immOn);
       } catch (e) { }
     }, '沉浸模式 全屏 任务栏 隐藏 fullscreen immersive');
+    // —— 重启恢复上次播放（曲目/队列/进度；本地+在线均生效） ——
+    checkRow(sAmI, '重启恢复上次播放（含进度）', 'amResume', function () {
+      if (!ui.amResume) { // 关闭时清掉已存的恢复点，避免下次开启时恢复到陈旧曲目
+        try {
+          localStorage.removeItem('annieplayer.resume.v1');
+          localStorage.removeItem('annieplayer.resume.pos');
+        } catch (e) { }
+      }
+    }, '启动 恢复播放 续播 进度 记忆 restart resume');
     // —— 沉浸模式样式（经典双栏 / 彩胶唱片；沉浸中切换立即重建生效） ——
     var imRow = markItem(el('div', 'set-row'), '沉浸模式 样式 彩胶 黑胶 唱片 经典 vinyl immersive style');
     var imLab = el('div'); imLab.appendChild(el('div', '', '沉浸模式样式'));
@@ -1706,6 +1716,19 @@
       function (v) { return v === 0 ? '自动' : String(Math.round(v)); }, function () {
         if (window.amLyrRerender) window.amLyrRerender();
       }, 'am 每行词数 折行 word limit');
+    // —— 沉浸模式歌词外观（与主界面右栏歌词各自独立；V4.4）。未配置时默认值取自主界面现有调校 ——
+    var immSeedSc = parseFloat(localStorage.getItem('annieplayer.am.lyrscale')) || 1;
+    var immSeedLh = parseFloat(localStorage.getItem('annieplayer.am.lyrlh')) || 1.45;
+    lsSliderRow(sAmLyr, '沉浸歌词字号', 'annieplayer.imm.lyrscale', 0.7, 1.6, 0.05, immSeedSc, fmt2, function () {
+      if (window.amLyrStyle) window.amLyrStyle();
+    }, '沉浸 歌词字号 字体大小 immersive font size');
+    lsSliderRow(sAmLyr, '沉浸歌词行距', 'annieplayer.imm.lyrlh', 1.2, 2.2, 0.05, immSeedLh, fmt2, function () {
+      if (window.amLyrStyle) window.amLyrStyle();
+    }, '沉浸 歌词行距 行高 immersive line height');
+    lsSliderRow(sAmLyr, '沉浸每行词数', 'annieplayer.imm.lyrwordlimit', 0, 12, 1, 0,
+      function (v) { return v === 0 ? '自动' : String(Math.round(v)); }, function () {
+        if (window.amLyrRerender) window.amLyrRerender();
+      }, '沉浸 每行词数 折行 immersive word limit');
 
     /* ================= V4.4：FB2K 界面（主题专属设置页） ================= */
     buildWallpaperSection(pgUiFb2k);
@@ -2813,6 +2836,40 @@
       right.appendChild(refs.max); right.appendChild(bClr);
       r3.appendChild(right);
       sc.appendChild(r3);
+      // V4.4：按平台/音质分组查看与清理
+      var gCard = el('div', 'set-dl-card');
+      var gTitle = el('div', 'set-hint', '按平台 / 音质分组（读取中…）');
+      gTitle.style.margin = '2px 0 6px';
+      gCard.appendChild(gTitle);
+      var gBox = el('div', 'set-sc-groups');
+      gCard.appendChild(gBox);
+      sc.appendChild(gCard);
+      var PF_NAME = { kg: '酷狗', kw: '酷我', mg: '咪咕', tx: 'QQ 音乐', wy: '网易云', other: '其他' };
+      var Q_NAME = { flac24bit: 'Hi-Res', flac: 'FLAC', '320k': '320K', '128k': '128K', unknown: '未知' };
+      function refreshGroups() {
+        if (!window.mine.streamCacheGroups) return;
+        window.mine.streamCacheGroups().then(function (gs) {
+          gBox.innerHTML = '';
+          if (!gs || !gs.length) { gTitle.textContent = '按平台 / 音质分组（暂无缓存）'; return; }
+          gTitle.textContent = '按平台 / 音质分组 · 共 ' + gs.length + ' 组';
+          gs.forEach(function (g) {
+            var row = el('div', 'set-sc-grow');
+            row.appendChild(el('span', 'set-sc-gname', (PF_NAME[g.provider] || g.provider) + ' · ' + (Q_NAME[g.quality] || g.quality)));
+            row.appendChild(el('span', 'set-hint', g.count + ' 首 · ' + g.totalMB + ' MB'));
+            var b = el('button', 'eq-preset', '清理');
+            b.style.cssText = bClr.style.cssText;
+            b.onclick = function () {
+              if (!window.confirm('确定清理「' + (PF_NAME[g.provider] || g.provider) + ' · ' + (Q_NAME[g.quality] || g.quality) + '」的 ' + g.count + ' 首缓存？')) return;
+              window.mine.streamCacheClear({ provider: g.provider, quality: g.quality })
+                .then(function () { refreshStats(); refreshGroups(); }).catch(function () { });
+            };
+            row.appendChild(b);
+            gBox.appendChild(row);
+          });
+        }).catch(function () { gTitle.textContent = '分组信息读取失败'; });
+      }
+      var _refreshStatsOld = refreshStats;
+      refreshStats = function () { _refreshStatsOld(); refreshGroups(); };
       refreshStats();
     })();
 

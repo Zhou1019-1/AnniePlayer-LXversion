@@ -478,6 +478,18 @@
     else if (action === 'dlyrics') toggleDlyrics();
   });
 
+  // V4.4：迷你模式下 ✕ 收进托盘时主进程已静默还原主窗口形态，渲染层同步拆掉迷你栏
+  // （否则从托盘再打开会是"大窗口 + 迷你遮罩层"的错形态）
+  if (window.mine && mine.onMiniHiddenToTray) {
+    window.mine.onMiniHiddenToTray((payload) => {
+      if (!miniOn) return;
+      miniOn = false;
+      if (miniBar) miniBar.style.display = 'none';
+      document.body.classList.remove('mini');
+      if (payload && payload.miniBounds) { try { localStorage.setItem(MINI_LS, JSON.stringify(payload.miniBounds)); } catch { } }
+    });
+  }
+
   window.annieProUi = { toggleMini, toggleDlyrics, toggleNpf, openCmdk };
 
   /* ================== 性能调试面板（隐藏入口：标题栏版本号连击 5 次） ================== */

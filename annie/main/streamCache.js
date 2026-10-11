@@ -91,7 +91,11 @@ function fill(ck) {
       const size = fs.statSync(part).size;
       if (!size) throw new Error('empty');
       try { fs.renameSync(part, fin); } catch { fs.copyFileSync(part, fin); fs.unlinkSync(part); }
-      idx[key] = { file, size, lastUse: Date.now(), title: ck.title || '', artist: ck.artist || '' };
+      // V4.4：条目显式带 provider/quality（分组查看/分组清理用；旧条目靠 parseEntry 从 key 兜底解析）
+      idx[key] = {
+        file, size, lastUse: Date.now(), title: ck.title || '', artist: ck.artist || '',
+        provider: ck.provider || '', quality: ck.quality || ''
+      };
       saveIdx(idx);
       enforceCap(idx);
       return { ok: true, size };
@@ -122,6 +126,53 @@ function enforceCap(idx) {
     delete idx[k];
   }
   saveIdx(idx);
+}
+
+/* 条目归属解析：新条目直接带 provider/quality；旧条目从 key 兜底
+ * key = provider_songId_quality（songId 可能含下划线，故 provider 取首段已知平台、quality 取尾部已知档位） */
+const PROVIDERS = ['kg', 'kw', 'mg', 'tx', 'wy'];
+const QUALITIES = ['flac24bit', 'flac', '320k', '128k'];
+function entryGroup(key, ent) {
+  let provider = ent.provider || '', quality = ent.quality || '';
+  if (!provider) { const head = key.split('_')[0]; if (PROVIDERS.indexOf(head) >= 0) provider = head; }
+  if (!quality) {
+    for (const q of QUALITIES) { if (key.endsWith('_' + q) || key === q) { quality = q; break; } }
+  }
+  return { provider: provider || 'other', quality: quality || 'unknown' };
+}
+/* 分组统计：[{provider, quality, count, totalMB}]，按平台、音质排序 */
+function groups() {
+  const idx = loadIdx();
+  const map = new Map();
+  Object.keys(idx).forEach(k => {
+    const g = entryGroup(k, idx[k]);
+    const gk = g.provider + '|' + g.quality;
+    const cur = map.get(gk) || { provider: g.provider, quality: g.quality, count: 0, total: 0 };
+    cur.count++; cur.total += idx[k].size || 0;
+    map.set(gk, cur);
+  });
+  return Array.from(map.values())
+    .map(g => ({ provider: g.provider, quality: g.quality, count: g.count, totalMB: Math.round(g.total / 1048576) }))
+    .sort((a, b) => a.provider === b.provider
+      ? QUALITIES.indexOf(a.quality) - QUALITIES.indexOf(b.quality)
+      : a.provider.localeCompare(b.provider));
+}
+/* 按条件清理（provider/quality 任一给定则只删命中组；都不给=全清，保持旧行为） */
+function clearFiltered(filter) {
+  filter = filter || {};
+  const idx = loadIdx();
+  let removed = 0;
+  Object.keys(idx).forEach(k => {
+    const g = entryGroup(k, idx[k]);
+    const hit = (!filter.provider || filter.provider === g.provider)
+      && (!filter.quality || filter.quality === g.quality);
+    if (!hit) return;
+    try { fs.unlinkSync(path.join(cacheDir(), idx[k].file)); } catch { }
+    removed++;
+    delete idx[k];
+  });
+  saveIdx(idx);
+  return { removed };
 }
 
 function init(hooks) {
@@ -165,11 +216,17 @@ function init(hooks) {
     enforceCap();
     return r.filePaths[0];
   });
-  ipcMain.handle('streamCache:clear', () => {
-    const idx = loadIdx();
-    Object.keys(idx).forEach(k => { try { fs.unlinkSync(path.join(cacheDir(), idx[k].file)); } catch { } });
-    saveIdx({});
-    return true;
+  ipcMain.handle('streamCache:groups', () => groups());
+  ipcMain.handle('streamCache:clear', (_e, filter) => {
+    // 无参（旧调用）=全清；带 {provider} 和/或 {quality} = 分组清理
+    if (!filter || (!filter.provider && !filter.quality)) {
+      const idx = loadIdx();
+      const count = Object.keys(idx).length;
+      Object.keys(idx).forEach(k => { try { fs.unlinkSync(path.join(cacheDir(), idx[k].file)); } catch { } });
+      saveIdx({});
+      return { removed: count };
+    }
+    return clearFiltered(filter);
   });
 
   enforceCap(); // 启动兜底清一次（上次运行可能超限退出）

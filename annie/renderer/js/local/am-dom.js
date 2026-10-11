@@ -134,6 +134,14 @@
     R.btnLocate = el('button', 'am-tbtn', '🎯'); R.btnLocate.title = '定位当前播放文件';
     R.btnLocate.onclick = locatePlaying;
     right.appendChild(R.btnExcl); right.appendChild(R.btnLocate);
+    // V4.4：主界面待播清单抽屉（此前仅沉浸/迷你能看队列）
+    R.btnQ = el('button', 'am-tbtn', '☰'); R.btnQ.title = '待播清单 / 历史记录';
+    R.btnQ.style.position = 'relative';
+    R.btnQ.onclick = function () { if (AM.toggleMainQueue) AM.toggleMainQueue(); };
+    R.btnQBadge = el('span', 'am-q-badge', '');
+    R.btnQBadge.style.display = 'none';
+    R.btnQ.appendChild(R.btnQBadge);
+    right.appendChild(R.btnQ);
     // 播放模式循环切换（本地全量；在线支持顺序/随机/单曲循环）
     R.btnMode = el('button', 'am-tbtn', '→');
     syncModeBtn();
@@ -1653,13 +1661,13 @@
     if (!paths.length) { try { if (typeof proToast === 'function') proToast('没有可识别的音频文件'); } catch (e) { } return; }
     var pl0 = S.playlists.find(function (p) { return p.id === plId; });
     var oldLen = pl0 ? pl0.paths.length : 0;
-    window.mine.playlistAdd(plId, paths, before).then(function (pls) { // 主进程按 path 去重
+    window.mine.playlistAdd(plId, paths, before, true).then(function (pls) { // 主进程去重 + 按曲目号/文件名自动排序
       S.playlists = pls; renderSidebar();
       if (S.view === 'pl:' + plId) renderView();
       var pl1 = pls.find(function (p) { return p.id === plId; });
       var added = pl1 ? pl1.paths.length - oldLen : paths.length;
       try {
-        if (typeof proToast === 'function') proToast(added > 0 ? '📥 已加入 ' + added + ' 首到歌单' : '这些歌曲已在歌单中');
+        if (typeof proToast === 'function') proToast(added > 0 ? '📥 已加入 ' + added + ' 首到歌单（已自动排序）' : '这些歌曲已在歌单中');
       } catch (e) { }
     }).catch(function () { });
   }

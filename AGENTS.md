@@ -69,7 +69,9 @@
 2. **helpContent.js**（`annie/renderer/js/local/`）：补新功能条目 + 版本更新条目（应用内使用说明，共 10 章）。
 3. **更新日志.md**：补版本段落（根目录，release workflow 会自动提取该段作 GitHub Release notes）。
 4. **`npm run gen:help`**：重生成 README 说明书章节 + `docs/章鱼科技：安妮播放器全功能说明书.md` + `《章鱼科技：安妮播放器全功能说明书》.docx`（pandoc 输出到仓库根）。
-5. **`npm run dist:setup`**：打本地安装包（输出 `setupEXE/annie-player-svlx-setup-X.Y.Z.exe`，已签名）。
+5. **`npm run dist:setup`**：打本地安装包（输出 `setupEXE/annie-player-svlx-setup-X.Y.Z.exe`，已签名）。`predist:setup` 钩子会自动先跑 `dotnet publish ... --self-contained true -p:PublishSingleFile=true`（与云端 release.yml 同一命令）重编引擎到 `engine/publish/`，**不要手工拷贝旧引擎产物**。
+   - **教训（V4.4.0 事故）**：曾把本地陈旧的**框架依赖版**引擎（exe 仅 0.15MB、无 coreclr/hostfxr、runtimeconfig 要求 .NET 9.0）打进安装包；用户机器只有 .NET 10（主版本不向下 roll-forward），引擎启动即崩 code=2147516566（0x80008096 FrameworkMissing），主进程 5 次自动重启全灭、`engineAlive:false`、界面无声。云端 release 包永远是自包含的，不受此坑影响——**本地包发出前必须确认 `engine/publish/AnnieEngine.exe` 是 ~69MB 单文件**。
+   - 打包前先杀掉残留进程：`Get-Process AnnieEngine,AnniePlayerSVLX -ErrorAction SilentlyContinue | Stop-Process -Force`（AnnieEngine 是独立子进程，杀 electron 不会带走，占用 exe 会导致 publish bundle UnauthorizedAccess）。
 6. **git commit + push main**：提交标题风格 `V4.3.x 功能点1 + 功能点2`（参考历史 `V4.3.21 一键电台 + 右键菜单 + window.state 挂载潜雷修复`）。只 add 相关文件，勿提交 `PR to Luoxue/`、`QobuzExp/`、`_tmp-*` 等杂物目录。
 7. **git tag vX.Y.Z + git push origin vX.Y.Z**：触发 GitHub Actions `release` workflow（`.github/workflows/release.yml`）云端编译引擎、跑测试（冒烟/音频引擎/无损鉴别/沙箱）、自动从更新日志提取 notes、发布 Release。
 

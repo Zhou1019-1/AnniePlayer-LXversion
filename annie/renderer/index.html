@@ -114,6 +114,26 @@ html[data-motion="off"] #boot-splash *, html[data-motion="off"] #theme-splash * 
 
 <div id="tool-banner" class="hidden">⚠ 缺少 ffmpeg：解码播放不可用。请把 ffmpeg.exe 和 ffprobe.exe 放入 engine/tools 目录后重启播放器。</div>
 
+<!-- V4.4.1：音频引擎启动故障持久提示条（缺 .NET / exe 被隔离等；三主题 body 级常驻） -->
+<div id="engine-banner" class="hidden" role="alert">
+  <div class="eb-body">
+    <div class="eb-text">
+      <div class="eb-title" id="eb-title"></div>
+      <div class="eb-hint" id="eb-hint"></div>
+    </div>
+    <div class="eb-actions">
+      <button id="eb-retry" class="eb-btn eb-primary">重新检测</button>
+      <button id="eb-dotnet" class="eb-btn hidden">下载 .NET 9</button>
+      <button id="eb-av" class="eb-btn hidden">杀软隔离说明</button>
+      <button id="eb-diag" class="eb-btn">导出诊断</button>
+    </div>
+  </div>
+  <div id="eb-av-help" class="eb-av-help hidden">
+    请打开安全软件的「隔离区 / 恢复区」（火绒：安全工具 → 隔离区；360：木马查杀 → 恢复区；Windows 安全中心：保护历史记录），
+    恢复 <b>AnnieEngine.exe</b> 并加入信任区/白名单，然后点「重新检测」。若文件无法恢复，请重新安装完整安装包（约 179MB，自带运行时）。
+  </div>
+</div>
+
 <main id="layout">
   <!-- 左：曲库 / 流媒体 -->
   <aside id="sidebar">

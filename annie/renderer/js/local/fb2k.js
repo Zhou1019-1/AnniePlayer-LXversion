@@ -252,6 +252,12 @@
     /* ---------- 底部控制栏 ---------- */
     root.appendChild(buildBottom());
 
+    // V4.4.1：文件夹拖到左侧播放列表树空白处 → 以文件夹名建歌单并装入歌曲
+    bindFbTreeFolderDrop(R.tree);
+
+    // V4.4.1：fb2k 歌词面板手动滑动 5 秒内不自动回弹（程序驱动滚动不受影响）
+    bindFbLyrManualHold(R.lyrLines);
+
     bindGlobal();
   }
 
@@ -596,6 +602,55 @@
     R.tree.querySelectorAll('.pl-drop-before, .pl-drop-after').forEach(function (x) { x.classList.remove('pl-drop-before'); x.classList.remove('pl-drop-after'); });
   }
 
+  // V4.4.1：文件夹拖到左侧播放列表树空白处 → 以文件夹名建歌单并装入其中歌曲；
+  // 拖到某个歌单节点上则把展开后的歌曲加进该歌单（不另建）。
+  async function bindFbTreeFolderDrop(treeEl) {
+    if (!treeEl || treeEl._fbDropBound) return;
+    treeEl._fbDropBound = true;
+    treeEl.addEventListener('dragover', function (e) {
+      if (!e.dataTransfer || ![].includes.call(e.dataTransfer.types || [], 'Files')) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (er) { }
+    });
+    treeEl.addEventListener('drop', async function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      var onNode = e.target && e.target.closest && e.target.closest('[class*="f2-node"]');
+      // 落在已有歌单节点：展开后直接加进去
+      if (onNode && onNode.dataset && onNode.dataset.key && String(onNode.dataset.key).indexOf('pl:') === 0) {
+        e.preventDefault(); e.stopPropagation();
+        var raw = [];
+        for (var i = 0; i < e.dataTransfer.files.length; i++) {
+          var p = window.mine.getPathForFile(e.dataTransfer.files[i]); if (p) raw.push(p);
+        }
+        if (!raw.length) return;
+        try {
+          var tracks = await window.mine.dropExpand(raw);
+          var paths = (tracks || []).map(function (t) { return t.path; }).filter(Boolean);
+          if (paths.length) await window.mine.playlistAdd(onNode.dataset.key.slice(3), paths, null, true);
+        } catch (er) { }
+        return;
+      }
+      // 树空白处：仅文件夹才建歌单，散文件不拦截（交给全局 queue 追加）
+      var collected = await window.annieCollectDropped(e.dataTransfer.files);
+      var folders = collected.folders || [];
+      if (!folders.length) return;
+      e.preventDefault(); e.stopPropagation();
+      var created = 0;
+      for (var fi = 0; fi < folders.length; fi++) {
+        var f = folders[fi];
+        var name = f.name || (f.path.split(/[\\/]/).pop() || '新建播放列表');
+        var pls = await window.mine.playlistCreate(name).catch(function () { return null; });
+        if (!pls || !pls.length) continue;
+        var pl = pls[pls.length - 1];
+        var tracks2 = await window.mine.dropExpand([f.path]).catch(function () { return []; });
+        var paths2 = (tracks2 || []).map(function (t) { return t.path; }).filter(Boolean);
+        if (paths2.length) await window.mine.playlistAdd(pl.id, paths2, null, true).catch(function () { });
+        created++;
+      }
+      if (created > 0 && typeof proToast === 'function') proToast('已从文件夹新建 ' + created + ' 个播放列表');
+    });
+  }
+
   function rebuildTree() {
     // V4.4：歌单签名变化即递增 plVer 使排序缓存失效（歌单统一主进程后，内容变更来自
     // IPC 返回/AM 侧加歌/迁移等 8 个路径，集中在这里兜底，防 sortCache 命中陈旧行）
@@ -612,6 +667,7 @@
     var tracks = state.library.tracks;
     function node(icon, name, count, key, child) {
       var n = el('div', 'f2-node' + (child ? ' child' : '') + (S.activeList === key ? ' active' : ''));
+      n.dataset.key = key;
       n.appendChild(el('span', 'f2-twisty', ''));
       var ic = el('span', 'f2-nicon'); ic.innerHTML = icon || '';
       n.appendChild(ic);
@@ -1764,6 +1820,7 @@
   document.addEventListener('annie-karaoke-changed', function () { renderLyrics(); });
   function renderLyrics() {
     if (!R.lyrLines) return;
+    S._fbLyrManualUntil = 0; // V4.4.1：切歌重置歌词手动停留
     R.lyrLines.innerHTML = '';
     if (!S.lyrLines || !S.lyrLines.length) {
       R.lyrLines.appendChild(el('div', 'f2-lyr', '（无歌词）'));
@@ -1814,10 +1871,23 @@
     if (S.lyrCur >= 0 && q[S.lyrCur] && q[S.lyrCur]._karaWords) karaResetLine(q[S.lyrCur]);
     S.lyrCur = cur;
     for (var j = 0; j < q.length; j++) q[j].classList.toggle('cur', j === cur);
-    if (cur >= 0 && q[cur]) {
+    // V4.4.1：用户手动滑动歌词后 5 秒内不自动回弹
+    if (cur >= 0 && q[cur] && Date.now() >= (S._fbLyrManualUntil || 0)) {
       var box = R.lyrLines;
+      if (box && box._fbLyrProgMark) box._fbLyrProgMark();
       box.scrollTop = q[cur].offsetTop - box.clientHeight / 2 + 16;
     }
+  }
+  // V4.4.1：fb2k 歌词面板手动滚动监听（程序驱动滚动用 _fbLyrProgMark 短暂屏蔽，避免误判为手动）
+  function bindFbLyrManualHold(box) {
+    if (!box || box._fbLyrBound || typeof box.addEventListener !== 'function') return;
+    box._fbLyrBound = true;
+    var progUntil = 0;
+    box.addEventListener('scroll', function () {
+      if (Date.now() < progUntil) return;
+      S._fbLyrManualUntil = Date.now() + 5000;
+    }, { passive: true });
+    box._fbLyrProgMark = function () { progUntil = Date.now() + 150; };
   }
   function updateLyricsVisibility() {
     if (R.lyrBox) R.lyrBox.style.display = (S.playing && S.lyrLines && S.lyrLines.length) ? '' : 'none';
@@ -2158,6 +2228,15 @@
         updateTitle();
         updateRight(); // Pro：Bit-perfect 状态行刷新
       }
+    });
+    // V4.4.1：共享播放链路状态——停止/引擎死亡时清除格式行，避免残留上一曲
+    document.addEventListener('annie-chain-state', function (e) {
+      var phase = e.detail && e.detail.phase;
+      if (phase !== 'stopped' && phase !== 'engine-dead') return;
+      if (!S.format) return;
+      S.format = null;
+      updateTitle();
+      updateRight();
     });
     // 键盘快捷键（仅 FB2K 主题激活且非输入状态时）
     document.addEventListener('keydown', function (e) {

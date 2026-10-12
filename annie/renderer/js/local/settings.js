@@ -1092,18 +1092,23 @@
             ['质量档位', ui.resampleHq ? '高质量（soxr 64 阶）' : '标准（swresample）']
           ] : [['状态', isShared ? '共享模式：系统混音器重采样（引擎侧直通）' : '源码率直通']]
         });
-        // ⑩ 输出
+        // ⑩ 输出（共享模式下系统混音器最终设备格式引擎不可测，明确标注）
+        var outputFmt = s.outputRate
+          ? (s.outputRate / 1000) + ' kHz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' + (!s.exclusive ? '（引擎侧；系统混音器最终格式由 Windows 决定）' : '')
+          : '未打开';
         stages.push({
           name: '输出', on: true, rows: [
             ['设备', (s.deviceName || '-') + '（' + (s.backendKind === 'asio' ? 'ASIO' : 'WASAPI') + (s.exclusive ? ' 独占' : ' 共享') + (s.dopActive ? ' / DoP' : '') + '）'],
-            ['输出格式', s.outputRate ? (s.outputRate / 1000) + ' kHz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' : '未打开'],
+            ['输出格式', outputFmt],
             ['缓冲', (s.bufferMs || 0) + ' ms' + (s.preload ? ' + 整轨预载' : '')],
             ['切歌', (s.crossfadeSec > 0 ? '交叉淡入 ' + s.crossfadeSec + 's' : (ui.gapless ? '无缝（硬切不重建流）' : '普通（重建设备流）'))]
           ]
         });
-        // ⑪ 健康计数
+        // ⑪ 健康计数（本次引擎运行累计；stats.uptimeSec 标注统计区间）
+        var upSec = Math.round(s.uptimeSec || 0);
+        var upTxt = Math.floor(upSec / 60) + '分' + (upSec % 60) + '秒';
         stages.push({
-          name: '运行健康', on: true, rows: [
+          name: '运行健康（本次引擎运行累计 · 已运行 ' + upTxt + '）', on: true, rows: [
             ['欠载', (s.underrunCount || 0) + ' 次 / ' + (s.underrunFrames || 0) + ' 帧（增长=爆音风险）'],
             ['限幅触发', (s.limiterClipBlocks || 0) + ' 块'],
             ['解码失败', s.decodeFailed ? '是' : '否']
@@ -1174,12 +1179,16 @@
         if (!s || s.ok === false) throw new Error((s && s.error) || 'stats 失败');
         renderChain(s);
         var fmt = s.outputRate ? (s.requestedRate + ' → ' + s.outputRate + 'Hz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' + (s.resampled ? '（重采样）' : '')) : '未播放';
+        var upSec = Math.round(s.uptimeSec || 0);
         healthText.textContent =
           '设备：' + (s.deviceName || '-') + '（' + (s.backendKind || '-') + (s.exclusive ? ' 独占' : ' 共享') + (s.dopActive ? ' / DoP' : '') + '）\n' +
           '格式：' + fmt + '\n' +
           '缓冲：' + (s.bufferedSec || 0) + 's / ' + Math.round((s.bufferedBytes || 0) / 1048576) + 'MB（目标 ' + (s.bufferMs || 0) + 'ms' + (s.preload ? '，整轨预载' : '') + '）\n' +
-          '健康：欠载 ' + (s.underrunCount || 0) + ' 次 / ' + (s.underrunFrames || 0) + ' 帧；限幅 ' + (s.limiterClipBlocks || 0) + ' 块；解码失败 ' + (s.decodeFailed ? '是' : '否');
-      }).catch(function (e) { healthText.textContent = '读取失败：' + (e && e.message ? e.message : e); })
+          '健康（本次引擎运行累计 ' + Math.floor(upSec / 60) + '分' + (upSec % 60) + '秒）：欠载 ' + (s.underrunCount || 0) + ' 次 / ' + (s.underrunFrames || 0) + ' 帧；限幅 ' + (s.limiterClipBlocks || 0) + ' 块；解码失败 ' + (s.decodeFailed ? '是' : '否') + '\n' +
+          '最近刷新：' + new Date().toLocaleTimeString();
+      }).catch(function (e) {
+        healthText.textContent = '读取失败：' + (e && e.message ? e.message : e) + '\n（引擎未运行时可查看顶部故障提示条）';
+      })
         .then(function () { healthBtn.disabled = false; });
     }
     healthBtn.onclick = renderAudioHealth;

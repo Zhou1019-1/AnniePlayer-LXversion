@@ -1458,6 +1458,15 @@ function registerIpc() {
     return out;
   });
 
+  // V4.4.1：拖入项分类——区分文件夹/音频文件，渲染层据此决定"建歌单"还是"加歌单"
+  ipcMain.handle('drop:classify', (_e, paths) => {
+    return (paths || []).map((p) => {
+      let isDir = false, name = path.basename(String(p || ''));
+      try { const st = fs.statSync(p); isDir = st.isDirectory(); name = path.basename(st.isDirectory() ? String(p).replace(/[\\/]+$/, '') : p); } catch { }
+      return { path: p, name, isDirectory: isDir };
+    });
+  });
+
   /* ---------------- Pro beat0.0.1：诊断包导出 ---------------- */
   /* 渲染层 JS 错误环形缓冲（window.onerror / unhandledrejection 上报），随诊断包导出 */
   const rendererErrorRing = [];
@@ -1495,7 +1504,8 @@ function registerIpc() {
       electron: process.versions.electron, node: process.versions.node,
       platform: process.platform + ' ' + process.arch,
       time: new Date().toISOString(),
-      engineAlive: !!engine.proc
+      engineAlive: !!engine.proc,
+      engine: (() => { try { return engine.getDiagnostics(); } catch { return null; } })()
     };
     const { buildZip } = require('./diagZip');
     const zip = buildZip([
@@ -1762,6 +1772,18 @@ function registerIpc() {
 
   // 引擎直通
   ipcMain.handle('engine:call', (_e, method, params, timeoutMs) => engine.call(method, params || {}, timeoutMs || 60000));
+  // V4.4.1：启动故障（缺 .NET/引擎 exe 被隔离等）后由用户显式触发重新检测
+  ipcMain.handle('engine:retry', async () => {
+    const ok = engine.retry();
+    if (!ok) return { ok: false, failure: engine.startupFailure || null };
+    try {
+      await engine.call('engine.info', {}, 15000);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, failure: engine.startupFailure || { kind: 'unknown', message: String((e && e.message) || e) } };
+    }
+  });
+  ipcMain.handle('engine:status', () => engine.getDiagnostics());
 
   // 流媒体平台（洛雪 musicSdk：酷狗 / 酷我 / 咪咕 / QQ / 网易）
   ipcMain.handle('stream:search', (_e, params) => streaming.search(params));

@@ -782,6 +782,25 @@ html, body, button, input, select, textarea {
   transition: opacity .25s var(--ease-spring, ease), transform .25s var(--ease-spring, ease); }
 #pro-toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* V4.4.1：引擎启动故障持久提示条（三主题 body 级，常驻直到恢复） */
+#engine-banner { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 9000;
+  width: min(720px, 92vw); padding: 10px 14px; border-radius: 10px;
+  background: rgba(32,20,22,.96); color: #f3e6e8; border: 1px solid rgba(250,120,120,.55);
+  box-shadow: 0 12px 36px rgba(0,0,0,.5); backdrop-filter: blur(10px); font-size: 13px; }
+#engine-banner .eb-body { display: flex; align-items: center; gap: 14px; }
+#engine-banner .eb-text { flex: 1; min-width: 0; }
+#engine-banner .eb-title { font-size: 13px; font-weight: 600; color: #ffb4b4; }
+#engine-banner .eb-hint { margin-top: 2px; color: rgba(243,230,232,.72); font-size: 12px; line-height: 1.5; }
+#engine-banner .eb-actions { display: flex; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+#engine-banner .eb-btn { border: 1px solid rgba(255,255,255,.22); background: transparent; color: #f3e6e8;
+  border-radius: 7px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+#engine-banner .eb-btn:hover { border-color: rgba(255,255,255,.5); }
+#engine-banner .eb-primary { background: #fa2d55; border-color: #fa2d55; color: #fff; }
+#engine-banner .eb-primary:hover { background: #ff4d72; }
+#engine-banner .eb-av-help { margin-top: 8px; padding: 8px 10px; border-radius: 7px; font-size: 12px; line-height: 1.6;
+  background: rgba(0,0,0,.28); color: rgba(243,230,232,.82); }
+#engine-banner .eb-av-help b { color: #ffd0d0; }
+
 /* EQ 削波防护行 */
 .eq-dsp-row { display: flex; gap: 18px; padding: 4px 2px 8px; flex-wrap: wrap; }
 

@@ -1058,6 +1058,115 @@ function proToast(text, ms = 4200) {
   proToastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
+/* V4.4.1：播放链路共享状态（classic/AM/FB2K/设置中心单一事实来源）。
+ * phase: loading | playing | paused | stopped | device-changed | output-error | engine-dead
+ * format 为引擎 format 事件快照；updatedAt 为最近更新时刻。 */
+state.chain = { phase: 'loading', format: null, updatedAt: 0 };
+function setChainPhase(patch) {
+  state.chain = Object.assign({}, state.chain, patch || {}, { updatedAt: Date.now() });
+  try { document.dispatchEvent(new CustomEvent('annie-chain-state', { detail: state.chain })); } catch (e) { }
+}
+function clearPlaybackFormat() {
+  try {
+    const np = $('#np-format'); if (np) np.innerHTML = '';
+    const bp = $('#bp-chip'); if (bp) { bp.className = ''; bp.textContent = ''; }
+  } catch (e) { }
+  window.__lastFormat = null;
+}
+
+/* V4.4.1：引擎启动故障持久提示条（缺 .NET 9 / hostfxr / exe 被隔离等） */
+const DOTNET9_URL = 'https://dotnet.microsoft.com/download/dotnet/9.0';
+const FAILURE_COPY = {
+  'dotnet-runtime-missing': {
+    title: '音频引擎需要 .NET 9 运行时',
+    hint: '当前安装包的引擎缺少 .NET 9（你系统里的 .NET 8/10 不能替代）。安装 .NET 9 x64 运行时后点「重新检测」；或换装约 179MB 的完整安装包（自带运行时，推荐）。',
+    dotnet: true, av: false
+  },
+  'dotnet-hostfxr-missing': {
+    title: '系统缺少 .NET 运行时组件（hostfxr）',
+    hint: '音频引擎启动时找不到 .NET hostfxr.dll，说明系统没有可用的 .NET 运行时。安装 .NET 9 x64 运行时后点「重新检测」；或换装约 179MB 的完整安装包（推荐）。',
+    dotnet: true, av: false
+  },
+  'engine-file-missing': {
+    title: '音频引擎文件缺失（AnnieEngine.exe）',
+    hint: '引擎可执行文件不在安装目录，常见原因是被安全软件（火绒/360/Defender）隔离删除。请先恢复并加信任，或重新安装完整安装包。',
+    dotnet: false, av: true
+  },
+  'engine-spawn-failed': {
+    title: '音频引擎无法启动',
+    hint: '系统拒绝启动引擎进程，可能被安全软件拦截。请检查安全软件的拦截/隔离记录并加信任后「重新检测」。',
+    dotnet: false, av: true
+  }
+};
+function showEngineBanner(failure) {
+  const bar = document.getElementById('engine-banner');
+  if (!bar || !failure) return;
+  const copy = FAILURE_COPY[failure.kind] || {
+    title: '音频引擎启动失败',
+    hint: '引擎反复启动失败。请检查输出设备与安全软件拦截记录；仍不行请导出诊断信息反馈。',
+    dotnet: false, av: false
+  };
+  document.getElementById('eb-title').textContent = copy.title;
+  document.getElementById('eb-hint').textContent = copy.hint;
+  document.getElementById('eb-dotnet').classList.toggle('hidden', !copy.dotnet);
+  document.getElementById('eb-av').classList.toggle('hidden', !copy.av);
+  document.getElementById('eb-av-help').classList.add('hidden');
+  bar.classList.remove('hidden');
+}
+function hideEngineBanner() {
+  const bar = document.getElementById('engine-banner');
+  if (bar) bar.classList.add('hidden');
+}
+function bindEngineBanner() {
+  const retry = document.getElementById('eb-retry');
+  if (retry) retry.onclick = async () => {
+    retry.disabled = true; const old = retry.textContent; retry.textContent = '检测中…';
+    try {
+      const r = await window.mine.engineRetry();
+      if (r && r.ok) { hideEngineBanner(); proToast('音频引擎已恢复'); }
+      else showEngineBanner((r && r.failure) || { kind: 'unknown' });
+    } catch (e) { showEngineBanner({ kind: 'unknown', message: String((e && e.message) || e) }); }
+    finally { retry.disabled = false; retry.textContent = old; }
+  };
+  const dotnet = document.getElementById('eb-dotnet');
+  if (dotnet) dotnet.onclick = () => { try { window.mine.openExternal(DOTNET9_URL); } catch (e) { } };
+  const av = document.getElementById('eb-av');
+  if (av) av.onclick = () => document.getElementById('eb-av-help').classList.toggle('hidden');
+  const diag = document.getElementById('eb-diag');
+  if (diag) diag.onclick = () => {
+    diag.disabled = true;
+    let snapshot = { time: Date.now() };
+    try { if (window.annieSettings && window.annieSettings.ui) snapshot.ui = JSON.parse(JSON.stringify(window.annieSettings.ui)); } catch (e) { }
+    try { snapshot.theme = (window.annieTheme && window.annieTheme.current) || null; } catch (e) { }
+    window.mine.diagExport(snapshot)
+      .then(() => {})
+      .catch(() => {})
+      .finally(() => { diag.disabled = false; });
+  };
+}
+bindEngineBanner();
+
+/* V4.4.1：拖入展开助手——把拖入的 File 列表分类为「文件路径 / 文件夹」并递归展开音频。
+ * 返回 { files:[路径...], folders:[{path,name,isDirectory}...] }，供 AM/FB2K 决定建歌单还是加歌单。
+ * 用法：const { files, folders } = await annieCollectDropped(e.dataTransfer.files); */
+window.annieCollectDropped = async function collectDropped(fileList) {
+  const raw = [];
+  for (const f of fileList || []) {
+    const p = window.mine.getPathForFile(f);
+    if (p) raw.push(p);
+  }
+  if (!raw.length) return { files: [], folders: [] };
+  let infos = [];
+  try { infos = await window.mine.dropClassify(raw); } catch { infos = []; }
+  const files = [], folders = [];
+  raw.forEach((p, i) => {
+    const isDir = infos[i] ? infos[i].isDirectory : false;
+    if (isDir) folders.push({ path: p, name: (infos[i] && infos[i].name) || p.split(/[\\/]/).pop() });
+    else files.push(p);
+  });
+  return { files, folders };
+};
+
 /* V3.5.3：输出设备失效自愈——播放因设备问题（GUID 失效/热拔插/ASIO 驱动丢失）失败时，
  * 自动回退系统默认 WASAPI 输出并重试一次；用户无感，不再整链"播放失败"。 */
 async function enginePlayRecover(method, params) {
@@ -1352,6 +1461,13 @@ window.mine.onEngineEvent((event, d) => {
       // V1.1.7：暂停→停止插值（position 冻结）；恢复→重置锚点（下一 position 事件重新起算）
       if (!state.playing) cancelProgressInterp();
       else state._posAt = performance.now();
+      // V4.4.1：播放链路状态生命周期——暂停保留当前实际格式；停止/播完清除，避免残留上一曲
+      if (d.state === 'stopped' || d.state === 'ended') {
+        setChainPhase({ phase: 'stopped', format: null });
+        clearPlaybackFormat();
+      } else {
+        setChainPhase({ phase: state.playing ? 'playing' : 'paused' });
+      }
       // V3.5.18：系统媒体浮层播放状态 + 任务栏进度条模式（正常/暂停/结束清除）
       if (window.annieSMTC) annieSMTC.setPlaying(state.playing);
       if (d.state === 'ended') window.mine.playerProgress({ ratio: -1, playing: false });
@@ -1380,6 +1496,7 @@ window.mine.onEngineEvent((event, d) => {
       setFormatChips(chips);
       updateBpChip(d); // Pro：Bit-perfect 直通状态
       window.__lastFormat = d; // Pro：Now Playing 技术信息复用
+      setChainPhase({ phase: state.playing ? 'playing' : 'loading', format: d });
       // V1.1.9：徽章联动独占开关——独占点亮（金黄 live）、共享熄灭（灰色）
       const isExcl = typeof window.annieIsExclusive === 'function' ? window.annieIsExclusive() : true;
       $('#tb-backend').textContent = `${d.backend === 'asio' ? 'ASIO' : (isExcl ? 'WASAPI 独占' : 'WASAPI 共享')} · ${d.device || ''}`;
@@ -1394,14 +1511,30 @@ window.mine.onEngineEvent((event, d) => {
         $('#tb-backend').classList.toggle('live', isExcl);
       }
       break;
+    case 'engine-startup-failure': // V4.4.1：已分类的启动故障（缺 .NET / hostfxr / exe 缺失）
+      $('#tb-backend').textContent = '引擎无法启动';
+      $('#tb-backend').classList.remove('live');
+      setChainPhase({ phase: 'engine-dead', format: null });
+      clearPlaybackFormat();
+      showEngineBanner(d);
+      proToast((FAILURE_COPY[d.kind] || {}).title || '音频引擎启动失败', 8000);
+      break;
+    case 'engine-started': // 引擎 RPC 就绪（含故障恢复后）——清除故障提示
+      hideEngineBanner();
+      if (!state.playing) setChainPhase({ phase: 'stopped' });
+      break;
     case 'engine-dead':
       $('#tb-backend').textContent = '引擎已退出';
       $('#tb-backend').classList.remove('live');
+      setChainPhase({ phase: 'engine-dead', format: null });
+      clearPlaybackFormat();
       break;
     case 'engine-crash-storm': // V3.5.16：熔断——连崩 6 次停止自动重启，明确指引
       $('#tb-backend').textContent = '引擎崩溃';
       $('#tb-backend').classList.remove('live');
-      proToast('音频引擎反复崩溃（可能被安全软件拦截）。请检查 360/电脑管家等拦截记录，或点击播放重试；仍不行请到 设置中心 → 曲库工具 导出诊断信息反馈', 10000);
+      setChainPhase({ phase: 'engine-dead', format: null });
+      clearPlaybackFormat();
+      proToast('音频引擎连续启动失败。请检查输出设备与安全软件拦截记录，或点击播放重试；仍不行请到 设置中心 → 曲库工具 导出诊断信息反馈', 10000);
       break;
     case 'engine-restarted': // Pro beat0.0.1：崩溃守护——恢复播放位置与队列
       if (d.ok) {
@@ -1426,6 +1559,7 @@ window.mine.onEngineEvent((event, d) => {
       break;
     case 'devices.changed': // V4.3.12：设备热插拔——实时刷新下拉列表（不自动切换输出）
       refreshDevices();
+      setChainPhase({ phase: 'device-changed' });
       proToast('检测到音频设备变更，设备列表已更新');
       try { document.dispatchEvent(new CustomEvent('annie-devices-changed')); } catch { }
       break;
@@ -1587,6 +1721,7 @@ $('#device-select').onchange = async (e) => {
     window.mine.saveSettings({ backend: e.target.value });
   } catch (err) {
     setFormatChips([{ text: '切换设备失败: ' + err.message, cls: 'warn' }]);
+    setChainPhase({ phase: 'output-error' });
   }
 };
 
@@ -1674,6 +1809,11 @@ window.addEventListener('keydown', (e) => {
       $('#tool-banner').classList.remove('hidden');
     }
   } catch { /* 引擎未就绪时 devices.list 会再报错 */ }
+  // V4.4.1：引擎若在渲染层订阅事件前就已分类故障（缺 .NET/exe 缺失），补显示持久提示条
+  try {
+    const st = await window.mine.engineStatus();
+    if (st && st.startupFailure) showEngineBanner(st.startupFailure);
+  } catch { }
   await loadLibrary();
   // 恢复设置面板偏好（视觉/歌词/界面/排序/侧栏/视图模式）
   if (window.annieSettings) {

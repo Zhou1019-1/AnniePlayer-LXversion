@@ -33,11 +33,20 @@ jobs:
       - name: 编译 AnnieEngine（.NET 9）
         run: dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo
 
+      - name: 校验引擎自包含产物
+        run: node scripts/verify-engine-publish.js engine/publish
+
+      - name: 校验引擎产物检查器
+        run: node scripts/verify-engine-publish-test.js
+
       - name: 准备 ffmpeg / 校验工具链
         run: node scripts/setup-tools.js
 
       - name: 安装依赖
         run: npm ci --no-audit --no-fund
+
+      - name: 引擎启动故障分类测试
+        run: node scripts/engine-client-test.js
 
       - name: 打包 NSIS（x64）
         run: npx electron-builder --win nsis --x64 --publish never
@@ -47,6 +56,9 @@ jobs:
       # V3.5.15：冒烟测试——引擎 RPC + ffmpeg + 解码探测全过才允许发版（拦截"能装不能播"事故）
       - name: 冒烟测试（引擎/ffmpeg/解码）
         run: node scripts/smoke-test.js setupEXE/win-unpacked/resources/engine
+
+      - name: 校验打包目录中的引擎产物
+        run: node scripts/verify-engine-publish.js setupEXE/win-unpacked/resources/engine
 
       # V4：音频正确性测试集——帧数/RMS/声道矩阵/EQ/限幅全过才允许发版（拦截"编译过但听感坏"回归）
       - name: 音频正确性测试（DSP 链断言）

@@ -1636,6 +1636,15 @@
         }
       }
     });
+    // V4.4.1：共享播放链路状态——停止/引擎死亡时清除音质徽标，避免残留上一曲格式
+    document.addEventListener('annie-chain-state', function (e) {
+      var phase = e.detail && e.detail.phase;
+      if (phase !== 'stopped' && phase !== 'engine-dead') return;
+      S.fmt = '';
+      refreshBadge();
+      if (R.miniFmt) R.miniFmt.textContent = '';
+      if (R.immFmt) R.immFmt.textContent = '';
+    });
     // state.currentPath 变化（playAt 触发后无专用事件）——轮询兜底 + 主题切换时刷新
     var lastPath = null, lastPlaying = null;
     setInterval(function () {

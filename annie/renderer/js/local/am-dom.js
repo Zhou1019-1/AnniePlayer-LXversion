@@ -275,6 +275,8 @@
     })();
     R.lyrScroll = el('div', 'am-lyr-scroll');
     lyr.appendChild(R.lyrScroll);
+    // V4.4.1：主界面歌词面板注册滚动监听——用户手动滑动后 5 秒内不自动跟随（与沉浸/迷你一致）
+    if (typeof AM.autoHideScrollbar === 'function') AM.autoHideScrollbar(R.lyrScroll);
     // 歌词外观设置入口（悬浮 ⚙，hover 面板显现）
     R.btnLyrSet = el('button', 'am-lyr-set', '⚙');
     R.btnLyrSet.title = '歌词外观（字号 / 行距）';
@@ -321,6 +323,11 @@
     R.vizBar.onclick = function () { if (window.annieAmbient) annieAmbient.open(); };
     root.appendChild(R.vizBar);
     buildMini(root);
+
+    /* V4.4.1：文件夹拖到侧栏播放列表区空白处 → 以文件夹名建歌单并装入其中歌曲。
+     * 拖到某个具体歌单按钮上由该按钮自己的 drop 处理（stopPropagation 后不会到这里）。 */
+    bindSidebarFolderDrop(root);
+
     document.addEventListener('click', function (e) {
       if (R.pop.classList.contains('on') && !R.pop.contains(e.target)) R.pop.classList.remove('on');
       if (R.timerPop.classList.contains('on') && !R.timerPop.contains(e.target) && e.target !== R.btnTimer) R.timerPop.classList.remove('on');
@@ -617,10 +624,11 @@
         b.classList.add('am-nav-drop');
       });
       b.addEventListener('dragleave', function () { b.classList.remove('am-nav-drop'); });
-      b.addEventListener('drop', function (e) {
+      b.addEventListener('drop', async function (e) {
         if (!plDropHasFiles(e)) return;
-        e.preventDefault(); b.classList.remove('am-nav-drop');
-        addDroppedToPlaylist(pl.id, plDroppedPaths(e));
+        e.preventDefault(); e.stopPropagation(); b.classList.remove('am-nav-drop');
+        var paths = await plExpandDropped(e);
+        addDroppedToPlaylist(pl.id, paths);
       });
       sb.appendChild(b);
     });
@@ -900,12 +908,13 @@
       c.addEventListener('dragleave', function (e) {
         if (!e.relatedTarget || !c.contains(e.relatedTarget)) plDropRowClear();
       });
-      c.addEventListener('drop', function (e) {
+      c.addEventListener('drop', async function (e) {
         if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
         e.preventDefault();
         var tr = plDropRowOf(e);
         plDropRowClear();
-        addDroppedToPlaylist(S.view.slice(3), plDroppedPaths(e), tr ? tr.dataset.path : null);
+        var paths = await plExpandDropped(e);
+        addDroppedToPlaylist(S.view.slice(3), paths, tr ? tr.dataset.path : null);
       });
     }
     // V4.4：框选多选——空白处按下拖出选框，命中行入 selection（Ctrl 追加、否则替换）；
@@ -1641,11 +1650,24 @@
   AM.buildPopSubMenu = buildPopSubMenu;
 
   /* "添加到播放列表"菜单 */
-  /* V4.4：拖外部音频文件加入播放列表（侧栏歌单 / 歌单视图均可作落点；内部行拖拽不带 Files 类型，互不干扰） */
+  /* V4.4：拖外部音频文件/文件夹加入播放列表（侧栏歌单 / 歌单视图均可作落点；内部行拖拽不带 Files 类型，互不干扰） */
   var PL_DROP_RE = /\.(flac|wav|ape|aiff?|alac|tta|wv|dsf|dff|m4a|mp3|aac|ogg|opus|wma|cue)$/i;
   function plDropHasFiles(e) {
     try { return !!(e.dataTransfer && [].indexOf.call(e.dataTransfer.types, 'Files') >= 0); } catch (er) { return false; }
   }
+  // 拖入项原始路径（音频文件 + 文件夹，不递归展开；递归由主进程 drop:expand 完成）
+  function plDropRawPaths(e) {
+    try {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return [];
+      var out = [];
+      for (var i = 0; i < e.dataTransfer.files.length; i++) {
+        var p = window.mine.getPathForFile(e.dataTransfer.files[i]);
+        if (p) out.push(p);
+      }
+      return out;
+    } catch (er) { return []; }
+  }
+  // 仅音频文件路径（兼容旧调用；文件夹要走 drop:expand 递归）
   function plDroppedPaths(e) {
     try {
       if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return [];
@@ -1656,6 +1678,15 @@
       }
       return out;
     } catch (er) { return []; }
+  }
+  // 异步：递归展开拖入的文件夹/文件为音频路径，供加入歌单使用
+  async function plExpandDropped(e) {
+    var raw = plDropRawPaths(e);
+    if (!raw.length) return [];
+    try {
+      var tracks = await window.mine.dropExpand(raw);
+      return (tracks || []).map(function (t) { return t.path; }).filter(Boolean);
+    } catch (er) { return plDroppedPaths(e); }
   }
   function addDroppedToPlaylist(plId, paths, before) {
     if (!paths.length) { try { if (typeof proToast === 'function') proToast('没有可识别的音频文件'); } catch (e) { } return; }
@@ -1670,6 +1701,58 @@
         if (typeof proToast === 'function') proToast(added > 0 ? '📥 已加入 ' + added + ' 首到歌单（已自动排序）' : '这些歌曲已在歌单中');
       } catch (e) { }
     }).catch(function () { });
+  }
+
+  // V4.4.1：文件夹拖到侧栏播放列表区空白处 → 以文件夹名建歌单，内装递归展开后的音频；
+  // 散文件拖到空白处仍走全局 queue 追加（proUi.js 的 window drop 处理），这里只管文件夹。
+  async function bindSidebarFolderDrop(rootEl) {
+    if (!rootEl || rootEl._sbFolderDropBound) return;
+    rootEl._sbFolderDropBound = true;
+    rootEl.addEventListener('dragover', function (e) {
+      if (!plDropHasFiles(e)) return;
+      var onPlaylist = e.target && e.target.closest && e.target.closest('[data-plid]');
+      if (onPlaylist) return; // 落在具体歌单上，让该按钮自己高亮
+      // 仅当落点在侧栏播放列表区才提示"建歌单"
+      var inSide = e.target && e.target.closest && e.target.closest('.am-side');
+      if (!inSide) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (er) { }
+      inSide.classList.add('am-side-drop');
+    });
+    rootEl.addEventListener('dragleave', function (e) {
+      var inSide = e.target && e.target.closest && e.target.closest('.am-side');
+      if (inSide) inSide.classList.remove('am-side-drop');
+    });
+    rootEl.addEventListener('drop', async function (e) {
+      if (!plDropHasFiles(e)) return;
+      var inSide = e.target && e.target.closest && e.target.closest('.am-side');
+      if (!inSide) return;
+      var onPlaylist = e.target && e.target.closest && e.target.closest('[data-plid]');
+      inSide.classList.remove('am-side-drop');
+      if (onPlaylist) return; // 落在具体歌单按钮，按钮自己处理；这里不重复建歌单
+      e.preventDefault(); e.stopPropagation();
+      var collected = await window.annieCollectDropped(e.dataTransfer.files);
+      var folders = collected.folders || [];
+      if (!folders.length) return; // 纯散文件：交给全局 queue 追加逻辑，不建歌单
+      var created = 0;
+      for (var i = 0; i < folders.length; i++) {
+        var f = folders[i];
+        var name = f.name || (f.path.split(/[\\/]/).pop() || '新建播放列表');
+        var pls = await window.mine.playlistCreate(name).catch(function () { return null; });
+        if (!pls || !pls.length) continue;
+        var pl = pls[pls.length - 1];
+        // drop:expand 已递归展开文件夹，直接拿到音频路径
+        var tracks = await window.mine.dropExpand([f.path]).catch(function () { return []; });
+        var paths = (tracks || []).map(function (t) { return t.path; }).filter(Boolean);
+        if (paths.length) await window.mine.playlistAdd(pl.id, paths, null, true).catch(function () { });
+        created++;
+      }
+      if (created > 0) {
+        S.playlists = await window.mine.playlists().catch(function () { return S.playlists; });
+        renderSidebar();
+        if (typeof proToast === 'function') proToast('已从文件夹新建 ' + created + ' 个播放列表');
+      }
+    });
   }
 
   function openAddMenu(x, y, trackPath) {

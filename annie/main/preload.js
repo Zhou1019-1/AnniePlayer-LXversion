@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('mine', {
 
   // 引擎
   engine: (method, params, timeoutMs) => ipcRenderer.invoke('engine:call', method, params, timeoutMs),
+  engineRetry: () => ipcRenderer.invoke('engine:retry'),
+  engineStatus: () => ipcRenderer.invoke('engine:status'),
   onEngineEvent: (cb) => {
     const listener = (_e, payload) => cb(payload.event, payload.data);
     ipcRenderer.on('engine-event', listener);
@@ -252,6 +254,7 @@ contextBridge.exposeInMainWorld('mine', {
     return () => ipcRenderer.removeListener('dlyrics:closed', listener);
   },
   dropExpand: (paths) => ipcRenderer.invoke('drop:expand', paths),
+  dropClassify: (paths) => ipcRenderer.invoke('drop:classify', paths),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   onTrayAction: (cb) => {
     const listener = (_e, action) => cb(action);

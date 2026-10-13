@@ -307,4 +307,48 @@
 
 ---
 
+## 七、媒体库体检 & 备份迁移（V4.4.2 起；计划见 `媒体库体检与备份迁移-实现计划.md`）
+
+### Slice A：体检 P0（H1-H9）✅ 已落代码（待 dev 真机验证）
+- **主进程模块** `annie/main/healthCheck.js`（无 Electron 依赖，仅 fs/path，可纯 Node 单测）：导出 `start(win, store)` / `cancel()` / `getLastReport()` / `fix(store,payload)` / `undo(store)` / `ITEM_CAP=500`。
+- **扫描**：汇总 tracks+playlists.paths+favorites 的真实路径（CUE/ISO 虚拟轨剥 `#cueN/#isoN` 后缀按容器去重，`containerOf()`）→ `fs.statSync` 每 200 个 setImmediate 一拍可取消；文件夹判可达性时盘根（`path.parse(f).root`）stat 失败=offline（盘未插/网络盘断，不提供修复），盘根在而目录不在=missing（可移除）。
+- **报告**（事件 `health:event`：start/progress/end，对齐 fakescan 模式）：`{totals,cats:{h1DeadTracks,h2PlaylistRefs,h3Favorites,h4Orphans,h5Folders,h6ZeroByte,h7MissingTags,h8Duplicates,h9Analysis}}`；每类 `{items,count,truncated}` 明细推渲染层**截断 500**，完整报告留模块内 `lastReport` 供 `health:exportReport` 导出。h4 额外带 `statsCount/metaCount`，h5 带 `missingCount/offlineCount`。H8 分组口径与 `lib:duplicates` 相同（同 norm 规则复制一份在 `duplicateStats()`）。
+- **修复** `fix(store,{action,...})` 三动作（直接改 store，main.js 负责 saveStore/flush/广播）：① `pruneRefs`（playlistItems `{plId,path}` / favoriteItems `{path}`，移除前**复检文件仍死**否则进 skipped；歌单/收藏条目带原 index 供撤销按位插回）② `pruneOrphans`（items `{kind:'stats'|'meta',key}`，复检 key 仍不在 tracks）③ `removeFolders`（复检目录仍缺失；与 `lib:removeFolder` 同口径连 tracks 一起过滤）。返回 `{snapshot,removed,skipped}`。
+- **撤销快照**：main.js `health:fix` 写 `store.healthUndo = {time, actions:[snapshot]}`（**只留最近一次**，新修复覆盖）；`Buffer.byteLength(JSON.stringify(candidate)) > 5MB` 时不入库，返回 `snapshotTooLarge:true` + `manifest` 供渲染层走 `health:saveJson` 导出清单。`health:undo` 按 actions 逆序、同组 index 降序 splice 写回（已存在的键/路径不覆盖）。H6 零字节删除走 `lib:deleteFiles` 回收站链路，**不进撤销快照**。
+- **修复后刷新**：main.js 三个修复动作末尾统一 `broadcastScan({type:'done',fallback:true})` → player.js:892 整库重拉 getLibrary；removeFolders 额外 `setupLibraryWatch()` 重建监听。
+- **IPC**（main.js 备份 IPC 之后）：`health:scan / health:cancel / health:fix / health:undo / health:undoInfo / health:exportReport / health:saveJson`；preload 同名 `healthScan/healthCancel/healthFix/healthUndo/healthUndoInfo/healthExportReport/healthSaveJson/onHealthEvent`。
+- **UI**：settings.js 曲库工具区（dup 清理与配置备份之间），`hcRow` 入口 + `hcUndoBox`（撤销条，面板构建即查 undoInfo）+ `hcReportBox`（进度条 + 9 张 `.set-hc-card` 卡片）；样式 app.css `.set-hc-*`（badge ok/warn/bad 三色系，复用 set-dup 暗色卡片风）。H1 修复=confirm 后 `mine.rescan()`；H8 卡片按钮滚动到 dupRow 并自动点 dupBtn；H9 按钮滚动并 click 现有 loudBtn/bpmBtn。
+- **H4 流媒体键分流**（2026-10-13 真机报告驱动）：stats 里 `http(s)://` 开头的键是流媒体临时播放链接的统计（vkey 过期即废、只增不减），扫描时按 `kind:'stream'` 单列子组「流媒体播放统计（可安全清理）」，`h4Cat.streamCount` 单独计数；pruneOrphans 的 fix 把 `stream` 与 `stats` 同桶处理（都从 store.stats 删）。
+- **验证**：check-syntax 156 文件 0 失败；纯 Node 造数单测 29 项断言全过（死链/CUE 容器丢失/零字节/孤儿/文件夹移除/撤销按位还原/复检跳过/取消）。
+- **待办切片**：D=深度体检 H10-H12（缺封面/不可解码/封面缓存清理，ffmpeg 前 5 秒并发 4）。
+
+### Slice D：深度体检 H10-H12 ✅ 已落代码（待 dev 真机验证）
+- **healthCheck.js** 深度段：`start(win, store, {deep, coverCacheDir})`——deep=true 时 P0 跑完后对 tracks 存活文件（容器去重）4 并发逐首探测：
+  - H11 不可解码：`ffmpeg -v error -t 5 -i f -f null -`，退出码非 0 或 stderr 有输出即坏；
+  - H10 缺封面：ffprobe JSON streams 找 `codec_type=video 且 attached_pic!=0` 的内嵌图，无则查目录外置封面（cover/folder/front/album/art/thumb × jpg/jpeg/png/webp，目录级 memo 共享），解码失败的文件跳过封面探测；
+  - H12 封面缓存：readdir + stat 汇总 covercache 条数/字节。
+  - `runProbe`（spawn + 200ms cancel 轮询 + 超时 SIGKILL；取消/超时/启动失败返回 null——深度项宁可漏报不误报）；工具路径 resolveTool 三候选（resourcesPath / 仓库根 engine/tools / PATH）。报告新增 `deep:true` + `cats.h10NoCover/h11Undecodable/h12CoverCache`，进度事件 `phase:'deep'`。
+- **IPC**：`health:scan({deep})` 传 coverCacheDir（仅 deep 时）；`health:clearCoverCache` 清空缓存目录并 `library.initCoverDiskCache` 重建内存索引（防索引指向已删文件）。
+- **UI**：体检行右侧「深度体检」勾选（localStorage `annieplayer.health.deep` 记忆）；报告尾部 H10（仅报告，引导在线匹配）/ H11（勾选移回收站，走 libDeleteFiles）/ H12（显示占用 + 一键清空）三张卡片。
+- **验证**：真实 ffmpeg 造好/坏文件各一——H11 正确报坏、H10 正确报缺封面、H12 计数正确；20 文件并发取消后 2.5s 无 ffmpeg 进程残留。
+
+### Slice C：跨机路径重映射 + 重启后二次匹配 ✅ 已落代码（待 dev 真机验证）
+- **匹配器共享** `annie/main/trackMatcher.js`：V4.3.25 五级匹配（绝对路径→相对根→文件名+大小→同名+时长±1.5s→标题艺人+时长±2s）原样抽出，`matchTracks(items, store)` 返回 `{matched, missing, perItem}`（perItem 为 Slice C 新增的逐条对齐数组，null=未命中；旧调用方不受影响）。main.js `.anniepl` 导入改调共享模块。
+- **路径重映射**（backup.js）：`remapViewPaths(view, rootMap)` 前缀替换 folders/favorites/playlists.paths/stats/analysis 键——路径边界匹配（`根` 或 `根\` 前缀，MusicX 不被 Music 吞）、大小写不敏感比较但保留后缀原始大小写、CUE/ISO `#cueN` 后缀不动；`rootCheck(view, rootMap, {dirExists,fileExists})` 返回逐根可达性 + 映射后预估 matched/total（fns 注入便于单测）。
+- **新 IPC**：`backup:pickDir`（纯选目录不入库）、`backup:rootCheck`（读包+normalize+预估）、`backup:apply` 增 rootMap/smartMatch 入参（apply 前先 remapViewPaths，返回 remapped 数）、`backup:rematch`（重启后二次匹配）。
+- **_pendingMigration**：apply 时若导入了路径类分区且 smartMatch≠false 则写 `{time, file, rootMap, remapped}`；`backup:rematch` 读备份文件取 analysis 指纹 → 逆向 rootMap 找回原始路径 → 对 store 中仍死的引用（歌单/收藏/stats/metaCache 键）跑 matchTracks → 命中回写（stats 同键合并相加、metaCache 并入分析白名单字段保 fresh 条目），清标记 + broadcastScan fallback。备份文件被删则清标记放行（死链留给体检 H2/H3）。
+- **渲染层**：settings.js 向导恢复三步编号（摘要 → **路径重映射** → 模式与内容）；第 2 步逐根显示「本机存在/本机不存在/已映射 ✓」+ 选文件夹/清除映射 + 实时预估「预计匹配 X/Y 首」+ 智能匹配勾选（默认开）；摘要渲染抽成 bkRenderSummary 供上一步返回复用。player.js 启动检测 `_pendingMigration`：有索引直接 rematch，空库等 scan done 事件后 rematch → 结果条「已恢复 X/Y 条引用」+ 未匹配 confirm 后走 healthSaveJson 导出清单。
+- **验证**：check-syntax 158 文件 0 失败；Node 单测 22 项全过（五级匹配/perItem 对齐/占用互斥/remap 边界与 CUE 后缀/rootCheck 预估）。
+
+### Slice B：备份 2.0（分内容导出 + 导入向导摘要/模式内容步）✅ 已落代码（待 dev 真机验证）
+- **主进程模块** `annie/main/backup.js`（纯函数无 Electron 依赖）：`buildPackage(store,{sections,listenStats,appName,appVer})` / `estimate(store,listenStats)` / `normalize(pkg)`（v1 平铺 data → v2 视图）/ `inspectPackage(pkg,fileBytes)` / `extractRoots(sections)` / `applyToStore(store,view,{mode,sections})`；常量 `SECTIONS`/`ANALYSIS_FIELDS`/`STRUCT_KEYS`。
+- **v2 包**：`{kind:'annie-backup',schemaVersion:2,app,ver,time,sections:{settings,folders,favorites,playlists,streamPlaylists,stats,analysis,listenStats},counts,roots}`。settings = store 顶层减 STRUCT_KEYS（含 healthUndo/_pendingMigration/_pendingRescan，永不入包）；analysis = metaCache 白名单字段（`loudness,bpm,key,track,disc,rg,fakeScan,mtimeMs,fileSize,duration,title,artist,album`，封面 dataURL 永不入）；listenStats（听歌报告 localStorage `annieplayer.listenstats.v1`）跟随「收听统计 stats」勾选，由渲染层读 localStorage 传入。
+- **roots 提取**：优先 folders 聚类（子目录被父目录吸收，大小写/斜杠归一）；无 folders 时从 favorites/playlists.paths/stats/analysis 键的父目录聚类，上限 50。Slice C 的路径重映射以此为基础。
+- **合并模式口径**（决策 3 落地）：folders/favorites 并集（路径归一去重、现有顺序在前）；playlists 按名合并 paths 并集、新名追加且 id 撞车换新 id；streamPlaylists 按 id 去重跳过；stats 同键数值相加、lastPlayed 取大；settings 只补缺省键（ui 对象按键级补）；analysis 逐键 `Object.assign(本机, 备份白名单)`。覆盖模式 = 对应键整表替换（analysis 整表替 metaCache）。**任何导入后 healthUndo 清 null**（防撤销快照引用已不存在的数据）。
+- **IPC**（替换旧 backup:export/import）：`backup:estimate(listenStats)`、`backup:export({sections,listenStats})`（返回 bytes/counts）、`backup:pickInspect()`（选文件+只读摘要+roots）、`backup:apply({path,mode,sections})`（.bak 兜底 → apply → flush → setupLibraryWatch；tracks 空且 folders 非空时写 `_pendingRescan` 标记）。
+- **渲染层**：player.js 启动 `loadLibrary()` 后检查 `_pendingRescan` → saveSettings 清除 + proToast + scanStart（换机/重装导入后自动重建索引）。settings.js 曲库工具区「曲库备份与迁移」：导出面板 7 项勾选（analysis 默认不勾，各项实时显示条数+预估字节+总计）；导入向导内联两步（B 切片暂不含路径映射步）：摘要（版本/时间/各项数量/roots）→ 模式（覆盖/合并 radio）+ 内容勾选 → confirm → apply → listenStats 写回 localStorage（merge 时本机已有报告则保留）→ 800ms 后 relaunchApp。
+- **验证**：check-syntax 157 文件 0 失败；纯 Node 单测 44 项断言全过（v2 导出/白名单/roots 聚类/覆盖/合并全口径/v1 兼容/坏文件三种形态拒绝/部分分区导入）。
+
+---
+
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

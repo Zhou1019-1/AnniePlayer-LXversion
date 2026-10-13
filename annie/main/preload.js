@@ -281,8 +281,28 @@ contextBridge.exposeInMainWorld('mine', {
 
   // Pro beat0.0.1：诊断包导出（rendererSnapshot 为渲染侧设置/状态快照）
   diagExport: (rendererSnapshot) => ipcRenderer.invoke('diag:export', rendererSnapshot),
-  backupExport: () => ipcRenderer.invoke('backup:export'),   // V4.3.19：配置备份（脑暴 10.1）
-  backupImport: () => ipcRenderer.invoke('backup:import'),
+  backupExport: (opts) => ipcRenderer.invoke('backup:export', opts),   // V4.3.19 初版；V4.4.2 起为 v2 分内容导出
+  backupEstimate: (listenStats) => ipcRenderer.invoke('backup:estimate', listenStats), // V4.4.2：导出面板预估大小
+  backupPickInspect: () => ipcRenderer.invoke('backup:pickInspect'),   // V4.4.2：向导第 1 步（只读摘要）
+  backupApply: (opts) => ipcRenderer.invoke('backup:apply', opts),     // V4.4.2：向导第 3 步（覆盖/合并 + rootMap）
+  backupPickDir: () => ipcRenderer.invoke('backup:pickDir'),           // V4.4.2 Slice C：映射用纯选目录（不入媒体库）
+  backupRootCheck: (opts) => ipcRenderer.invoke('backup:rootCheck', opts), // Slice C：roots 可达性 + 映射预估
+  backupRematch: () => ipcRenderer.invoke('backup:rematch'),           // Slice C：重启后二次匹配
   relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
+
+  // V4.4.2：媒体库体检（H1-H9 报告 + 确认后修复 + 一键撤销 + 清单导出）
+  healthScan: (opts) => ipcRenderer.invoke('health:scan', opts),
+  healthCancel: () => ipcRenderer.invoke('health:cancel'),
+  healthClearCoverCache: () => ipcRenderer.invoke('health:clearCoverCache'),
+  healthFix: (payload) => ipcRenderer.invoke('health:fix', payload),
+  healthUndo: () => ipcRenderer.invoke('health:undo'),
+  healthUndoInfo: () => ipcRenderer.invoke('health:undoInfo'),
+  healthExportReport: () => ipcRenderer.invoke('health:exportReport'),
+  healthSaveJson: (name, data) => ipcRenderer.invoke('health:saveJson', name, data),
+  onHealthEvent: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('health:event', listener);
+    return () => ipcRenderer.removeListener('health:event', listener);
+  },
   reportError: (payload) => ipcRenderer.send('renderer-error', payload) // 渲染层 JS 错误上报（进诊断包）
 });

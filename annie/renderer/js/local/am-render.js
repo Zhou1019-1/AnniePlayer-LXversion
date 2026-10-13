@@ -597,6 +597,40 @@
     texHist: 'annieplayer.am.vinyl.texHist' // 盘面图历史（JSON dataURL 数组，上限 8，点选切回）
   };
   function vinylLsNum(key, def) { try { var v = parseFloat(localStorage.getItem(key)); return isFinite(v) ? v : def; } catch (e) { return def; } }
+  /* V4.4.2：彩胶外观双写持久化——localStorage 仍是渲染主源，同时防抖镜像进 library.json（store.vinylCfg），
+   * 防 localStorage leveldb 被强杀丢写导致"重启后彩胶设置归零"；且随备份 2.0 设置段一起走，换机不丢。
+   * 盘面图 tex/texHist（大 dataURL）不进 store，避免 library.json 膨胀。 */
+  function vinylCfgSnapshot() {
+    return {
+      cover: vinylLsNum(VINYL_LS.cover, 73),
+      scale: vinylLsNum(VINYL_LS.scale, 1),
+      op: vinylLsNum(VINYL_LS.op, 1),
+      speed: vinylLsNum(VINYL_LS.speed, 18),
+      pos: (function () { try { return localStorage.getItem(VINYL_LS.pos) || 'center'; } catch (e) { return 'center'; } })(),
+      hole: (function () { try { return localStorage.getItem(VINYL_LS.hole) === '0' ? '0' : '1'; } catch (e) { return '1'; } })()
+    };
+  }
+  var _vinylCfgSaveT = 0;
+  function persistVinylCfg() {
+    // 先同步渲染层缓存快照（vinylSeedFromStore 读的是它），再防抖落盘
+    try { if (window.state && state.library) state.library.vinylCfg = vinylCfgSnapshot(); } catch (e) { }
+    clearTimeout(_vinylCfgSaveT);
+    _vinylCfgSaveT = setTimeout(function () {
+      try { if (window.mine && window.mine.saveSettings) window.mine.saveSettings({ vinylCfg: vinylCfgSnapshot() }); } catch (e) { }
+    }, 800);
+  }
+  /* 启动种子：localStorage 缺的键从 store.vinylCfg 回填（只补缺失，不覆盖本机已有调整） */
+  function vinylSeedFromStore() {
+    try {
+      var cfg = (window.state && state.library && state.library.vinylCfg) || null;
+      if (!cfg || typeof cfg !== 'object') return;
+      var map = { cover: VINYL_LS.cover, scale: VINYL_LS.scale, op: VINYL_LS.op, speed: VINYL_LS.speed, pos: VINYL_LS.pos, hole: VINYL_LS.hole };
+      Object.keys(map).forEach(function (k) {
+        if (cfg[k] == null) return;
+        try { if (localStorage.getItem(map[k]) == null) localStorage.setItem(map[k], String(cfg[k])); } catch (e) { }
+      });
+    } catch (e) { }
+  }
   /* 纹路随机化：缓存一组随机刻纹——宽度幂分布（细多粗少）、明暗纹随机混排
      （亮纹=封面色，暗纹=纯黑压纹，对比才看得出来）、12% 概率哑光圈（仿真唱片分轨间隙）；
      🎲 重新摇号。纹路从固定半径起铺（不再从封面边缘起——封面调大会把纹路整个挤出盘面） */
@@ -740,6 +774,7 @@
     R.immVinyl.style.backgroundColor = 'color-mix(in srgb, var(--vc1) calc(9% * var(--am-vinyl-op, 1)), rgba(16,16,22, calc(.16 * var(--am-vinyl-op, 1))))';
   }
   function applyVinylStyle() {
+    vinylSeedFromStore(); // V4.4.2：localStorage 丢写时从 store.vinylCfg 回填
     try {
       var rs = document.documentElement.style;
       rs.setProperty('--am-vinyl-cover', vinylLsNum(VINYL_LS.cover, 73) + '%');
@@ -782,6 +817,7 @@
         try { localStorage.setItem(key, String(sl.value)); } catch (e) { }
         v.textContent = fmt(parseFloat(sl.value));
         applyVinylStyle();
+        persistVinylCfg(); // V4.4.2：镜像进 store，重启/换机不丢
       };
       sync(); sliders.push(sl);
       row.appendChild(sl); row.appendChild(v);
@@ -799,8 +835,8 @@
     var bR = el('button', 'am-vinylset-segbtn', '右上悬挂');
     function curPos() { try { return localStorage.getItem(VINYL_LS.pos) || 'center'; } catch (e) { return 'center'; } }
     function syncSeg() { var p = curPos(); bC.classList.toggle('on', p === 'center'); bR.classList.toggle('on', p !== 'center'); }
-    bC.onclick = function () { try { localStorage.setItem(VINYL_LS.pos, 'center'); } catch (e) { } syncSeg(); applyVinylStyle(); };
-    bR.onclick = function () { try { localStorage.setItem(VINYL_LS.pos, 'corner'); } catch (e) { } syncSeg(); applyVinylStyle(); };
+    bC.onclick = function () { try { localStorage.setItem(VINYL_LS.pos, 'center'); } catch (e) { } syncSeg(); applyVinylStyle(); persistVinylCfg(); };
+    bR.onclick = function () { try { localStorage.setItem(VINYL_LS.pos, 'corner'); } catch (e) { } syncSeg(); applyVinylStyle(); persistVinylCfg(); };
     syncSeg();
     seg.appendChild(bC); seg.appendChild(bR);
     prow.appendChild(seg); pop.appendChild(prow);
@@ -812,8 +848,8 @@
     var bHOff = el('button', 'am-vinylset-segbtn', '关');
     function holeOffNow() { try { return localStorage.getItem(VINYL_LS.hole) === '0'; } catch (e) { return false; } }
     function syncHole() { var off = holeOffNow(); bHOn.classList.toggle('on', !off); bHOff.classList.toggle('on', off); }
-    bHOn.onclick = function () { try { localStorage.setItem(VINYL_LS.hole, '1'); } catch (e) { } syncHole(); applyVinylStyle(); };
-    bHOff.onclick = function () { try { localStorage.setItem(VINYL_LS.hole, '0'); } catch (e) { } syncHole(); applyVinylStyle(); };
+    bHOn.onclick = function () { try { localStorage.setItem(VINYL_LS.hole, '1'); } catch (e) { } syncHole(); applyVinylStyle(); persistVinylCfg(); };
+    bHOff.onclick = function () { try { localStorage.setItem(VINYL_LS.hole, '0'); } catch (e) { } syncHole(); applyVinylStyle(); persistVinylCfg(); };
     syncHole();
     hseg.appendChild(bHOn); hseg.appendChild(bHOff);
     hrow.appendChild(hseg); pop.appendChild(hrow);
@@ -881,7 +917,9 @@
         localStorage.removeItem(VINYL_LS.tex); localStorage.removeItem(VINYL_LS.texHist);
       } catch (e) { }
       sliders.forEach(function (sl) { sl._sync(); });
-      syncSeg(); syncHole(); syncTexRow(); genVinylGrooves(); applyVinylStyle();
+      syncSeg(); syncHole(); syncTexRow(); genVinylGrooves();
+      persistVinylCfg(); // V4.4.2：先把默认值同步进缓存快照+镜像，再 apply（防种子把旧值回填）
+      applyVinylStyle();
     };
     aseg.appendChild(bDice); aseg.appendChild(bReset);
     arow.appendChild(aseg); pop.appendChild(arow);
@@ -1150,11 +1188,14 @@
         localStorage.setItem(RESUME_META, JSON.stringify({
           v: 1, kind: 'stream', quality: S.stQuality || 'flac',
           idx: S.stIndex, playing: !!state.playing, path: state.currentPath,
+          // V4.4.2：冗余标题/艺人——快照错位或队列变动时弹窗仍能显示可读歌名
+          title: state.currentStream.title || '', artist: state.currentStream.artist || '',
           songs: list.slice(0, 200) // 快照上限 200 首（约 100~300KB，localStorage 容量内）
         }));
       } else if (state.currentPath && state.queue && state.queue.length && state.index >= 0) {
         localStorage.setItem(RESUME_META, JSON.stringify({
           v: 1, kind: 'local', idx: state.index, playing: !!state.playing, path: state.currentPath,
+          title: (state.queue[state.index] && state.queue[state.index].name) || '',
           paths: state.queue.map(function (t) { return t && t.path; }).filter(Boolean)
         }));
       }
@@ -1188,6 +1229,57 @@
       var pp = JSON.parse(localStorage.getItem(RESUME_POS) || 'null');
       if (pp && pp.path === meta.path) pos = Math.max(0, pp.pos || 0);
     } catch (e) { }
+    // V4.4.2：不再静默续播——弹确认框由用户决定（无论上次退出是播放还是暂停）
+    showResumePrompt(meta, pos);
+  }
+  /* 续播确认弹窗：显示上次曲目/进度/状态；「续播」执行恢复，其余（不续播/关窗/Esc）清除恢复点 */
+  function showResumePrompt(meta, pos) {
+    var name = '';
+    if (meta.kind === 'stream' && Array.isArray(meta.songs) && meta.songs[meta.idx]) {
+      var sg = meta.songs[meta.idx];
+      name = (sg.name || '') + (sg.artist ? ' - ' + sg.artist : '');
+    }
+    // V4.4.2：优先用写入时冗余的标题/艺人（快照错位、流媒体 URL 等场景兜底）
+    if (!name && meta.title) name = meta.title + (meta.artist ? ' - ' + meta.artist : '');
+    if (!name) {
+      var p0 = String(meta.path || '');
+      // 流媒体 URL 没有可读文件名——不拿 URL 截断段糊弄用户
+      if (/^https?:\/\//i.test(p0)) name = '在线曲目';
+      else { try { name = p0.replace(/#(cue|iso)\d+$/i, '').split(/[\\/]/).pop(); } catch (e) { } }
+    }
+    if (!name) { doRestore(meta, pos); return; } // 拿不到名字就直接恢复（不该发生，兜底）
+    var mm = Math.floor(pos / 60), ss = Math.floor(pos % 60);
+    var posTxt = mm + ':' + String(ss).padStart(2, '0');
+    var ov = el('div', 'am-prompt-ov');
+    var box = el('div', 'am-prompt');
+    box.appendChild(el('div', 'am-pop-h', '继续上次播放？'));
+    var msg = el('div', 'am-resume-msg');
+    msg.textContent = '上次播放到《' + name + '》 ' + posTxt + (meta.playing ? '' : '（已暂停）');
+    box.appendChild(msg);
+    var row = el('div', 'am-prompt-btns');
+    var bNo = el('button', 'am-btn', '不了');
+    var bOk = el('button', 'am-btn am-btn-accent', '续播');
+    function cleanup(resume) {
+      ov.remove();
+      document.removeEventListener('keydown', onKey, true);
+      if (resume) doRestore(meta, pos);
+      else { // 明确不续播：清掉恢复点，避免下次启动再问同一首
+        try { localStorage.removeItem(RESUME_META); localStorage.removeItem(RESUME_POS); } catch (e) { }
+      }
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); cleanup(false); }
+      else if (e.key === 'Enter') { e.stopPropagation(); cleanup(true); }
+    }
+    bNo.onclick = function () { cleanup(false); };
+    bOk.onclick = function () { cleanup(true); };
+    ov.onclick = function (e) { if (e.target === ov) cleanup(false); };
+    document.addEventListener('keydown', onKey, true);
+    row.appendChild(bNo); row.appendChild(bOk);
+    box.appendChild(row); ov.appendChild(box);
+    document.body.appendChild(ov);
+  }
+  function doRestore(meta, pos) {
     if (meta.kind === 'local') {
       var byPath = state.libIndex || null;
       var tracks = (meta.paths || []).map(function (p) { return byPath ? byPath.get(p) : null; }).filter(Boolean);

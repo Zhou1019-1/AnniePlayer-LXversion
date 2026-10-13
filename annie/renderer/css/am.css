@@ -1194,6 +1194,8 @@ html[data-motion="off"] #am-root::before {
 /* 非 AM 主题下对话框按钮的全局兜底（am-btn 变量在 #am-root 上定义） */
 .am-prompt .am-btn { background: rgba(128, 128, 128, .18); color: inherit; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .am-prompt .am-btn.am-btn-accent { background: var(--am-accent, #fa2d55); color: #fff; }
+/* V4.4.2：续播确认弹窗的消息行 */
+.am-resume-msg { margin: 10px 0 14px; font-size: 13px; opacity: .88; word-break: break-all; }
 
 /* ---- 音量图标按钮（点击静音） ---- */
 .am-vol .am-vol-ico { width: 30px; height: 30px; font-size: 14px; flex: none; }

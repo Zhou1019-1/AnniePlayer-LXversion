@@ -227,12 +227,16 @@
     if (filled && typeof proToast === 'function') proToast('已自动补全歌词（' + (c.provider || '在线') + ' · ' + (c.score || '?') + '%）');
     if (c.cover && AM.autoCoverFill) { try { AM.autoCoverFill(path, c.cover); } catch (e) { } }
   }
-  var _lyrManualScrollUntil = 0;
+  /* V4.4.2：手动滚动 5 秒不回弹改为按容器 WeakMap（主界面/沉浸/迷你三盒各自独立计时）——
+   * 旧实现单变量只管主界面 R.lyrScroll，沉浸歌词面板没吃到保护 */
+  var _lyrManualScrollUntil = new WeakMap();
+  function lyrManualUntil(box, ms) { if (box) _lyrManualScrollUntil.set(box, Date.now() + (ms || 5000)); }
+  function lyrManualActive(box) { return !!(box && Date.now() < (_lyrManualScrollUntil.get(box) || 0)); }
   /* V4.4：彩胶沉浸模式歌词常驻（💬 开关隐藏不用），更新链路的 immLyrOn 判据要带上它。
      AM.immIsVinyl 由后加载的 am-render 片注册，调用时才取值（前向引用惯例） */
   function immLyrActive() { return !!(S.immLyrOn || (AM.immIsVinyl && AM.immIsVinyl())); }
   function renderLyrics() {
-    _lyrManualScrollUntil = 0;
+    _lyrManualScrollUntil = new WeakMap(); // 切歌/重建：三路保护期一并清零
     // 沉浸/迷你里打开的歌词容器同步刷新（沉浸用独立的每行词数，迷你跟随主界面）
     if (R.imm && S.imm && immLyrActive()) buildLyrInto(R.immLyrBox);
     if (R.mini && S.mini && S.miniLyrOn) buildLyrInto(R.miniLyr);
@@ -277,7 +281,7 @@
       n.classList.toggle('near', dist === 1);
       n.classList.toggle('far', dist > 1);
     }
-    if (cur >= 0 && nodes[cur] && Date.now() >= _lyrManualScrollUntil) {
+    if (cur >= 0 && nodes[cur] && !lyrManualActive(R.lyrScroll)) {
       progScrollTop(R.lyrScroll, nodes[cur].offsetTop - R.lyrScroll.clientHeight * lyrPosRate(S.lyrPos, 0.42));
     }
     // 沉浸/迷你歌词容器跟随同一 S.lyrCur（迷你不提供跟随位置设置，固定 0.40）
@@ -334,7 +338,8 @@
     var t = 0;
     box.addEventListener('scroll', function () {
       if (Date.now() < (_progScrollUntil.get(box) || 0)) return; // 跟随播放的自动滚动：不亮滚动条
-      if (box === R.lyrScroll) _lyrManualScrollUntil = Date.now() + 5000;
+      // V4.4.2：三个歌词容器各自记保护期（主界面/沉浸/迷你）
+      if (box === R.lyrScroll || box === R.immLyrBox || box === R.miniLyr) lyrManualUntil(box, 5000);
       box.classList.add('scrolling');
       clearTimeout(t);
       t = setTimeout(function () { box.classList.remove('scrolling'); }, 800);
@@ -622,7 +627,8 @@
       n.classList.toggle('far', dist > 1);
     }
     paintKara(box, cur, S.pos);
-    if (cur >= 0 && nodes[cur]) progScrollTop(box, nodes[cur].offsetTop - box.clientHeight * rate);
+    // V4.4.2：用户手动翻看期间不强制回滚（高亮/逐字照常更新，与主界面同口径）
+    if (cur >= 0 && nodes[cur] && !lyrManualActive(box)) progScrollTop(box, nodes[cur].offsetTop - box.clientHeight * rate);
   }
 
 

@@ -23,6 +23,9 @@ const qobuz = require('./qobuz'); // V4.3.6：Qobuz 在线播放/下载（用户
 const streamCache = require('./streamCache'); // V4.4：流媒体播放缓存（边播边存 + LRU 上限）
 const dlManager = require('./dlManager'); // V4.3.22：下载任务管理器（下载情况视图）
 const remote = require('./remote'); // V4.3.12：局域网手机遥控（脑暴 9.1）
+const healthCheck = require('./healthCheck'); // V4.4.2：媒体库体检（H1-H9 + 修复撤销快照）
+const backup = require('./backup'); // V4.4.2：备份 2.0（分内容导出/inspect/覆盖+合并 apply）
+const trackMatcher = require('./trackMatcher'); // V4.4.2：五级匹配共享（.anniepl 导入 + 备份迁移二次匹配）
 
 const engine = new EngineClient();
 let mainWindow = null;
@@ -845,79 +848,10 @@ function registerIpc() {
 
   /* V4.3.25：自建歌单导出 / 导入（换机复现；导出 .anniepl——JSON 载体，
    * 每首带多指纹：绝对路径、相对媒体库根路径、文件名、大小、时长、标题/艺人。
-   * 导入在目标机曲库内 5 级降级匹配，未命中曲目随结果返回，前端列清单告知。） */
-  const normPlPath = (s) => String(s == null ? '' : s).replace(/\//g, '\\').replace(/\\+$/g, '').toLowerCase();
-  const normPlText = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
-  // 在目标机曲库 tracks + metaCache 上建索引，逐条 5 级匹配；返回 {matched:[path], missing:[指纹]}
-  const matchImportedTracks = (pkg, store) => {
-    const tracks = store.tracks || [];
-    const metas = store.metaCache || {};
-    const folders = (store.folders || []).map(f => normPlPath(f));
-    const pushList = (mp, k, v) => { const a = mp.get(k); if (a) a.push(v); else mp.set(k, [v]); };
-    const byPath = new Map(), byBaseSize = new Map(), byBase = new Map(), byTA = new Map();
-    for (const t of tracks) {
-      const p = t && t.path;
-      if (typeof p !== 'string') continue;
-      const n = normPlPath(p);
-      const base = n.split('\\').pop();
-      byPath.set(n, p);
-      const m = metas[p] || {};
-      if (m.fileSize) pushList(byBaseSize, base + '|' + m.fileSize, p);
-      pushList(byBase, base, p);
-      if (m.title) pushList(byTA, normPlText(m.title) + '|' + normPlText(m.artist || ''), p);
-    }
-    // 从候选里挑未占用、时长最接近的；无时长线索时仅候选唯一才采信（避免误配同名文件）
-    const pick = (cands, srcDur, tol) => {
-      let best = null, bd = tol;
-      for (const p of cands) {
-        if (used.has(p)) continue;
-        const d = (metas[p] || {}).duration || 0;
-        if (srcDur && d) {
-          const df = Math.abs(d - srcDur);
-          if (df <= tol && df < bd) { bd = df; best = p; }
-        } else if (!srcDur) {
-          const avail = cands.filter(x => !used.has(x));
-          if (avail.length === 1) best = avail[0]; // 双方都无时长可比，仅一个可用候选才采信
-        }
-      }
-      return best;
-    };
-    const used = new Set();
-    const matched = [], missing = [];
-    for (const it of (pkg.tracks || [])) {
-      let cand = null;
-      const n = normPlPath(it.path || '');
-      // ① 绝对路径直配
-      if (n) { const x = byPath.get(n); if (x && !used.has(x)) cand = x; }
-      // ② 相对媒体库根拼接（盘符/用户名/目录结构不同，只要相对后缀一致即可）
-      if (!cand && it.rel) {
-        for (const f of folders) {
-          const x = byPath.get(f + '\\' + normPlPath(it.rel));
-          if (x && !used.has(x)) { cand = x; break; }
-        }
-      }
-      const baseRaw = String(it.file || '').replace(/#(cue|iso)\d+$/i, '');
-      const base = normPlPath(baseRaw).split('\\').pop() || n.split('\\').pop();
-      // ③ 文件名 + 大小
-      if (!cand && base && it.size) {
-        const a = byBaseSize.get(base + '|' + it.size);
-        if (a) cand = a.find(x => !used.has(x)) || null;
-      }
-      // ④ 同名文件 + 时长近邻（容差 1.5s）
-      if (!cand && base) {
-        const a = byBase.get(base);
-        if (a) cand = pick(a, it.duration || 0, 1.5);
-      }
-      // ⑤ 标题 + 艺人 + 时长近邻（容差 2s；目录/文件名全变、标签还在时兜底）
-      if (!cand && it.title) {
-        const a = byTA.get(normPlText(it.title) + '|' + normPlText(it.artist || ''));
-        if (a) cand = pick(a, it.duration || 0, 2);
-      }
-      if (cand) { used.add(cand); matched.push(cand); }
-      else missing.push({ file: it.file || it.path || '', title: it.title || '', artist: it.artist || '' });
-    }
-    return { matched, missing };
-  };
+   * 导入在目标机曲库内 5 级降级匹配，未命中曲目随结果返回，前端列清单告知。
+   * V4.4.2：匹配器抽至 trackMatcher.js 共享（备份迁移二次匹配同用），行为不变。 */
+  const normPlPath = trackMatcher.normPlPath;
+  const matchImportedTracks = (pkg, store) => trackMatcher.matchTracks(pkg.tracks, store);
 
   ipcMain.handle('lib:playlist:exportFile', async (_e, id) => {
     const store = loadStore();
@@ -1528,10 +1462,16 @@ function registerIpc() {
     return { ok: true, path: r.filePath };
   });
 
-  /* ---------------- V4.3.19：配置备份（脑暴 10.1） ----------------
-   * 导出：store 全量键减去 tracks/metaCache（路径键派生数据，换机即失效，重扫自动重建）。
-   * 导入：校验 kind 标记 → 现有 library.json 留 .bak 兜底 → 键级整体覆盖（tracks/metaCache 不动）→ 渲染层自行 relaunch。 */
-  ipcMain.handle('backup:export', async () => {
+  /* ---------------- 配置备份 2.0（V4.3.19 初版；V4.4.2 Slice B 升级：分内容导出 + 三步向导 + 覆盖/合并） ----------------
+   * 导出：backup.js 按勾选项收 sections（tracks/metaCache 全量永不入备份，分析数据走白名单），
+   *       schemaVersion:2 + counts + roots（路径公共前缀，供 Slice C 跨机重映射）。
+   * 导入：pickInspect 只读出摘要 → apply 校验 → 现有 library.json 留 .bak 兜底 →
+   *       按模式（覆盖/合并）写入 → flush → 渲染层 relaunch；合并口径见 backup.js 注释。
+   * v1 老备份经 normalize 包成 v2 视图，走同一管线。 */
+  ipcMain.handle('backup:estimate', (_e, listenStats) => {
+    return backup.estimate(loadStore(), listenStats && typeof listenStats === 'object' ? listenStats : null);
+  });
+  ipcMain.handle('backup:export', async (_e, opts) => {
     const { dialog } = require('electron');
     flushStore(); // 防抖窗口内的改动先落盘
     const r = await dialog.showSaveDialog(mainWindow, {
@@ -1541,16 +1481,19 @@ function registerIpc() {
     });
     if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
     try {
-      const s = loadStore();
-      const data = {};
-      for (const k of Object.keys(s)) if (k !== 'tracks' && k !== 'metaCache') data[k] = s[k];
-      fs.writeFileSync(r.filePath, JSON.stringify({
-        kind: 'annie-backup', app: app.getName(), ver: app.getVersion(), time: new Date().toISOString(), data
-      }), 'utf8');
-      return { ok: true, path: r.filePath };
+      const o = opts || {};
+      const pkg = backup.buildPackage(loadStore(), {
+        sections: Array.isArray(o.sections) && o.sections.length ? o.sections : null,
+        listenStats: (o.listenStats && typeof o.listenStats === 'object') ? o.listenStats : null,
+        appName: app.getName(), appVer: app.getVersion()
+      });
+      const json = JSON.stringify(pkg);
+      fs.writeFileSync(r.filePath, json, 'utf8');
+      return { ok: true, path: r.filePath, bytes: Buffer.byteLength(json, 'utf8'), counts: pkg.counts };
     } catch (e) { return { ok: false, reason: e.message }; }
   });
-  ipcMain.handle('backup:import', async () => {
+  // 向导第 1 步：选文件 + 只读摘要（不应用）
+  ipcMain.handle('backup:pickInspect', async () => {
     const { dialog } = require('electron');
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '导入配置备份',
@@ -1558,23 +1501,270 @@ function registerIpc() {
       properties: ['openFile']
     });
     if (r.canceled || !r.filePaths[0]) return { ok: false, reason: 'canceled' };
+    const fp = r.filePaths[0];
     try {
-      const pkg = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
-      if (!pkg || pkg.kind !== 'annie-backup' || !pkg.data || typeof pkg.data !== 'object') {
-        return { ok: false, reason: '不是有效的安妮备份文件' };
+      const raw = fs.readFileSync(fp, 'utf8');
+      const pkg = JSON.parse(raw);
+      const summary = backup.inspectPackage(pkg, Buffer.byteLength(raw, 'utf8'));
+      summary.path = fp;
+      return summary;
+    } catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+  });
+  // 向导第 2 步（Slice C）：路径重映射——选本机文件夹（不改媒体库，与 lib:pickFolder 区分）
+  ipcMain.handle('backup:pickDir', async () => {
+    const { dialog } = require('electron');
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '选择本机对应的音乐文件夹',
+      properties: ['openDirectory']
+    });
+    return (r.canceled || !r.filePaths[0]) ? null : r.filePaths[0];
+  });
+  // roots 可达性 + 映射后预估匹配数（rootMap: { 备份根: 本机根 }）
+  ipcMain.handle('backup:rootCheck', async (_e, opts) => {
+    const o = opts || {};
+    let pkg;
+    try { pkg = JSON.parse(fs.readFileSync(String(o.path || ''), 'utf8')); }
+    catch (e) { return { ok: false, reason: '读取备份文件失败：' + e.message }; }
+    try {
+      const view = backup.normalize(pkg);
+      return Object.assign({ ok: true }, backup.rootCheck(view, o.rootMap || {}));
+    } catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+  });
+  // 向导第 3 步：应用（覆盖/合并 + 内容勾选 + 可选 rootMap 路径重映射）
+  ipcMain.handle('backup:apply', async (_e, opts) => {
+    const o = opts || {};
+    let pkg;
+    try { pkg = JSON.parse(fs.readFileSync(String(o.path || ''), 'utf8')); }
+    catch (e) { return { ok: false, reason: '读取备份文件失败：' + e.message }; }
+    let view;
+    try { view = backup.normalize(pkg); }
+    catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+    // Slice C：导入前先做路径前缀替换（歌单/收藏/统计/分析键一并改写）
+    const rootMap = (o.rootMap && typeof o.rootMap === 'object') ? o.rootMap : {};
+    const remapped = backup.remapViewPaths(view, rootMap);
+    const sp = storePath();
+    try { fs.copyFileSync(sp, sp + '.bak-' + Date.now()); } catch { } // 导入前兜底
+    const store = loadStore();
+    const res = backup.applyToStore(store, view, { mode: o.mode, sections: o.sections });
+    // 曲库索引为空且有媒体库文件夹（典型：换机/重装后导入）→ 重启后自动重扫一次
+    const needRescan = !(store.tracks || []).length && (store.folders || []).length > 0;
+    store._pendingRescan = needRescan ? { time: Date.now(), reason: 'backup-import' } : null;
+    // Slice C：重启后二次匹配——扫描完成后对死路径跑五级兜底，把残留死链换新机路径
+    // 向导第 2 步「智能匹配兜底」勾选才挂（默认勾）；纯前缀映射已 100% 的场景不挂也行，留着幂等
+    const hasPathSections = (o.sections || Object.keys(view.sections))
+      .some((s) => ['folders', 'favorites', 'playlists', 'stats', 'analysis'].includes(s));
+    store._pendingMigration = (hasPathSections && o.smartMatch !== false)
+      ? { time: Date.now(), file: String(o.path || ''), rootMap, remapped } : null;
+    touchStore(); flushStore();
+    setupLibraryWatch(); // folders 可能已变
+    return {
+      ok: true, mode: res.mode, applied: res.applied, notes: res.notes,
+      listenStats: res.listenStats, needsRescan: needRescan, remapped,
+      ver: view.ver, time: view.time
+    };
+  });
+  /* Slice C：重启后二次匹配（渲染层在扫描完成后调用）。
+   * 读备份文件取指纹（analysis 段的 size/duration/title/artist），对本机曲库跑五级匹配，
+   * 把歌单/收藏/统计/metaCache 里仍然死的路径换成新机路径；完成后清 _pendingMigration。 */
+  ipcMain.handle('backup:rematch', async () => {
+    const store = loadStore();
+    const pm = store._pendingMigration;
+    if (!pm || !pm.file) return { ok: false, reason: 'none' };
+    let view;
+    try { view = backup.normalize(JSON.parse(fs.readFileSync(pm.file, 'utf8'))); }
+    catch (e) {
+      // 备份文件被移动/删除：不等了，清标记放行（歌单里死链留给体检 H2/H3 处理）
+      store._pendingMigration = null; touchStore(); flushStore();
+      return { ok: false, reason: '备份文件不可用：' + e.message };
+    }
+    const rootMap = pm.rootMap || {};
+    const analysis = view.sections.analysis || {};
+    // 本机现存路径集合（归一化小写比较）
+    const existSet = new Set((store.tracks || []).map((t) => trackMatcher.normPlPath(t.path)));
+    const isAlive = (p) => existSet.has(trackMatcher.normPlPath(String(p || '').replace(/#(cue|iso)\d+$/i, '')));
+    // 收集 store 里仍死的引用：{kind, ref} ref 视类型为歌单对象/索引/键名
+    const dead = [];
+    for (const pl of (store.playlists || [])) {
+      (pl.paths || []).forEach((p, i) => { if (!isAlive(p)) dead.push({ kind: 'pl', pl, idx: i, path: p }); });
+    }
+    (store.favorites || []).forEach((p, i) => { if (!isAlive(p)) dead.push({ kind: 'fav', idx: i, path: p }); });
+    for (const k of Object.keys(store.stats || {})) if (!isAlive(k)) dead.push({ kind: 'stats', key: k, path: k });
+    for (const k of Object.keys(store.metaCache || {})) if (!isAlive(k)) dead.push({ kind: 'meta', key: k, path: k });
+    const total = dead.length;
+    if (!total) {
+      store._pendingMigration = null; touchStore(); flushStore();
+      return { ok: true, restored: 0, total: 0, missing: [] };
+    }
+    /* 构造指纹：死路径 → 反查备份原始路径（逆向 rootMap）→ analysis 段取 size/duration/title/artist。
+     * 无 analysis 指纹时仍可按文件名/相对根匹配（五级①②④）。 */
+    const reverseMap = {};
+    for (const [from, to] of Object.entries(rootMap)) reverseMap[trackMatcher.normPlPath(to)] = from;
+    const toOriginal = (p) => {
+      const nl = trackMatcher.normPlPath(String(p || '').replace(/#(cue|iso)\d+$/i, ''));
+      for (const [toLow, from] of Object.entries(reverseMap)) {
+        if (nl === toLow) return from;
+        if (nl.startsWith(toLow + '\\')) return from + String(p).slice(toLow.length);
       }
-      const sp = storePath();
-      try { fs.copyFileSync(sp, sp + '.bak-' + Date.now()); } catch { } // 导入前兜底
-      const s = loadStore();
-      for (const k of Object.keys(pkg.data)) {
-        if (k === 'tracks' || k === 'metaCache') continue; // 派生数据不覆盖
-        s[k] = pkg.data[k];
+      return p;
+    };
+    const items = dead.map((d) => {
+      const orig = toOriginal(d.path);
+      const a = analysis[orig] || analysis[String(d.path)] || {};
+      let rel = '';
+      const nl = trackMatcher.normPlPath(orig);
+      for (const root of (view.roots || [])) {
+        const rl = trackMatcher.normPlPath(root);
+        if (nl.indexOf(rl + '\\') === 0) { rel = String(orig).slice(String(root).length).replace(/^[\\/]+/, ''); break; }
       }
-      touchStore(); flushStore();
-      return { ok: true, ver: pkg.ver || '', time: pkg.time || '' };
-    } catch (e) { return { ok: false, reason: e.message }; }
+      const base = String(orig).replace(/#(cue|iso)\d+$/i, '').split(/[\\/]/).pop();
+      return { path: orig, file: base, rel, size: a.fileSize || 0, duration: a.duration || 0, title: a.title || '', artist: a.artist || '' };
+    });
+    const mr = trackMatcher.matchTracks(items, store);
+    // 命中回写：perItem 与 dead 按下标一一对齐（null = 未匹配）
+    let restored = 0;
+    const missing = [];
+    dead.forEach((d, i) => {
+      const hit = mr.perItem[i];
+      if (!hit) { missing.push({ path: d.path, title: items[i].title, artist: items[i].artist, file: items[i].file }); return; }
+      restored++;
+      if (d.kind === 'pl') d.pl.paths[d.idx] = hit;
+      else if (d.kind === 'fav') store.favorites[d.idx] = hit;
+      else if (d.kind === 'stats') {
+        // 目标键已有统计（同曲另一份记录）时按合并口径相加，不覆盖
+        if (store.stats[hit]) {
+          const cur = store.stats[hit], inc = store.stats[d.key] || {};
+          for (const [k, v] of Object.entries(inc)) {
+            if (typeof v === 'number') cur[k] = k === 'lastPlayed' ? Math.max(cur[k] || 0, v) : (cur[k] || 0) + v;
+            else if (cur[k] === undefined) cur[k] = v;
+          }
+        } else store.stats[hit] = store.stats[d.key];
+        delete store.stats[d.key];
+      }
+      else if (d.kind === 'meta') {
+        // 本机重扫产生的新条目为准（mtimeMs/fileSize 保鲜），备份侧只并入分析白名单字段（loudness/bpm 等）
+        const base = store.metaCache[hit] || {};
+        const inc = backup.pickAnalysisEntry(store.metaCache[d.key] || {});
+        store.metaCache[hit] = Object.assign({}, base, inc);
+        delete store.metaCache[d.key];
+      }
+    });
+    store._pendingMigration = null;
+    saveStore({
+      playlists: store.playlists, favorites: store.favorites,
+      stats: store.stats, metaCache: store.metaCache, _pendingMigration: null
+    });
+    flushStore();
+    broadcastScan({ type: 'done', found: (store.tracks || []).length, fallback: true });
+    return { ok: true, restored, total, missing };
   });
   ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
+
+  /* ---------------- V4.4.2：媒体库体检（Slice A：H1-H9；只扫描出报告，修复须渲染层逐项确认） ----------------
+   * 进度/结束走 health:event（对齐 fakescan 模式）；修复前生成撤销快照存 store.healthUndo，
+   * 仅留最近一次；快照超 5MB 降级为返回 manifest 供渲染层导出 JSON 清单（不写撤销凭证）。 */
+  const HEALTH_UNDO_MAX = 5 * 1024 * 1024;
+  const coverCacheDir = () => path.join(app.getPath('userData'), 'covercache');
+  ipcMain.handle('health:scan', (_e, opts) => {
+    const o = opts || {};
+    healthCheck.start(mainWindow, loadStore(), { deep: !!o.deep, coverCacheDir: o.deep ? coverCacheDir() : null });
+    return { ok: true };
+  });
+  // Slice D·H12：清空封面磁盘缓存（纯缓存，删除安全，下次播放自动重建）
+  ipcMain.handle('health:clearCoverCache', () => {
+    const dir = coverCacheDir();
+    let count = 0, bytes = 0;
+    try {
+      for (const fn of fs.readdirSync(dir)) {
+        const fp = path.join(dir, fn);
+        try { bytes += fs.statSync(fp).size; fs.unlinkSync(fp); count++; } catch { }
+      }
+    } catch { }
+    // 清完重建内存索引（library 内部 coverDiskIndex 仍指向已删文件）
+    library.initCoverDiskCache(dir);
+    return { ok: true, count, bytes };
+  });
+  ipcMain.handle('health:cancel', () => { healthCheck.cancel(); return { ok: true }; });
+  ipcMain.handle('health:fix', (_e, payload) => {
+    const store = loadStore();
+    let res;
+    try { res = healthCheck.fix(store, payload || {}); }
+    catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+    // 撤销快照：新修复覆盖旧快照；超 5MB 不入库，降级清单导出
+    const candidate = { time: new Date().toISOString(), actions: [res.snapshot] };
+    let undoAvailable = false, snapshotTooLarge = false;
+    try {
+      if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') > HEALTH_UNDO_MAX) {
+        snapshotTooLarge = true;
+        saveStore({ healthUndo: null });
+      } else {
+        saveStore({ healthUndo: candidate });
+        undoAvailable = true;
+      }
+    } catch { snapshotTooLarge = true; }
+    if (res.snapshot.type === 'pruneRefs') {
+      saveStore({ playlists: store.playlists, favorites: store.favorites });
+    } else if (res.snapshot.type === 'pruneOrphans') {
+      saveStore({ stats: store.stats, metaCache: store.metaCache });
+    } else if (res.snapshot.type === 'removeFolders') {
+      saveStore({ folders: store.folders, tracks: store.tracks });
+      setupLibraryWatch();
+    }
+    flushStore();
+    // 曲库已变：fallback 通道让渲染层整体重拉 library（与 deleteFiles 同口径）
+    broadcastScan({ type: 'done', found: (store.tracks || []).length, fallback: true });
+    return {
+      ok: true, action: res.snapshot.type, removed: res.removed, skipped: res.skipped,
+      undoAvailable, snapshotTooLarge, manifest: snapshotTooLarge ? candidate : null
+    };
+  });
+  ipcMain.handle('health:undo', () => {
+    const store = loadStore();
+    const r = healthCheck.undo(store);
+    if (!r.ok) return r;
+    saveStore({
+      healthUndo: null,
+      playlists: store.playlists, favorites: store.favorites,
+      stats: store.stats, metaCache: store.metaCache,
+      folders: store.folders, tracks: store.tracks
+    });
+    flushStore();
+    setupLibraryWatch();
+    broadcastScan({ type: 'done', found: (store.tracks || []).length, fallback: true });
+    return r;
+  });
+  ipcMain.handle('health:undoInfo', () => {
+    const u = loadStore().healthUndo;
+    if (!u || !Array.isArray(u.actions) || !u.actions.length) return null;
+    return { time: u.time || '', actions: u.actions.map((a) => a.type) };
+  });
+  // 导出最近一次体检的完整报告（明细不截断）
+  ipcMain.handle('health:exportReport', async () => {
+    const report = healthCheck.getLastReport();
+    if (!report) return { ok: false, reason: '暂无体检报告，请先执行体检' };
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '导出媒体库体检报告',
+      defaultPath: 'annie-health-report-' + new Date().toISOString().slice(0, 10) + '.json',
+      filters: [{ name: 'JSON 清单', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
+    try {
+      fs.writeFileSync(r.filePath, JSON.stringify(report, null, 2), 'utf8');
+      return { ok: true, path: r.filePath };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
+  // 通用 JSON 存档（撤销快照过大时的清单降级导出）
+  ipcMain.handle('health:saveJson', async (_e, name, data) => {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '导出 JSON 清单',
+      defaultPath: String(name || 'annie-health-list.json'),
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
+    try {
+      fs.writeFileSync(r.filePath, JSON.stringify(data, null, 2), 'utf8');
+      return { ok: true, path: r.filePath };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
 
   // V4.3.18：封面磁盘缓存（头脑风暴 2.3），userData/covercache/，二次启动封面免整文件解析
   library.initCoverDiskCache(path.join(app.getPath('userData'), 'covercache'));

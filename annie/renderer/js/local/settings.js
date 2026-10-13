@@ -1688,8 +1688,8 @@
         if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(!!ui.amImmFullscreen && immOn);
       } catch (e) { }
     }, '沉浸模式 全屏 任务栏 隐藏 fullscreen immersive');
-    // —— 重启恢复上次播放（曲目/队列/进度；本地+在线均生效） ——
-    checkRow(sAmI, '重启恢复上次播放（含进度）', 'amResume', function () {
+    // —— 重启恢复上次播放（V4.4.2 起改为启动时弹窗询问是否续播，不再静默起播） ——
+    checkRow(sAmI, '启动时询问是否续播上次曲目（含进度）', 'amResume', function () {
       if (!ui.amResume) { // 关闭时清掉已存的恢复点，避免下次开启时恢复到陈旧曲目
         try {
           localStorage.removeItem('annieplayer.resume.v1');
@@ -2307,30 +2307,779 @@
       }).catch(function () { dupBtn.disabled = false; dupBtn.textContent = '扫描重复'; });
     };
 
-    // —— V4.3.19：配置备份（脑暴 10.1）——设置/歌单/收藏/统计一键导出导入 ——
-    var bakRow = markItem(el('div', 'set-row'), '配置备份 导出备份 导入备份 换机 迁移 backup');
-    var bakLab = el('div'); bakLab.appendChild(el('div', '', '配置备份'));
-    bakLab.appendChild(el('div', 'set-hint', '设置/歌单/收藏/收听统计打包为备份文件；换机导入后重扫曲库即可（曲库索引与标签缓存会自动重建）'));
-    var bakWrap = el('div', 'set-ctrl');
-    var bakExp = el('button', 'btn-ghost', '导出备份');
-    var bakImp = el('button', 'btn-ghost', '导入备份…');
-    bakExp.onclick = function () {
-      bakExp.disabled = true;
-      window.mine.backupExport()
-        .then(function (r) { bakExp.textContent = r && r.ok ? '已导出 ✓' : '已取消'; })
-        .catch(function () { bakExp.textContent = '导出失败'; })
-        .finally(function () { bakExp.disabled = false; setTimeout(function () { bakExp.textContent = '导出备份'; }, 3000); });
-    };
-    bakImp.onclick = function () {
-      if (!confirm('导入备份会用备份内容覆盖当前的设置/歌单/收藏/收听统计（现有配置会自动留 .bak 兜底），导入后应用自动重启。继续？')) return;
-      window.mine.backupImport().then(function (r) {
-        if (r && r.ok) { window.mine.relaunchApp(); return; }
-        if (r && r.reason !== 'canceled') { try { if (typeof proToast === 'function') proToast('导入失败：' + r.reason); } catch (e) { } }
+    // —— V4.4.2：媒体库体检（Slice A：H1-H9；只出报告，修复逐项确认 + 一键撤销）——
+    var hcRow = markItem(el('div', 'set-row'), '媒体库体检 健康检查 health 失效曲目 死链 歌单 收藏 孤儿缓存 不可达文件夹 零字节 缺标签');
+    var hcLab = el('div');
+    hcLab.appendChild(el('div', '', '媒体库体检'));
+    hcLab.appendChild(el('div', 'set-hint', '一键排查失效曲目、歌单/收藏死链、孤儿缓存、不可达文件夹、零字节与缺标签文件；只出报告，所有修复都需你逐项确认，且可一键撤销'));
+    var hcBtn = el('button', 'btn-ghost', '开始体检');
+    var hcRight = el('div', 'set-ctrl');
+    // Slice D：深度体检开关（H10 缺封面 / H11 不可解码 / H12 封面缓存；逐首 ffprobe/ffmpeg 探测，较慢）
+    var hcDeepLab = el('label', 'set-hc-item');
+    hcDeepLab.style.padding = '0 8px 0 0';
+    var hcDeepCb = document.createElement('input');
+    hcDeepCb.type = 'checkbox';
+    try { hcDeepCb.checked = localStorage.getItem('annieplayer.health.deep') === '1'; } catch (e) { }
+    hcDeepCb.onchange = function () { try { localStorage.setItem('annieplayer.health.deep', hcDeepCb.checked ? '1' : '0'); } catch (e) { } };
+    hcDeepLab.appendChild(hcDeepCb);
+    hcDeepLab.appendChild(el('span', 'set-hc-name', '深度体检'));
+    hcDeepLab.title = '额外逐首探测：缺封面 / 不可解码坏文件 / 封面缓存占用（ffmpeg 逐首解码前 5 秒，较慢，可随时取消）';
+    hcRight.appendChild(hcDeepLab);
+    hcRight.appendChild(hcBtn);
+    hcRow.appendChild(hcLab); hcRow.appendChild(hcRight);
+    sFk.appendChild(hcRow);
+    var hcUndoBox = el('div');
+    var hcReportBox = el('div');
+    sFk.appendChild(hcUndoBox);
+    sFk.appendChild(hcReportBox);
+
+    var hcBusy = false, hcOff = null, hcLastManifest = null;
+
+    function hcToast(msg, ms) { try { if (typeof proToast === 'function') proToast(msg, ms || 5000); } catch (e) { } }
+    function hcFmtTime(t) { try { return new Date(t).toLocaleString(); } catch (e) { return t || ''; } }
+
+    function hcRefreshUndoBar() {
+      hcUndoBox.innerHTML = '';
+      if (!window.mine.healthUndoInfo) return;
+      window.mine.healthUndoInfo().then(function (info) {
+        if (!info) return;
+        var bar = el('div', 'set-hc-undobar');
+        var names = { pruneRefs: '死链清理', pruneOrphans: '孤儿缓存清理', removeFolders: '文件夹移除' };
+        var labels = (info.actions || []).map(function (a) { return names[a] || a; }).join('、');
+        bar.appendChild(el('span', 'set-hc-dim', '↩ 可撤销：' + hcFmtTime(info.time) + '（' + labels + '）'));
+        var undoBtn = el('button', 'btn-ghost', '撤销上次清理');
+        undoBtn.onclick = function () {
+          if (!confirm('确定撤销上次体检清理？被移除的歌单/收藏引用、缓存键和文件夹索引将恢复。')) return;
+          undoBtn.disabled = true;
+          window.mine.healthUndo().then(function (r) {
+            undoBtn.disabled = false;
+            if (r && r.ok) {
+              hcToast('已撤销清理，恢复 ' + r.restored + ' 项');
+              hcReportBox.innerHTML = '';
+              hcReportBox.appendChild(el('div', 'set-hc-desc', '撤销完成，建议重新体检确认。'));
+              var again = el('button', 'btn-ghost', '重新体检');
+              again.onclick = hcStart;
+              hcReportBox.appendChild(again);
+              hcRefreshUndoBar();
+            } else { hcToast('没有可撤销的清理快照'); }
+          }).catch(function () { undoBtn.disabled = false; hcToast('撤销失败'); });
+        };
+        bar.appendChild(undoBtn);
+        hcUndoBox.appendChild(bar);
+      }).catch(function () { });
+    }
+    hcRefreshUndoBar();
+
+    // 卡片 / 明细行构造
+    function hcCard(title, count, badgeCls, desc) {
+      var card = el('div', 'set-hc-card');
+      var head = el('div', 'set-hc-head');
+      head.appendChild(el('span', 'set-hc-title', title));
+      if (count != null) head.appendChild(el('span', 'set-hc-badge ' + (badgeCls || ''), String(count)));
+      card.appendChild(head);
+      if (desc) card.appendChild(el('div', 'set-hc-desc', desc));
+      return card;
+    }
+    function hcCheckLine(name, dir, data, tagText) {
+      var lab = el('label', 'set-hc-item');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true; cb.dataset.hc = JSON.stringify(data);
+      lab.appendChild(cb);
+      if (tagText) lab.appendChild(el('span', 'set-hc-tag', tagText));
+      lab.appendChild(el('span', 'set-hc-name', name));
+      if (dir) lab.appendChild(el('span', 'set-hc-dir', dir));
+      return lab;
+    }
+    function hcPlainLine(name, dir, tagText, tagCls) {
+      var lab = el('div', 'set-hc-item plain');
+      if (tagText) lab.appendChild(el('span', 'set-hc-tag ' + (tagCls || ''), tagText));
+      lab.appendChild(el('span', 'set-hc-name', name));
+      if (dir) lab.appendChild(el('span', 'set-hc-dir', dir));
+      return lab;
+    }
+    function hcCheckedData(card) {
+      var out = [];
+      card.querySelectorAll('.set-hc-items input[type=checkbox]:checked').forEach(function (cb) {
+        try { out.push(JSON.parse(cb.dataset.hc || '{}')); } catch (e) { }
       });
+      return out;
+    }
+    function hcTruncNote(cat, box) {
+      if (cat.truncated) box.appendChild(el('div', 'set-hc-sub', '仅显示前 500 条，完整明细可用报告区的「导出完整清单」保存'));
+    }
+    // 修复完成后：提示 + 降级清单导出 + 重新体检
+    function hcAfterFix(r, okMsg) {
+      if (!r || !r.ok) { hcToast('修复失败：' + ((r && r.reason) || '未知错误')); return; }
+      var skipped = (r.skipped || []).length;
+      var msg = okMsg + (skipped ? '；' + skipped + ' 项复检时已存在被跳过' : '');
+      hcToast(msg + (r.undoAvailable ? '（可撤销）' : ''), 6000);
+      hcReportBox.innerHTML = '';
+      hcReportBox.appendChild(el('div', 'set-hc-desc', msg + '。建议重新体检确认。'));
+      if (r.snapshotTooLarge && r.manifest) {
+        hcLastManifest = r.manifest;
+        var saveListBtn = el('button', 'btn-ghost', '本次清理清单过大无法一键撤销，导出 JSON 清单存档…');
+        saveListBtn.onclick = function () {
+          window.mine.healthSaveJson('annie-health-manifest-' + new Date().toISOString().slice(0, 10) + '.json', hcLastManifest)
+            .then(function (x) { if (x && x.ok) hcToast('清单已导出'); }).catch(function () { });
+        };
+        hcReportBox.appendChild(saveListBtn);
+      }
+      var again = el('button', 'btn-ghost', '重新体检');
+      again.onclick = hcStart;
+      hcReportBox.appendChild(again);
+      hcRefreshUndoBar();
+    }
+
+    function hcRenderReport(report) {
+      hcReportBox.innerHTML = '';
+      var c = report.cats;
+      var t = report.totals;
+      var summary = el('div', 'set-hc-summary',
+        '体检完成：曲目 ' + t.tracks + ' 首 · 自建歌单 ' + t.playlists + ' · 收藏 ' + t.favorites +
+        ' · 校验文件 ' + t.filesStated + ' 个 · 耗时 ' + (report.durationMs / 1000).toFixed(1) + ' 秒');
+      hcReportBox.appendChild(summary);
+      var toolBar = el('div', 'set-hc-actions');
+      var expBtn = el('button', 'btn-ghost', '导出完整清单（JSON）');
+      expBtn.onclick = function () {
+        expBtn.disabled = true;
+        window.mine.healthExportReport().then(function (r) {
+          if (r && r.ok) hcToast('体检报告已导出');
+          else if (r && r.reason !== 'canceled') hcToast('导出失败：' + r.reason);
+          expBtn.disabled = false;
+        }).catch(function () { expBtn.disabled = false; });
+      };
+      toolBar.appendChild(expBtn);
+      hcReportBox.appendChild(toolBar);
+
+      var allClean = c.h1DeadTracks.count === 0 && c.h2PlaylistRefs.count === 0 && c.h3Favorites.count === 0 &&
+        c.h4Orphans.count === 0 && c.h5Folders.count === 0 && c.h6ZeroByte.count === 0 && c.h7MissingTags.count === 0;
+      if (allClean) hcReportBox.appendChild(el('div', 'set-hc-okline', '未发现失效文件与异常引用 ✓'));
+
+      // H1 失效曲目（修复=重新扫描）
+      var h1 = c.h1DeadTracks;
+      var card1 = hcCard('H1 · 曲目文件不存在', h1.count, h1.count ? 'bad' : 'ok',
+        '曲库索引指向的文件已不在磁盘（删除、移动或改名后残留）。重新扫描即可重建索引清除；歌单/收藏中的死链请用下方 H2/H3 分类清理。');
+      if (h1.count) {
+        var box1 = el('div', 'set-hc-items');
+        h1.items.forEach(function (it) { box1.appendChild(hcPlainLine(it.name, it.dir, it.detail || '文件不存在', 'bad')); });
+        hcTruncNote(h1, box1);
+        card1.appendChild(box1);
+        var rescanBtn = el('button', 'btn-ghost', '重新扫描曲库');
+        rescanBtn.onclick = function () {
+          if (!confirm('重新扫描将按当前媒体库文件夹重建曲目索引，确定开始？')) return;
+          window.mine.rescan();
+          hcToast('已开始重新扫描，扫描完成后可重新体检');
+        };
+        var act1 = el('div', 'set-hc-actions'); act1.appendChild(rescanBtn); card1.appendChild(act1);
+      }
+      hcReportBox.appendChild(card1);
+
+      // H2 歌单死引用
+      var h2 = c.h2PlaylistRefs;
+      var card2 = hcCard('H2 · 歌单死引用', h2.count, h2.count ? 'warn' : 'ok',
+        '自建歌单中指向的文件已不在磁盘，勾选后只从对应歌单移除引用，不删除任何文件。');
+      if (h2.count) {
+        var box2 = el('div', 'set-hc-items');
+        h2.items.forEach(function (it) {
+          box2.appendChild(hcCheckLine('[' + it.plName + '] ' + it.name, it.dir, { plId: it.plId, path: it.path }, '歌单'));
+        });
+        hcTruncNote(h2, box2);
+        card2.appendChild(box2);
+        var fix2Btn = el('button', 'btn-ghost', '从歌单移除选中项');
+        fix2Btn.onclick = function () {
+          var items = hcCheckedData(card2);
+          if (!items.length) return;
+          if (!confirm('从自建歌单中移除选中的 ' + items.length + ' 条死引用？\n（不删除磁盘文件，可撤销）')) return;
+          fix2Btn.disabled = true;
+          window.mine.healthFix({ action: 'pruneRefs', playlistItems: items }).then(function (r) {
+            fix2Btn.disabled = false;
+            hcAfterFix(r, '已从歌单移除 ' + ((r && r.removed && r.removed.playlist) || 0) + ' 条死引用');
+          }).catch(function () { fix2Btn.disabled = false; });
+        };
+        var act2 = el('div', 'set-hc-actions'); act2.appendChild(fix2Btn); card2.appendChild(act2);
+      }
+      hcReportBox.appendChild(card2);
+
+      // H3 收藏死引用
+      var h3 = c.h3Favorites;
+      var card3 = hcCard('H3 · 收藏死引用', h3.count, h3.count ? 'warn' : 'ok',
+        '收藏列表中指向的文件已不在磁盘，勾选后从收藏移除，不删除任何文件。');
+      if (h3.count) {
+        var box3 = el('div', 'set-hc-items');
+        h3.items.forEach(function (it) { box3.appendChild(hcCheckLine(it.name, it.dir, { path: it.path })); });
+        hcTruncNote(h3, box3);
+        card3.appendChild(box3);
+        var fix3Btn = el('button', 'btn-ghost', '从收藏移除选中项');
+        fix3Btn.onclick = function () {
+          var items = hcCheckedData(card3);
+          if (!items.length) return;
+          if (!confirm('从收藏中移除选中的 ' + items.length + ' 条死引用？\n（不删除磁盘文件，可撤销）')) return;
+          fix3Btn.disabled = true;
+          window.mine.healthFix({ action: 'pruneRefs', favoriteItems: items }).then(function (r) {
+            fix3Btn.disabled = false;
+            hcAfterFix(r, '已从收藏移除 ' + ((r && r.removed && r.removed.favorite) || 0) + ' 条死引用');
+          }).catch(function () { fix3Btn.disabled = false; });
+        };
+        var act3 = el('div', 'set-hc-actions'); act3.appendChild(fix3Btn); card3.appendChild(act3);
+      }
+      hcReportBox.appendChild(card3);
+
+      // H4 孤儿缓存（收听统计 / 标签缓存 两组）
+      var h4 = c.h4Orphans;
+      var card4 = hcCard('H4 · 统计 / 标签缓存孤儿', h4.count, h4.count ? 'warn' : 'ok',
+        '这些缓存键指向的曲目已不在曲库索引中（重新扫描不会自动清除），清理后可给 library.json 瘦身。');
+      if (h4.count) {
+        var box4 = el('div', 'set-hc-items');
+        var statsItems = h4.items.filter(function (x) { return x.kind === 'stats'; });
+        var metaItems = h4.items.filter(function (x) { return x.kind === 'meta'; });
+        var streamItems = h4.items.filter(function (x) { return x.kind === 'stream'; });
+        if (h4.statsCount) box4.appendChild(el('div', 'set-hc-sub', '收听统计孤儿（共 ' + h4.statsCount + ' 项）'));
+        statsItems.forEach(function (it) { box4.appendChild(hcCheckLine(it.name, it.dir, { kind: 'stats', key: it.key }, '统计')); });
+        if (h4.metaCount) box4.appendChild(el('div', 'set-hc-sub', '标签 / 分析缓存孤儿（共 ' + h4.metaCount + ' 项）'));
+        metaItems.forEach(function (it) { box4.appendChild(hcCheckLine(it.name, it.dir, { kind: 'meta', key: it.key }, '缓存')); });
+        if (h4.streamCount) box4.appendChild(el('div', 'set-hc-sub', '流媒体播放统计（共 ' + h4.streamCount + ' 项）——在线播放的临时链接记录，可安全清理'));
+        streamItems.forEach(function (it) { box4.appendChild(hcCheckLine(it.name, it.dir, { kind: 'stream', key: it.key }, '流媒体')); });
+        hcTruncNote(h4, box4);
+        card4.appendChild(box4);
+        var fix4Btn = el('button', 'btn-ghost', '清理选中孤儿键');
+        fix4Btn.onclick = function () {
+          var items = hcCheckedData(card4);
+          if (!items.length) return;
+          if (!confirm('清理选中的 ' + items.length + ' 个孤儿缓存键？\n（相关收听统计与分析结果会从本机删除，可撤销）')) return;
+          fix4Btn.disabled = true;
+          window.mine.healthFix({ action: 'pruneOrphans', items: items }).then(function (r) {
+            fix4Btn.disabled = false;
+            var rm = (r && r.removed) || {};
+            hcAfterFix(r, '已清理孤儿缓存（统计 ' + (rm.stats || 0) + ' / 标签 ' + (rm.meta || 0) + '）');
+          }).catch(function () { fix4Btn.disabled = false; });
+        };
+        var act4 = el('div', 'set-hc-actions'); act4.appendChild(fix4Btn); card4.appendChild(act4);
+      }
+      hcReportBox.appendChild(card4);
+
+      // H5 不可达文件夹（offline 不可修仅提示 / missing 可移除）
+      var h5 = c.h5Folders;
+      var card5 = hcCard('H5 · 媒体库文件夹不可达', h5.count, h5.count ? 'warn' : 'ok',
+        '移动盘未插 / 网络盘断开时建议保留（重新连接即可恢复）；目录已删除的文件夹可移出媒体库。');
+      if (h5.count) {
+        var box5 = el('div', 'set-hc-items');
+        h5.items.forEach(function (it) {
+          if (it.kind === 'offline') box5.appendChild(hcPlainLine(it.path, '', '盘未插/网络盘断开', 'warn'));
+          else box5.appendChild(hcCheckLine(it.path, '', { path: it.path }, '目录已删除'));
+        });
+        hcTruncNote(h5, box5);
+        card5.appendChild(box5);
+        var missingShown = h5.items.filter(function (x) { return x.kind === 'missing'; });
+        if (missingShown.length || h5.missingCount) {
+          var fix5Btn = el('button', 'btn-ghost', '移除选中的已删除文件夹');
+          fix5Btn.onclick = function () {
+            var items = hcCheckedData(card5);
+            if (!items.length) return;
+            if (!confirm('从媒体库移除选中的 ' + items.length + ' 个文件夹？\n其下曲目会一并移出曲库索引（不删除磁盘文件，可撤销）')) return;
+            fix5Btn.disabled = true;
+            window.mine.healthFix({ action: 'removeFolders', items: items }).then(function (r) {
+              fix5Btn.disabled = false;
+              var rm = (r && r.removed) || {};
+              hcAfterFix(r, '已移除文件夹 ' + (rm.folder || 0) + ' 个、曲目索引 ' + (rm.tracks || 0) + ' 首');
+            }).catch(function () { fix5Btn.disabled = false; });
+          };
+          var act5 = el('div', 'set-hc-actions'); act5.appendChild(fix5Btn); card5.appendChild(act5);
+        }
+      }
+      hcReportBox.appendChild(card5);
+
+      // H6 零字节文件（走系统回收站，不经撤销快照）
+      var h6 = c.h6ZeroByte;
+      var card6 = hcCard('H6 · 零字节文件', h6.count, h6.count ? 'bad' : 'ok',
+        '文件存在但大小为 0，通常是下载/拷贝失败的坏文件。删除走系统回收站，可从回收站恢复。');
+      if (h6.count) {
+        var box6 = el('div', 'set-hc-items');
+        h6.items.forEach(function (it) { box6.appendChild(hcCheckLine(it.name, it.dir, { path: it.path })); });
+        hcTruncNote(h6, box6);
+        card6.appendChild(box6);
+        var fix6Btn = el('button', 'btn-ghost', '删除选中（移入回收站）');
+        fix6Btn.onclick = function () {
+          var items = hcCheckedData(card6);
+          var paths = items.map(function (x) { return x.path; });
+          if (!paths.length) return;
+          if (!confirm('将 ' + paths.length + ' 个零字节文件移入回收站？\n（可从系统回收站恢复，歌单/收藏引用会同步清理）')) return;
+          fix6Btn.disabled = true;
+          window.mine.libDeleteFiles(paths).then(function (r) {
+            fix6Btn.disabled = false;
+            var done = (r.done || []).length, failed = (r.failed || []).length;
+            hcToast('已移入回收站 ' + done + ' 个文件' + (failed ? '，失败 ' + failed + ' 个' : ''), 6000);
+            hcReportBox.innerHTML = '';
+            hcReportBox.appendChild(el('div', 'set-hc-desc', '零字节文件已处理，建议重新体检确认。'));
+            var again6 = el('button', 'btn-ghost', '重新体检');
+            again6.onclick = hcStart;
+            hcReportBox.appendChild(again6);
+          }).catch(function () { fix6Btn.disabled = false; });
+        };
+        var act6 = el('div', 'set-hc-actions'); act6.appendChild(fix6Btn); card6.appendChild(act6);
+      }
+      hcReportBox.appendChild(card6);
+
+      // H7 缺标签（仅报告，不自动改）
+      var h7 = c.h7MissingTags;
+      var card7 = hcCard('H7 · 缺基础标签', h7.count, h7.count ? 'warn' : 'ok',
+        '标签缓存中标题与艺人均为空的文件。可在曲目行右键使用「标签编辑」或「在线匹配」补全，体检不会自动修改文件。');
+      if (h7.count) {
+        var box7 = el('div', 'set-hc-items');
+        h7.items.forEach(function (it) { box7.appendChild(hcPlainLine(it.name, it.dir, '标题/艺人空', 'warn')); });
+        hcTruncNote(h7, box7);
+        card7.appendChild(box7);
+      }
+      hcReportBox.appendChild(card7);
+
+      // H8 重复歌曲（跳现有重复清理区）
+      var h8 = c.h8Duplicates || { groups: 0, removable: 0 };
+      var card8 = hcCard('H8 · 重复歌曲', h8.groups, h8.groups ? 'warn' : 'ok',
+        h8.groups ? ('按"标题+艺人"检出 ' + h8.groups + ' 组重复，理论可清理 ' + h8.removable + ' 个冗余副本。') :
+          '未发现标题+艺人重复的歌曲。');
+      if (h8.groups) {
+        var go8Btn = el('button', 'btn-ghost', '前往重复歌曲清理');
+        go8Btn.onclick = function () {
+          try { dupRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+          if (!dupBox.children.length) dupBtn.click();
+        };
+        var act8 = el('div', 'set-hc-actions'); act8.appendChild(go8Btn); card8.appendChild(act8);
+      }
+      hcReportBox.appendChild(card8);
+
+      // H9 响度 / BPM 未分析（触发现有补算）
+      var h9 = c.h9Analysis || { loudnessMissing: 0, bpmMissing: 0 };
+      var card9 = hcCard('H9 · 响度 / BPM 分析覆盖', null, '',
+        '响度补算用于音量均衡，BPM 用于「找相似歌曲」。未分析数量多时点下方按钮直接补算（耗时较长，可取消）。');
+      var box9 = el('div', 'set-hc-items');
+      box9.appendChild(hcPlainLine('响度未分析 ' + h9.loudnessMissing + ' 首', '', '响度', h9.loudnessMissing ? 'warn' : 'ok'));
+      box9.appendChild(hcPlainLine('BPM 未分析 ' + h9.bpmMissing + ' 首', '', 'BPM', h9.bpmMissing ? 'warn' : 'ok'));
+      card9.appendChild(box9);
+      var act9 = el('div', 'set-hc-actions');
+      var go9L = el('button', 'btn-ghost', '补算响度');
+      go9L.onclick = function () {
+        try { loudBtnRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+        loudBtn.click();
+      };
+      var go9B = el('button', 'btn-ghost', '补算 BPM');
+      go9B.onclick = function () {
+        try { bpmBtnRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+        bpmBtn.click();
+      };
+      act9.appendChild(go9L); act9.appendChild(go9B); card9.appendChild(act9);
+      hcReportBox.appendChild(card9);
+
+      // —— Slice D：深度项卡片（勾选「深度体检」才出现在报告里） ——
+      if (report.deep) {
+        // H10 缺封面（仅报告，引导在线匹配，不自动改文件）
+        var h10 = c.h10NoCover;
+        var card10 = hcCard('H10 · 缺封面', h10.count, h10.count ? 'warn' : 'ok',
+          '文件既无内嵌封面、所在目录也没有封面图（cover/folder/front 等）。可用曲目右键「在线匹配」补封面，体检不会自动修改文件。');
+        if (h10.count) {
+          var box10 = el('div', 'set-hc-items');
+          h10.items.forEach(function (it) { box10.appendChild(hcPlainLine(it.name, it.dir, '缺封面', 'warn')); });
+          hcTruncNote(h10, box10);
+          card10.appendChild(box10);
+        }
+        hcReportBox.appendChild(card10);
+
+        // H11 不可解码 / 损坏（仅报告列出，不自动删）
+        var h11 = c.h11Undecodable;
+        var card11 = hcCard('H11 · 不可解码 / 损坏文件', h11.count, h11.count ? 'bad' : 'ok',
+          'ffmpeg 解码前 5 秒即报错或失败的文件（下载不完整/文件损坏）。建议重新获取源文件；可在下方勾选后移入回收站。');
+        if (h11.count) {
+          var box11 = el('div', 'set-hc-items');
+          h11.items.forEach(function (it) { box11.appendChild(hcCheckLine(it.name, it.dir, { path: it.path }, '损坏')); });
+          hcTruncNote(h11, box11);
+          card11.appendChild(box11);
+          var fix11Btn = el('button', 'btn-ghost', '删除选中（移入回收站）');
+          fix11Btn.onclick = function () {
+            var items = hcCheckedData(card11);
+            var paths = items.map(function (x) { return x.path; });
+            if (!paths.length) return;
+            if (!confirm('将 ' + paths.length + ' 个损坏文件移入回收站？\n（可从系统回收站恢复，歌单/收藏引用会同步清理）')) return;
+            fix11Btn.disabled = true;
+            window.mine.libDeleteFiles(paths).then(function (r) {
+              fix11Btn.disabled = false;
+              var done = (r.done || []).length, failed = (r.failed || []).length;
+              hcToast('已移入回收站 ' + done + ' 个文件' + (failed ? '，失败 ' + failed + ' 个' : ''), 6000);
+            }).catch(function () { fix11Btn.disabled = false; });
+          };
+          var act11 = el('div', 'set-hc-actions'); act11.appendChild(fix11Btn); card11.appendChild(act11);
+        }
+        hcReportBox.appendChild(card11);
+
+        // H12 封面缓存占用（一键清空，纯缓存安全）
+        var h12 = c.h12CoverCache || { count: 0, bytes: 0 };
+        var card12 = hcCard('H12 · 封面缓存占用', null, h12.count ? '' : 'ok',
+          '封面磁盘缓存只进不出（mtime 变了自动换新版）。清空不影响数据，下次浏览时自动重建。');
+        var box12 = el('div', 'set-hc-items');
+        box12.appendChild(hcPlainLine('缓存 ' + h12.count + ' 个文件 · 占用 ' + bkFmtBytes(h12.bytes), '', h12.count ? '缓存' : '空', h12.count ? '' : 'ok'));
+        card12.appendChild(box12);
+        if (h12.count) {
+          var clrBtn = el('button', 'btn-ghost', '清空封面缓存');
+          clrBtn.onclick = function () {
+            if (!confirm('清空封面磁盘缓存（' + h12.count + ' 个文件，' + bkFmtBytes(h12.bytes) + '）？\n纯缓存数据，删除后自动重建，不影响曲库。')) return;
+            clrBtn.disabled = true;
+            window.mine.healthClearCoverCache().then(function (r) {
+              clrBtn.disabled = false;
+              if (r && r.ok) {
+                hcToast('已清空封面缓存（' + r.count + ' 个文件，' + bkFmtBytes(r.bytes) + '）');
+                box12.innerHTML = '';
+                box12.appendChild(hcPlainLine('缓存 0 个文件 · 占用 0 B', '', '空', 'ok'));
+                card12.querySelector('.set-hc-actions').remove();
+              }
+            }).catch(function () { clrBtn.disabled = false; });
+          };
+          var act12 = el('div', 'set-hc-actions'); act12.appendChild(clrBtn); card12.appendChild(act12);
+        }
+        hcReportBox.appendChild(card12);
+      }
+
+      hcRefreshUndoBar();
+    }
+
+    function hcStart() {
+      if (hcBusy) return;
+      hcBusy = true;
+      hcBtn.textContent = '取消体检';
+      hcReportBox.innerHTML = '';
+      var progWrap = el('div', 'set-hc-progress');
+      var bar = document.createElement('progress');
+      bar.value = 0; bar.max = 1;
+      var plab = el('span', '', '准备中…');
+      progWrap.appendChild(bar); progWrap.appendChild(plab);
+      hcReportBox.appendChild(progWrap);
+      if (hcOff) { try { hcOff(); } catch (e) { } hcOff = null; }
+      hcOff = window.mine.onHealthEvent(function (ev) {
+        if (ev.type === 'start') { bar.max = ev.total || 1; plab.textContent = '校验文件 0/' + ev.total; }
+        else if (ev.type === 'progress') {
+          bar.value = ev.total ? (ev.done / ev.total) : 0;
+          plab.textContent = (ev.phase === 'folders' ? '检查文件夹 '
+            : ev.phase === 'deep' ? '深度探测（ffmpeg 逐首解码）'
+            : '校验文件 ') + ev.done + '/' + ev.total;
+        } else if (ev.type === 'end') {
+          if (hcOff) { try { hcOff(); } catch (e) { } hcOff = null; }
+          hcBusy = false; hcBtn.textContent = '开始体检';
+          if (ev.canceled) { hcReportBox.innerHTML = ''; hcReportBox.appendChild(el('div', 'set-hc-desc', '体检已取消')); return; }
+          if (ev.error) { hcReportBox.innerHTML = ''; hcReportBox.appendChild(el('div', 'set-hc-desc', '体检出错：' + ev.error)); return; }
+          hcRenderReport(ev.report);
+        }
+      });
+      window.mine.healthScan({ deep: hcDeepCb.checked }).catch(function () {
+        hcBusy = false; hcBtn.textContent = '开始体检';
+        hcReportBox.innerHTML = '';
+        hcReportBox.appendChild(el('div', 'set-hc-desc', '体检启动失败'));
+      });
+    }
+    hcBtn.onclick = function () {
+      if (hcBusy) { window.mine.healthCancel(); return; }
+      hcStart();
     };
-    bakWrap.appendChild(bakExp); bakWrap.appendChild(bakImp);
+
+    // —— 备份与迁移 2.0（V4.3.19 初版；V4.4.2 Slice B：分内容导出 + 导入向导「摘要 → 模式与内容」）——
+    var bakRow = markItem(el('div', 'set-row'), '配置备份 曲库备份 导出备份 导入备份 换机 迁移 backup 合并');
+    var bakLab = el('div'); bakLab.appendChild(el('div', '', '曲库备份与迁移'));
+    bakLab.appendChild(el('div', 'set-hint', '设置/歌单/收藏/收听统计/分析数据可按需勾选导出；导入先看摘要再选覆盖或合并，全程可回退（自动留 .bak）'));
+    var bakWrap = el('div', 'set-ctrl');
+    var bakExpBtn = el('button', 'btn-ghost', '导出备份…');
+    var bakImpBtn = el('button', 'btn-ghost', '导入备份…');
+    bakWrap.appendChild(bakExpBtn); bakWrap.appendChild(bakImpBtn);
     bakRow.appendChild(bakLab); bakRow.appendChild(bakWrap);
     sFk.appendChild(bakRow);
+    var bakExpPanel = el('div', 'set-hc-card hidden');
+    var bakImpPanel = el('div', 'set-hc-card hidden');
+    sFk.appendChild(bakExpPanel);
+    sFk.appendChild(bakImpPanel);
+
+    var BK_SECTIONS = [
+      ['settings', '设置', '界面偏好 / 音频输出 / 快捷键等全部设置键'],
+      ['folders', '媒体库文件夹', '媒体库文件夹列表（不含曲目索引，导入后重扫重建）'],
+      ['playlists', '自建歌单', '本地歌单及曲目路径引用'],
+      ['streamPlaylists', '在线歌单', '流媒体歌单（含曲目快照，跨机直接可用）'],
+      ['favorites', '收藏', '收藏的歌曲路径列表'],
+      ['stats', '收听统计', '每首播放次数/时长 + 听歌报告（本机统计数据）'],
+      ['analysis', '分析数据', '响度 / BPM / 标签摘要等，换机可免重算（体积较大，默认不勾）']
+    ];
+    function bkFmtBytes(n) {
+      n = Number(n) || 0;
+      if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+      if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+      return n + ' B';
+    }
+    function bkGetListenStats() {
+      try { return JSON.parse(localStorage.getItem('annieplayer.listenstats.v1') || 'null'); } catch (e) { return null; }
+    }
+
+    /* ---- 导出面板：勾选内容（显示各项条数与预估大小） ---- */
+    function bkOpenExport() {
+      bakImpPanel.classList.add('hidden');
+      bakExpPanel.classList.remove('hidden');
+      bakExpPanel.innerHTML = '';
+      bakExpPanel.appendChild(el('div', 'set-hc-title', '选择要导出的内容'));
+      var listBox = el('div', 'set-hc-items');
+      listBox.style.maxHeight = 'none';
+      bakExpPanel.appendChild(listBox);
+      var statusLine = el('div', 'set-hc-desc', '正在统计各项大小…');
+      bakExpPanel.appendChild(statusLine);
+      var actRow = el('div', 'set-hc-actions');
+      var doBtn = el('button', 'btn-ghost', '导出');
+      var cancelBtn = el('button', 'btn-ghost', '取消');
+      actRow.appendChild(doBtn); actRow.appendChild(cancelBtn);
+      bakExpPanel.appendChild(actRow);
+      cancelBtn.onclick = function () { bakExpPanel.classList.add('hidden'); };
+      var cbs = {};
+      BK_SECTIONS.forEach(function (s) {
+        var lab = el('label', 'set-hc-item');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = s[0] !== 'analysis'; // 决策：分析数据默认不勾，保持备份几十 KB
+        cbs[s[0]] = cb;
+        lab.appendChild(cb);
+        lab.appendChild(el('span', 'set-hc-name', s[1]));
+        var meta = el('span', 'set-hc-dir', s[2]);
+        meta.dataset.role = 'meta';
+        lab.appendChild(meta);
+        listBox.appendChild(lab);
+      });
+      doBtn.onclick = function () {
+        var sections = BK_SECTIONS.filter(function (s) { return cbs[s[0]].checked; }).map(function (s) { return s[0]; });
+        if (!sections.length) { statusLine.textContent = '请至少勾选一项内容'; return; }
+        doBtn.disabled = true; statusLine.textContent = '正在导出…';
+        window.mine.backupExport({ sections: sections, listenStats: bkGetListenStats() }).then(function (r) {
+          doBtn.disabled = false;
+          if (r && r.ok) {
+            statusLine.textContent = '已导出（' + bkFmtBytes(r.bytes) + '）：' + r.path;
+            bakExpPanel.classList.add('hidden');
+            try { if (typeof proToast === 'function') proToast('备份已导出'); } catch (e) { }
+          }
+          else statusLine.textContent = (r && r.reason === 'canceled') ? '已取消' : ('导出失败：' + ((r && r.reason) || '未知错误'));
+        }).catch(function () { doBtn.disabled = false; statusLine.textContent = '导出失败'; });
+      };
+      window.mine.backupEstimate(bkGetListenStats()).then(function (est) {
+        est = est || {};
+        var totalSel = 0;
+        BK_SECTIONS.forEach(function (s) {
+          var e = est[s[0]];
+          var meta = listBox.children[BK_SECTIONS.indexOf(s)].querySelector('[data-role=meta]');
+          var cnt = e ? e.count : 0;
+          var bytes = e ? e.bytes : 0;
+          meta.textContent = s[2] + '　·　' + (s[0] === 'listenStats' ? '' : (cnt + ' 项 · ')) + bkFmtBytes(bytes);
+          meta.dataset.bytes = bytes;
+          if (cbs[s[0]].checked) totalSel += bytes;
+        });
+        var updTotal = function () {
+          var t = 0;
+          BK_SECTIONS.forEach(function (s) { if (cbs[s[0]].checked) t += Number(listBox.children[BK_SECTIONS.indexOf(s)].querySelector('[data-role=meta]').dataset.bytes) || 0; });
+          statusLine.textContent = '预计备份大小约 ' + bkFmtBytes(t) + '（不含曲目文件本体与封面图）';
+        };
+        BK_SECTIONS.forEach(function (s) { cbs[s[0]].onchange = updTotal; });
+        updTotal();
+      }).catch(function () { statusLine.textContent = '（大小预估失败，不影响导出）'; });
+    }
+    bakExpBtn.onclick = function () {
+      if (bakExpPanel.classList.contains('hidden')) bkOpenExport();
+      else bakExpPanel.classList.add('hidden');
+    };
+
+    /* ---- 导入向导：第 1 步摘要 → 第 2 步路径重映射（Slice C）→ 第 3 步模式与内容 ---- */
+    var bkImp = { summary: null, rootMap: {}, smartMatch: true };
+    function bkImpClose() { bakImpPanel.classList.add('hidden'); bakImpPanel.innerHTML = ''; bkImp.summary = null; bkImp.rootMap = {}; bkImp.smartMatch = true; }
+    // 第 1 步摘要渲染（初次与「上一步」返回共用）
+    function bkRenderSummary(r, onNext) {
+      bakImpPanel.innerHTML = '';
+      bakImpPanel.appendChild(el('div', 'set-hc-title', '导入备份 · 第 1 步：文件摘要'));
+      var c = r.counts || {};
+      var lines = [
+        '文件：' + r.path,
+        '版本：' + (r.ver ? 'V' + r.ver : '未知') + '（备份格式 v' + r.schemaVersion + '）　导出时间：' + (r.time ? new Date(r.time).toLocaleString() : '未知') + '　大小：' + bkFmtBytes(r.fileBytes),
+        '内容：设置 ' + (c.settings || 0) + ' 键 · 媒体库文件夹 ' + (c.folders || 0) + ' · 自建歌单 ' + (c.playlists || 0) +
+          ' · 在线歌单 ' + (c.streamPlaylists || 0) + ' · 收藏 ' + (c.favorites || 0) + ' · 统计 ' + (c.stats || 0) +
+          ' · 分析数据 ' + (c.analysis || 0) + (c.listenStats ? ' · 含听歌报告' : '')
+      ];
+      if (r.roots && r.roots.length) lines.push('备份中的媒体库根：' + r.roots.slice(0, 5).join('；') + (r.roots.length > 5 ? ' 等 ' + r.roots.length + ' 个' : ''));
+      lines.forEach(function (t) { bakImpPanel.appendChild(el('div', 'set-hc-desc', t)); });
+      if (r.schemaVersion < 2) bakImpPanel.appendChild(el('div', 'set-hc-desc', '（旧版备份文件：以兼容模式导入，不含分析数据）'));
+      var act = el('div', 'set-hc-actions');
+      var nextB = el('button', 'btn-ghost', '下一步');
+      var cancelB = el('button', 'btn-ghost', '取消');
+      nextB.onclick = onNext;
+      cancelB.onclick = bkImpClose;
+      act.appendChild(nextB); act.appendChild(cancelB);
+      bakImpPanel.appendChild(act);
+    }
+    function bkImpStep1() {
+      bakImpPanel.innerHTML = '';
+      bakImpPanel.appendChild(el('div', 'set-hc-title', '导入备份 · 第 1 步：文件摘要'));
+      bakImpPanel.appendChild(el('div', 'set-hc-desc', '正在读取备份文件…'));
+      window.mine.backupPickInspect().then(function (r) {
+        if (!r || !r.ok) {
+          if (r && r.reason === 'canceled') { bkImpClose(); return; }
+          bakImpPanel.innerHTML = '';
+          bakImpPanel.appendChild(el('div', 'set-hc-title', '导入备份'));
+          bakImpPanel.appendChild(el('div', 'set-hc-desc', '无法导入：' + ((r && r.reason) || '未知错误')));
+          var closeB = el('button', 'btn-ghost', '关闭');
+          closeB.onclick = bkImpClose;
+          bakImpPanel.appendChild(closeB);
+          return;
+        }
+        bkImp.summary = r;
+        bkRenderSummary(r, bkImpStep2);
+      }).catch(function () { bkImpClose(); });
+    }
+    /* 第 2 步：路径重映射（Slice C）——逐根显示本机可达性，不可达的选本机文件夹映射，实时预估匹配数 */
+    function bkImpStep2() {
+      var r = bkImp.summary;
+      if (!r) return bkImpClose();
+      bakImpPanel.innerHTML = '';
+      bakImpPanel.appendChild(el('div', 'set-hc-title', '导入备份 · 第 2 步：路径重映射'));
+      var rootBox = el('div', 'set-hc-items'); rootBox.style.maxHeight = 'none';
+      var estLine = el('div', 'set-hc-desc', '正在检查备份中的路径…');
+      var smartRow = el('label', 'set-hc-item');
+      var smartCb = document.createElement('input');
+      smartCb.type = 'checkbox'; smartCb.checked = bkImp.smartMatch !== false;
+      smartCb.onchange = function () { bkImp.smartMatch = smartCb.checked; };
+      smartRow.appendChild(smartCb);
+      smartRow.appendChild(el('span', 'set-hc-name', '启用智能匹配兜底'));
+      smartRow.appendChild(el('span', 'set-hc-dir', '重启后按 文件名/大小/时长/标签 再匹配一轮前缀没对上的'));
+      var act = el('div', 'set-hc-actions');
+      var backB = el('button', 'btn-ghost', '上一步');
+      var nextB = el('button', 'btn-ghost', '下一步');
+      var cancelB = el('button', 'btn-ghost', '取消');
+      backB.onclick = function () { bkRenderSummary(bkImp.summary, bkImpStep2); };
+      nextB.onclick = bkImpStep3;
+      cancelB.onclick = bkImpClose;
+      bakImpPanel.appendChild(rootBox);
+      bakImpPanel.appendChild(estLine);
+      bakImpPanel.appendChild(smartRow);
+      act.appendChild(backB); act.appendChild(nextB); act.appendChild(cancelB);
+      bakImpPanel.appendChild(act);
+      function refresh() {
+        window.mine.backupRootCheck({ path: r.path, rootMap: bkImp.rootMap }).then(function (rc) {
+          if (!rc || !rc.ok) { estLine.textContent = '路径检查失败：' + ((rc && rc.reason) || '未知错误'); return; }
+          rootBox.innerHTML = '';
+          rc.roots.forEach(function (rt) {
+            var row = el('div', 'set-hc-item plain');
+            var okNow = rt.exists || rt.mappedExists;
+            row.appendChild(el('span', 'set-hc-tag ' + (okNow ? 'ok' : 'bad'), rt.exists ? '本机存在' : (rt.mappedExists ? '已映射 ✓' : '本机不存在')));
+            var nameEl = el('span', 'set-hc-name', rt.root);
+            nameEl.style.direction = 'ltr';
+            row.appendChild(nameEl);
+            if (rt.mapped) row.appendChild(el('span', 'set-hc-dir', '→ ' + rt.mapped));
+            rootBox.appendChild(row);
+            if (!rt.exists) {
+              var btnRow = el('div', 'set-hc-actions'); btnRow.style.margin = '0 0 4px 26px';
+              var pickB = el('button', 'btn-ghost', rt.mapped ? '重新选择…' : '选择本机对应文件夹…');
+              pickB.onclick = function () {
+                pickB.disabled = true;
+                window.mine.backupPickDir().then(function (dir) {
+                  pickB.disabled = false;
+                  if (!dir) return;
+                  bkImp.rootMap[rt.root] = dir;
+                  refresh();
+                }).catch(function () { pickB.disabled = false; });
+              };
+              btnRow.appendChild(pickB);
+              if (rt.mapped) {
+                var clearB = el('button', 'btn-ghost', '清除映射');
+                clearB.onclick = function () { delete bkImp.rootMap[rt.root]; refresh(); };
+                btnRow.appendChild(clearB);
+              }
+              rootBox.appendChild(btnRow);
+            }
+          });
+          estLine.textContent = rc.total
+            ? ('预计匹配 ' + rc.matched + ' / ' + rc.total + ' 首（前缀直配' + (bkImp.smartMatch !== false ? '，其余重启后智能兜底' : '') + '）')
+            : '备份中没有可校验的路径';
+        }).catch(function () { estLine.textContent = '路径检查失败'; });
+      }
+      refresh();
+    }
+    function bkImpStep3() {
+      var r = bkImp.summary;
+      if (!r) return bkImpClose();
+      bakImpPanel.innerHTML = '';
+      bakImpPanel.appendChild(el('div', 'set-hc-title', '导入备份 · 第 3 步：模式与内容'));
+      // 模式选择
+      var modeBox = el('div', 'set-hc-items'); modeBox.style.maxHeight = 'none';
+      var mode = 'overwrite';
+      [['overwrite', '覆盖模式', '用备份内容替换本机对应数据（现有配置自动留 .bak 兜底，tracks 索引不动）'],
+       ['merge', '合并模式', '歌单同名合并曲目并集、收藏/文件夹取并集、统计相加、设置只补缺省键']].forEach(function (m) {
+        var lab = el('label', 'set-hc-item');
+        var rb = document.createElement('input');
+        rb.type = 'radio'; rb.name = 'bk-mode'; rb.checked = m[0] === 'overwrite';
+        rb.onchange = function () { mode = m[0]; };
+        lab.appendChild(rb);
+        lab.appendChild(el('span', 'set-hc-name', m[1]));
+        lab.appendChild(el('span', 'set-hc-dir', m[2]));
+        modeBox.appendChild(lab);
+      });
+      bakImpPanel.appendChild(modeBox);
+      // 内容勾选（只列出备份里实际存在的分区）
+      bakImpPanel.appendChild(el('div', 'set-hc-sub', '导入内容'));
+      var cntBox = el('div', 'set-hc-items'); cntBox.style.maxHeight = 'none';
+      var c = r.counts || {};
+      var cbs = {};
+      BK_SECTIONS.forEach(function (s) {
+        if (!c[s[0]]) return;
+        var lab = el('label', 'set-hc-item');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        cbs[s[0]] = cb;
+        lab.appendChild(cb);
+        lab.appendChild(el('span', 'set-hc-name', s[1]));
+        lab.appendChild(el('span', 'set-hc-dir', c[s[0]] + ' 项'));
+        cntBox.appendChild(lab);
+      });
+      bakImpPanel.appendChild(cntBox);
+      var statusLine = el('div', 'set-hc-desc', '');
+      bakImpPanel.appendChild(statusLine);
+      var act = el('div', 'set-hc-actions');
+      var backB = el('button', 'btn-ghost', '上一步');
+      var doB = el('button', 'btn-ghost', '导入并重启');
+      var cancelB = el('button', 'btn-ghost', '取消');
+      backB.onclick = bkImpStep2;
+      cancelB.onclick = bkImpClose;
+      doB.onclick = function () {
+        var sections = Object.keys(cbs).filter(function (k) { return cbs[k].checked; });
+        if (!sections.length) { statusLine.textContent = '请至少勾选一项内容'; return; }
+        var nMap = Object.keys(bkImp.rootMap || {}).length;
+        var tip = mode === 'overwrite'
+          ? '覆盖模式：备份内容将替换本机的设置/歌单/收藏/统计（现有配置自动留 .bak 兜底），导入后应用自动重启。继续？'
+          : '合并模式：备份内容将与本机数据合并（歌单同名合并、收藏取并集、统计相加），导入后应用自动重启。继续？';
+        if (nMap) tip += '\n已配置 ' + nMap + ' 个路径映射，导入时会同步改写。';
+        if (!confirm(tip)) return;
+        doB.disabled = true; statusLine.textContent = '正在导入…';
+        window.mine.backupApply({
+          path: r.path, mode: mode, sections: sections,
+          rootMap: bkImp.rootMap, smartMatch: bkImp.smartMatch !== false
+        }).then(function (res) {
+          if (!res || !res.ok) {
+            doB.disabled = false;
+            statusLine.textContent = '导入失败：' + ((res && res.reason) || '未知错误');
+            return;
+          }
+          // 听歌报告（渲染层 localStorage）：覆盖模式直接写入；合并模式本机已有报告则保留本机
+          if (res.listenStats) {
+            try {
+              var cur = localStorage.getItem('annieplayer.listenstats.v1');
+              if (mode === 'overwrite' || !cur) localStorage.setItem('annieplayer.listenstats.v1', JSON.stringify(res.listenStats));
+            } catch (e) { }
+          }
+          statusLine.textContent = '导入完成' +
+            (res.remapped ? '，已按映射改写 ' + res.remapped + ' 条路径' : '') +
+            (res.needsRescan ? '，重启后将自动重建曲库索引并做二次匹配' : '') + '，正在重启…';
+          setTimeout(function () { window.mine.relaunchApp(); }, 800);
+        }).catch(function () { doB.disabled = false; statusLine.textContent = '导入失败'; });
+      };
+      act.appendChild(backB); act.appendChild(doB); act.appendChild(cancelB);
+      bakImpPanel.appendChild(act);
+    }
+    bakImpBtn.onclick = function () {
+      if (!bakImpPanel.classList.contains('hidden')) { bkImpClose(); return; }
+      bakExpPanel.classList.add('hidden');
+      bakImpPanel.classList.remove('hidden');
+      bkImpStep1();
+    };
 
     // —— 诊断信息导出（Pro beat0.0.1：崩溃报障用） ——
     var diagRow = markItem(el('div', 'set-row'), '导出诊断信息 报障 日志 zip 崩溃');

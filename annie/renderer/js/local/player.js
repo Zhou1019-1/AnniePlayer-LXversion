@@ -1815,6 +1815,48 @@ window.addEventListener('keydown', (e) => {
     if (st && st.startupFailure) showEngineBanner(st.startupFailure);
   } catch { }
   await loadLibrary();
+  // V4.4.2 Slice B：备份导入后曲库为空（换机/重装场景）→ 自动重扫一次重建索引
+  try {
+    if (state.library && state.library._pendingRescan) {
+      window.mine.saveSettings({ _pendingRescan: null });
+      proToast('正在按导入的媒体库文件夹重建曲库索引…', 6000);
+      window.mine.scanStart();
+    }
+  } catch { }
+  /* V4.4.2 Slice C：备份迁移二次匹配——曲库就绪（有索引直接跑/空库等扫描完成）后
+   * 对歌单/收藏/统计/metaCache 中的死路径跑五级匹配，结果条 + 未匹配清单可导出 */
+  try {
+    if (state.library && state.library._pendingMigration) {
+      const runRematch = () => {
+        window.mine.backupRematch().then(r => {
+          if (!r || !r.ok) return;
+          if (r.total === 0) { proToast('迁移完成：所有引用路径均已可用 ✓', 5000); return; }
+          proToast('迁移完成：已恢复 ' + r.restored + '/' + r.total + ' 条引用' +
+            (r.missing && r.missing.length ? '，' + r.missing.length + ' 条未匹配' : ''), 8000);
+          if (r.missing && r.missing.length) {
+            // 未匹配清单可导出存档
+            setTimeout(() => {
+              if (confirm('有 ' + r.missing.length + ' 条引用在新曲库中未匹配到。\n是否导出未匹配清单（JSON）存档？')) {
+                window.mine.healthSaveJson('annie-migration-missing-' + new Date().toISOString().slice(0, 10) + '.json', r.missing)
+                  .then(x => { if (x && x.ok) proToast('未匹配清单已导出'); }).catch(() => { });
+              }
+            }, 900);
+          }
+        }).catch(() => { });
+      };
+      if ((state.library.tracks || []).length) {
+        runRematch(); // 曲库已有索引（同机/合并模式）直接匹配
+      } else {
+        // 空库：等扫描完成再匹配（_pendingRescan 已触发扫描；没触发则补触发）
+        let done = false;
+        const off = window.mine.onScanEvent(m => {
+          if (done) return;
+          if (m.type === 'done' || m.type === 'cancelled' || m.type === 'error') { done = true; off(); runRematch(); }
+        });
+        if (!state.library._pendingRescan) window.mine.scanStart();
+      }
+    }
+  } catch { }
   // 恢复设置面板偏好（视觉/歌词/界面/排序/侧栏/视图模式）
   if (window.annieSettings) {
     annieSettings.hydrate(state.library.ui);

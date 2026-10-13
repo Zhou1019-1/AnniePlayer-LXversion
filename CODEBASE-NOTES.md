@@ -309,6 +309,15 @@
 
 ## 七、媒体库体检 & 备份迁移（V4.4.2 起；计划见 `媒体库体检与备份迁移-实现计划.md`）
 
+> **状态：V4.4.2 已发布**（2026-10-13，tag v4.4.2，release #49 成功；本地包 setupEXE\annie-player-svlx-setup-4.4.2.exe 引擎 72.5MB 自包含门禁通过）。
+
+### 本次发版教训（V4.4.2 过程沉淀，后续 agent 必读）
+- **主进程模块顶层不得 `require('electron')`**：CI 的纯 Node 测试（ci.yml 无 `npm ci` 步骤，与 release.yml 不同）会 MODULE_NOT_FOUND 红叉。V4.4.1 的 `engine-client-test.js` 因此连红两次（V4.4.1/V4.4.2 首发 CI 都挂），V4.4.2 补 commit 把 engineClient.js 改成惰性加载（`electronApp()/electronBrowserWindow()` 函数内 require）。**新写主进程模块若需跑纯 Node 单测，顶层只引 Node 内置模块；healthCheck.js/backup.js/trackMatcher.js 均遵守此规**。
+- **ci.yml 与 release.yml 的依赖准备不对称**：release.yml 有 `npm ci`，ci.yml 没有（图快）。往 ci.yml 加测试步骤时先确认该测试链路不碰 node_modules 里的包。
+- **改完 Electron 主进程/preload 的验证纪律**：渲染层 Ctrl+R 即生效，主进程/preload 必须退出重开；涉及 ffmpeg 写标签必须 dev 真实落盘验证（AGENTS 规范 5 旧账）。
+- **续播弹窗（V4.4.2 行为变更）**：恢复点 localStorage `annieplayer.resume.v1/pos`，弹窗在 am-render.js `showResumePrompt`，流媒体恢复点冗余 title/artist 字段（防 URL 文件名直接上屏）。
+- **彩胶外观双写**：localStorage 主写 + `store.vinylCfg` 镜像（800ms 防抖 saveSettings），启动 `vinylSeedFromStore()` 只回填缺失键；「恢复默认」须先 persistVinylCfg 再 applyVinylStyle（否则种子回填旧值）。
+
 ### Slice A：体检 P0（H1-H9）✅ 已落代码（待 dev 真机验证）
 - **主进程模块** `annie/main/healthCheck.js`（无 Electron 依赖，仅 fs/path，可纯 Node 单测）：导出 `start(win, store)` / `cancel()` / `getLastReport()` / `fix(store,payload)` / `undo(store)` / `ITEM_CAP=500`。
 - **扫描**：汇总 tracks+playlists.paths+favorites 的真实路径（CUE/ISO 虚拟轨剥 `#cueN/#isoN` 后缀按容器去重，`containerOf()`）→ `fs.statSync` 每 200 个 setImmediate 一拍可取消；文件夹判可达性时盘根（`path.parse(f).root`）stat 失败=offline（盘未插/网络盘断，不提供修复），盘根在而目录不在=missing（可移除）。

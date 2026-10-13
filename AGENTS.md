@@ -63,6 +63,11 @@
 - **实时更新是硬义务**：阅览/修改代码时发现新事实、结构变化、接口契约，**顺手写回知识库**（追加到对应分区或新建分区）；发现过时内容直接改，别堆叠。「🔍待验证」落实后改「✅」并补行号。
 - 与 AGENTS.md 分工：本文件管「规范与流程」，知识库管「代码事实」。知识库随仓库走 git 提交（别进杂物目录）。
 
+### 12. 主进程模块的依赖纪律（V4.4.2 CI 事故）
+- **主进程模块顶层禁止 `require('electron')`**——ci.yml 的纯 Node 测试（如 `engine-client-test.js`）没有 `npm ci`，顶层引用会直接 MODULE_NOT_FOUND 红叉。
+- 需要 electron API 时用**惰性加载**（函数内 require，参考 engineClient.js 的 `electronApp()/electronBrowserWindow()`）。
+- ci.yml 与 release.yml 依赖准备不对称：release.yml 有 `npm ci`，ci.yml 没有。**往 ci.yml 加测试步骤前，先确认被测链路不碰 node_modules 里的包**。
+
 ## 三、发版规范（每次发版必须七步走全，本地+在线同步）
 
 1. **package.json**：升版本号 + 补 `changelog` 条目（应用内「本版新变化」弹窗读取）。

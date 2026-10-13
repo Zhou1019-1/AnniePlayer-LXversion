@@ -7,7 +7,11 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const { StringDecoder } = require('string_decoder');
-const { app, BrowserWindow } = require('electron');
+/* V4.4.2：electron 改惰性加载——CI 的 engine-client-test.js 在纯 Node 环境跑（无 npm ci），
+ * 顶层 require('electron') 会让测试直接 MODULE_NOT_FOUND（V4.4.1 CI 红叉根因） */
+let _electron = null;
+function electronApp() { if (!_electron) _electron = require('electron'); return _electron.app; }
+function electronBrowserWindow() { if (!_electron) _electron = require('electron'); return _electron.BrowserWindow; }
 
 function classifyStartupFailure(code, text) {
   const message = String(text || '');
@@ -24,7 +28,7 @@ function resolveEnginePath() {
   const dev = path.join(__dirname, '..', 'engine', 'publish', 'AnnieEngine.exe');
   // LXversion 仓库布局：annie/main → <repo>/engine/publish
   const devRoot = path.join(__dirname, '..', '..', 'engine', 'publish', 'AnnieEngine.exe');
-  if (app.isPackaged && fs.existsSync(prod)) return prod;
+  if (electronApp().isPackaged && fs.existsSync(prod)) return prod;
   if (fs.existsSync(dev)) return dev;
   if (fs.existsSync(devRoot)) return devRoot;
   if (fs.existsSync(prod)) return prod;
@@ -270,7 +274,7 @@ class EngineClient {
 
   _broadcast(event, data) {
     const filter = this.eventFilter;
-    for (const win of BrowserWindow.getAllWindows()) {
+    for (const win of electronBrowserWindow().getAllWindows()) {
       try {
         if (filter && !filter(win, event)) continue;
         win.webContents.send('engine-event', { event, data });

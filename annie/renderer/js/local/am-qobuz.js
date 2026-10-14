@@ -18,6 +18,8 @@
     kw: '', type: 'album',   // album | track | playlist
     results: [], busy: false, err: '',
     detail: null,    // { kind:'album'|'playlist', id, info, tracks }
+    playQueue: [],   // V4.4.3：连播队列 [{t, album}]（专辑/歌单/搜索列表即队列）
+    playIndex: -1,
   };
 
   function quality() { var q = parseInt(localStorage.getItem('annie.qz.q') || '4', 10); return q >= 1 && q <= 4 ? q : 4; }
@@ -73,8 +75,16 @@
       else if (ev.phase === 'fail') { d.fail = ev.stat.fail; console.warn('[qobuz] 下载失败:', ev.title, ev.error); }
       else if (ev.phase === 'end') {
         d.running = false; d.current = '';
-        d.summary = '下载' + (ev.canceled ? '已取消' : '完成') + '：成功 ' + ev.stat.done + '，跳过 ' + ev.stat.skip + '，失败 ' + ev.stat.fail;
-        refresh(); return;
+        var f = ev.fill || {};
+        var doneN = (ev.stat.done || 0) + (ev.stat.skip || 0); // 跳过（已存在）的也跑了标签/歌词补全
+        d.summary = '下载' + (ev.canceled ? '已取消' : '完成') + '：成功 ' + ev.stat.done + '，跳过 ' + ev.stat.skip + '，失败 ' + ev.stat.fail +
+          (doneN ? '；标签 ' + (f.tagged || 0) + '/' + doneN + '，歌词 ' + (f.lyric || 0) + '/' + doneN : '');
+        refresh();
+        // V4.4.3：歌词补全失败统一提醒一次（LRCLIB+国内五源都没有的情况），不逐曲打扰
+        if (!ev.canceled && f.lyricMiss > 0) {
+          toast('歌词补全：' + doneN + ' 首中 ' + f.lyricMiss + ' 首 LRCLIB 与国内平台均未找到匹配歌词，已跳过');
+        }
+        return;
       }
       // 高频段（trackBegin/progress/done/skip/fail）：状态条在位则直改，不在位才重绘
       if (QZ._dlLine && document.contains(QZ._dlLine)) {
@@ -93,8 +103,20 @@
     return d.summary;
   }
 
-  /* ---------------- 播放 ---------------- */
-  function playTrack(t, album) {
+  /* ---------------- 播放（V4.4.3：连播队列——此前单曲直连无队列，ended 后静默停在曲尾） ---------------- */
+  /* playTrack(t, album, queue, index)：queue 传当前列表即建立连播上下文；队列内续播每首现签 URL（时效安全） */
+  function playTrack(t, album, queue, index) {
+    if (queue && queue.length) {
+      QZ.playQueue = queue.map(function (x) { return { t: x, album: album || null }; });
+      QZ.playIndex = index || 0;
+    } else {
+      QZ.playQueue = [{ t: t, album: album || null }];
+      QZ.playIndex = 0;
+    }
+    patchQobuzTransport();
+    doPlay(t, album);
+  }
+  function doPlay(t, album) {
     QZ.err = '';
     window.mine.qobuzFileUrl({ trackId: String(t.id), quality: quality() }).then(function (f) {
       if (!f || !f.url) { QZ.err = '未取到播放地址'; refresh(); return; }
@@ -110,9 +132,53 @@
         duration: t.duration || 0,
         provider: 'Qobuz',
         quality: 'Qobuz ' + (f.bit_depth || '?') + 'bit/' + (f.sampling_rate || '?') + 'kHz',
-        onPlayed: function () { fetchLyric(t, album); }, // Qobuz 无歌词 API：播放确认后五源兜底匹配
+        qid: String(t.id), // V4.4.3：连播守卫身份（playNext 包装按 qid 比对队列当前项）
+        onPlayed: function () { fetchLyric(t, album); }, // Qobuz 无歌词 API：播放确认后 LRCLIB→五源兜底匹配
       });
     }).catch(function (e) { setErr(e); refresh(); });
+  }
+
+  /* V4.4.3：Qobuz 连播——包装 annieStream.playNext/playPrev（ended 事件/底部传输栏走这里）
+   * 与 AM.nextStream/prevStream（AM 底栏走 AM 桥）。守卫 provider==='Qobuz' + qid 身份比对，
+   * 不命中交还原实现（洛雪/本地不受影响）。首次播放时包装，确保在 am-stream 补丁之后的最外层。 */
+  function patchQobuzTransport() {
+    if (QZ._tpPatched) return;
+    QZ._tpPatched = true;
+    function curOk() {
+      var cs = (typeof state !== 'undefined') && state.currentStream;
+      var cur = QZ.playQueue[QZ.playIndex];
+      return !!(cs && cs.provider === 'Qobuz' && cs.qid && cur && String(cur.t.id) === cs.qid);
+    }
+    function qzPlay(i) {
+      var e = QZ.playQueue[i];
+      if (!e) return;
+      QZ.playIndex = i;
+      doPlay(e.t, e.album);
+    }
+    function qzNext() {
+      var n = QZ.playQueue.length;
+      if (!n) return;
+      var m = window.anniePlayMode ? window.anniePlayMode.get() : 'list-seq';
+      if (m === 'repeat-one') { qzPlay(QZ.playIndex); return; }
+      if (m === 'list-rand' || m === 'all-rand') {
+        if (n > 1) { var ri; do { ri = Math.floor(Math.random() * n); } while (ri === QZ.playIndex); qzPlay(ri); }
+        else qzPlay(QZ.playIndex);
+        return;
+      }
+      if (QZ.playIndex < n - 1) qzPlay(QZ.playIndex + 1); // 播完队列自然停止（同洛雪在线列表语义）
+    }
+    function qzPrev() {
+      if (S.pos > 3 && AM.seek) { AM.seek(0); return; }
+      if (QZ.playIndex > 0) qzPlay(QZ.playIndex - 1);
+    }
+    if (window.annieStream && window.annieStream.playNext) {
+      var origNext = window.annieStream.playNext, origPrev = window.annieStream.playPrev;
+      window.annieStream.playNext = function () { if (curOk()) qzNext(); else if (origNext) origNext(); };
+      if (origPrev) window.annieStream.playPrev = function () { if (curOk()) qzPrev(); else origPrev(); };
+    }
+    var origAmNext = AM.nextStream, origAmPrev = AM.prevStream;
+    if (origAmNext) AM.nextStream = function () { if (curOk()) return qzNext(); return origAmNext.apply(this, arguments); };
+    if (origAmPrev) AM.prevStream = function () { if (curOk()) return qzPrev(); return origAmPrev.apply(this, arguments); };
   }
 
   /* 歌词兜底匹配：注入流媒体歌词缓存 + 广播事件（同 am-stream.js playStreamAt 的注入点） */
@@ -221,7 +287,7 @@
     var tb = el('table', 'am-table');
     tb.innerHTML = '<thead><tr><th style="width:40px;text-align:right">#</th><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th style="width:56px;text-align:right">时长</th><th style="width:44px"></th></tr></thead>';
     var body = el('tbody');
-    tracks.forEach(function (t) {
+    tracks.forEach(function (t, ti) {
       var tr = el('tr', 'am-tr');
       var tdN = el('td', 'am-c-dim', String(t.track_number || '')); tdN.style.textAlign = 'right'; tr.appendChild(tdN);
       var tdCover = el('td');
@@ -239,10 +305,11 @@
         e.stopPropagation();
         var item = Object.assign({}, t);
         if (album && !item.albumTitle) { item.albumTitle = album.title; item.albumArtist = (album.artist && album.artist.name) || ''; }
+        if (!item.coverUrl) item.coverUrl = csrc || ''; // V4.4.3：封面随下载项走（主进程嵌标签用）
         startDownload([item]);
       };
       tdDl.appendChild(bDl); tr.appendChild(tdDl);
-      tr.onclick = function () { playTrack(t, album); };
+      tr.onclick = function () { playTrack(t, album, tracks, ti); }; // V4.4.3：整表即连播队列
       body.appendChild(tr);
     });
     tb.appendChild(body);
@@ -260,9 +327,17 @@
     if (d.tracks.length) {
       var bAll = el('button', 'am-btn', '⬇ 下载全部（' + d.tracks.length + ' 首）');
       bAll.onclick = function () {
+        var dCover = d.kind === 'album' ? imgOf(d.info)
+          : ((d.info.images300 && d.info.images300[0]) || (d.info.images && d.info.images[0]) || '');
         startDownload(d.tracks.map(function (t) {
           var item = Object.assign({}, t);
-          if (d.kind === 'album') { item.albumTitle = d.info.title; item.albumArtist = (d.info.artist && d.info.artist.name) || ''; }
+          if (d.kind === 'album') {
+            item.albumTitle = d.info.title; item.albumArtist = (d.info.artist && d.info.artist.name) || '';
+            item.genre = (d.info.genre && d.info.genre.name) || '';       // V4.4.3：流派
+            item.publisher = (d.info.label && d.info.label.name) || '';   // V4.4.3：厂牌
+            if (d.info.release_date_original) item.releaseDate = String(d.info.release_date_original).slice(0, 10);
+          }
+          if (!item.coverUrl) item.coverUrl = dCover; // V4.4.3：封面随下载项走（主进程嵌标签用）
           return item;
         }));
       };

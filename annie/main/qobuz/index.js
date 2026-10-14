@@ -6,6 +6,8 @@
 const { ipcMain, safeStorage, dialog, BrowserWindow, net } = require('electron');
 const api = require('./api');
 const dl = require('./download');
+const tagWriter = require('../tagWriter'); // V4.4.3：下载后写标签/封面/旁挂歌词（与洛雪下载链同一实现）
+const extMeta = require('../extMeta');     // V4.4.3：LRCLIB 歌词优先源（欧美曲库命中率高于国内五源）
 const streaming = require('../streaming'); // Qobuz 无歌词 API：借 LX 五源按标题+艺人兜底匹配；下载目录复用其 downloadDir
 
 /* V4.3.22 修复：Qobuz 统一走 net.fetch —— 自动跟随 Windows 系统代理
@@ -139,23 +141,37 @@ function parseUrlInput(text) {
   return null;
 }
 
-/** 解析为可下载曲目清单：{ kind, title, sub, tracks }（tracks 已附 albumTitle/albumArtist 供子目录命名） */
+/* 专辑/曲目/歌单对象上的封面 URL（Qobuz image 对象：large > small > thumbnail） */
+function coverUrlOf(obj) {
+  const img = obj && obj.image;
+  return (img && (img.large || img.small || img.thumbnail)) || '';
+}
+
+/** 解析为可下载曲目清单：{ kind, title, sub, tracks }（tracks 已附 albumTitle/albumArtist/coverUrl 供子目录命名与标签嵌入） */
 async function resolveToTracks(c, kind, id) {
   async function tryKind(k) {
     if (k === 'album') {
       const a = await c.albumGet(id);
       const tracks = ((a.tracks && a.tracks.items) || []).map((t) => Object.assign({}, t, {
         albumTitle: a.title, albumArtist: (a.artist && a.artist.name) || '',
+        coverUrl: t.coverUrl || coverUrlOf(a),
+        releaseDate: a.release_date_original ? String(a.release_date_original).slice(0, 10) : '',
+        genre: (a.genre && a.genre.name) || '',           // V4.4.3：流派（Qobuz 专辑级元数据）
+        publisher: (a.label && a.label.name) || '',       // V4.4.3：厂牌
       }));
       return { kind: 'album', id: String(a.id), info: a, title: a.title, sub: (a.artist && a.artist.name) || '', tracks };
     }
     if (k === 'track') {
       const t = await c.trackGet(id);
+      if (!t.coverUrl && t.album) t.coverUrl = coverUrlOf(t.album);
       return { kind: 'track', id: String(t.id), title: t.title, sub: (t.performer && t.performer.name) || '', tracks: [t] };
     }
     if (k === 'playlist') {
       const p = await c.playlistGet(id);
-      return { kind: 'playlist', id: String(p.id), info: p, title: p.name, sub: (p.owner && p.owner.name) || '', tracks: (p.tracks && p.tracks.items) || [] };
+      const pCover = (p.images300 && p.images300[0]) || (p.images && p.images[0]) || '';
+      const tracks = ((p.tracks && p.tracks.items) || []).map((t) =>
+        (t.coverUrl || !t.album) ? t : Object.assign({}, t, { coverUrl: coverUrlOf(t.album) || pCover }));
+      return { kind: 'playlist', id: String(p.id), info: p, title: p.name, sub: (p.owner && p.owner.name) || '', tracks };
     }
     return null;
   }
@@ -173,6 +189,7 @@ function init(ctx) {
   loadStore = ctx.loadStore; flushStore = ctx.flushStore; touchStore = ctx.touchStore;
   api.setHttpFetch(qzFetch); // V4.3.22：API/下载全链路走 net.fetch（系统代理）
   dl.setHttpFetch(qzFetch);
+  extMeta.setHttpFetch(qzFetch); // V4.4.3：LRCLIB/MusicBrainz 同走系统代理（境外源，没开代理的用户由调用方静默降级）
 
   ipcMain.handle('qobuz:status', () => {
     const inf = info();
@@ -216,16 +233,21 @@ function init(ctx) {
     return resolveToTracks(c, ref.kind, ref.id);
   }));
 
-  // 批量下载（单例队列；进度经 qobuz:dl:event 推送）
+  // 批量下载（单例队列；进度经 qobuz:dl:event 推送；V4.4.3 起每首落盘后写标签/封面/歌词补全）
   ipcMain.handle('qobuz:download', async (e, p) => {
     if (dlState.running) throw new Error('已有下载队列进行中');
     const items = (p && Array.isArray(p.items) ? p.items : []).filter((t) => t && t.id != null);
     if (!items.length) throw new Error('没有可下载的曲目');
     dlState.running = true; dlState.canceled = false;
-    const emit = (phase, data) => { try { e.sender.send('qobuz:dl:event', { phase, ...data }); } catch { } };
+    const fill = { tagged: 0, tagFail: 0, lyric: 0, lyricMiss: 0 }; // 后处理汇总，随 end 事件带给渲染层
+    const post = makePostProcessor(fill);
+    const emit = (phase, data) => {
+      if (phase === 'end') data = Object.assign({}, data, { fill });
+      try { e.sender.send('qobuz:dl:event', { phase, ...data }); } catch { }
+    };
     try {
       return await withAuth((c) =>
-        dl.runQueue(c, p.quality || 4, items, dlDir(), () => dlState.canceled, emit));
+        dl.runQueue(c, p.quality || 4, items, dlDir(), () => dlState.canceled, emit, post));
     } finally { dlState.running = false; }
   });
   ipcMain.handle('qobuz:dlCancel', () => { dlState.canceled = true; return true; });
@@ -239,30 +261,74 @@ function init(ctx) {
     return setDlDir(r.filePaths[0]);
   });
 
-  // 歌词兜底匹配（Qobuz 无歌词 API）：五源并行搜索 → 打分取最优 → 拉歌词（不落盘）
-  ipcMain.handle('qobuz:lyricMatch', async (_e, p) => {
-    const kw = `${p.title || ''} ${p.artist || ''}`.trim();
-    if (!kw) return { ok: false, reason: '缺少标题/艺人' };
-    const local = { title: p.title || '', artist: p.artist || '', album: p.album || '', duration: (p.duration || 0) * 1000 };
-    const PROVIDERS = ['wy', 'kg', 'kw', 'tx', 'mg'];
-    const settled = await Promise.allSettled(PROVIDERS.map((pr) =>
-      streaming.search({ provider: pr, keywords: kw, page: 1, limit: 5 })));
-    let best = null;
-    settled.forEach((r, i) => {
-      if (r.status !== 'fulfilled' || !r.value || !r.value.songs) return;
-      r.value.songs.forEach((song) => {
-        const sc = scoreMatch(local, song);
-        if (!best || sc > best.score) best = { provider: PROVIDERS[i], song, score: sc };
-      });
-    });
-    if (!best || best.score < 60) return { ok: false, reason: '五源未找到足够相似的结果', best: best && best.score };
-    const lr = await streaming.lyric({ provider: best.provider, song: best.song }).catch(() => null);
-    if (!lr || !lr.lrc) return { ok: false, reason: '匹配到曲目但该平台无歌词' };
+  // 歌词兜底匹配（播放时用，不落盘；下载落盘走 makePostProcessor，阈值 80 更保守）
+  ipcMain.handle('qobuz:lyricMatch', (_e, p) => lyricMatch(p, 60));
+}
+
+/* 歌词兜底匹配（Qobuz 无歌词 API）：LRCLIB 优先（欧美曲库同步歌词命中率高，精确端点按时长校验防错配）
+ * → 落空再走 LX 五源并行搜索打分。minScore：播放时兜底 60；下载落盘 80（与 onlineMatch 批量一致）。 */
+async function lyricMatch(p, minScore) {
+  const l0 = await extMeta.lrclibGet({
+    title: p.title || '', artist: p.artist || '', album: p.album || '', durationSec: p.duration || 0,
+  }).catch(() => null);
+  if (l0 && l0.ok && l0.lrc) {
     return {
-      ok: true, lrc: lr.lrc, tlyric: lr.tlyric || '',
-      matched: { provider: best.provider, name: best.song.name, artist: best.song.artist, score: best.score },
+      ok: true, lrc: l0.lrc, tlyric: '',
+      matched: { provider: 'LRCLIB', name: l0.matched.name, artist: l0.matched.artist, score: l0.synced ? 100 : 90 },
     };
+  }
+  const kw = `${p.title || ''} ${p.artist || ''}`.trim();
+  if (!kw) return { ok: false, reason: '缺少标题/艺人' };
+  const local = { title: p.title || '', artist: p.artist || '', album: p.album || '', duration: (p.duration || 0) * 1000 };
+  const PROVIDERS = ['wy', 'kg', 'kw', 'tx', 'mg'];
+  const settled = await Promise.allSettled(PROVIDERS.map((pr) =>
+    streaming.search({ provider: pr, keywords: kw, page: 1, limit: 5 })));
+  let best = null;
+  settled.forEach((r, i) => {
+    if (r.status !== 'fulfilled' || !r.value || !r.value.songs) return;
+    r.value.songs.forEach((song) => {
+      const sc = scoreMatch(local, song);
+      if (!best || sc > best.score) best = { provider: PROVIDERS[i], song, score: sc };
+    });
   });
+  if (!best || best.score < (minScore || 60)) return { ok: false, reason: '五源未找到足够相似的结果', best: best && best.score };
+  const lr = await streaming.lyric({ provider: best.provider, song: best.song }).catch(() => null);
+  if (!lr || !lr.lrc) return { ok: false, reason: '匹配到曲目但该平台无歌词' };
+  return {
+    ok: true, lrc: lr.lrc, tlyric: lr.tlyric || '',
+    matched: { provider: best.provider, name: best.song.name, artist: best.song.artist, score: best.score },
+  };
+}
+
+/** V4.4.3（M3）：下载/跳过后后处理——写标签+封面+嵌入歌词+旁挂 .lrc。fill 计数随 end 事件带给渲染层汇总。 */
+function makePostProcessor(fill) {
+  return async function post(item, dest) {
+    const artist = (item.performer && item.performer.name) || item.albumArtist || '';
+    const albumName = item.albumTitle || (item.album && item.album.title) || '';
+    // 1) 歌词补全：五源兜底（阈值 80，落盘宁缺毋滥）
+    let lrc = '', tlyric = '';
+    const ly = await lyricMatch({ title: item.title || '', artist, album: albumName, duration: item.duration || 0 }, 80).catch(() => null);
+    if (ly && ly.ok && ly.lrc) { lrc = ly.lrc; tlyric = ly.tlyric || ''; fill.lyric++; }
+    else fill.lyricMiss++;
+    // 2) 写标签 + 封面 + 嵌入歌词（tagWriter 与洛雪下载链同一实现；失败只留痕不影响下载成功计数）
+    const tg = await tagWriter.writeTags({
+      dest,
+      title: item.title, artist, album: albumName,
+      albumArtist: item.albumArtist || artist,
+      track: item.track_number, disc: item.media_number,
+      date: item.releaseDate || (item.album && item.album.release_date_original ? String(item.album.release_date_original).slice(0, 10) : ''),
+      genre: item.genre || (item.album && item.album.genre && item.album.genre.name) || '',
+      composer: (item.composer && item.composer.name) || '',
+      publisher: item.publisher || (item.album && item.album.label && item.album.label.name) || '',
+      coverUrl: item.coverUrl || coverUrlOf(item.album),
+      lyrics: lrc, tlyric,
+    }).catch((err) => ({ ok: false, reason: String((err && err.message) || err) }));
+    if (tg && tg.ok) fill.tagged++;
+    else { fill.tagFail++; console.warn('[qobuz-dl] 写标签失败：', dest, tg && tg.reason); }
+    // 3) 旁挂 .lrc（与洛雪下载同一约定：同目录同名，编码沿用 GBK/UTF8 设置由 writeLyric 默认 utf8）
+    if (lrc) tagWriter.writeLyric({ dest, lrc, tlyric });
+    return { tagged: !!(tg && tg.ok), lyric: !!lrc };
+  };
 }
 
 /* 归一化 + 打分（简化自 main/onlineMatch.js，实验期副本避免动 tracked 文件） */

@@ -2,7 +2,9 @@
 /* V4.3.6：Qobuz 下载器。
  * 并发 3（p-limit 思路自实现）/ 指数退避重试 / .part 断点续传（Range）。
  * 落盘目录复用洛雪流媒体的下载目录（streaming.downloadDir），安妮扫描该目录即自动入库。
- * 去重策略：同名已存在直接跳过（QBDLX 默认同款）。标签/封面嵌入属 M3，此层只管文件。 */
+ * 去重策略：同名已存在直接跳过（QBDLX 默认同款）。
+ * V4.4.3：M3 落地——下载/跳过后经 post 钩子写标签+封面+歌词补全（index.js 注入）；
+ *         落盘前校验文件头魔数，防把 403 错误页/地区限制响应存成假 FLAC。 */
 const fs = require('fs');
 const path = require('path');
 
@@ -28,6 +30,21 @@ function destOf(baseDir, item, ext) {
     return path.join(dir, sanitize(pad2(item.track_number) + ' - ' + title) + '.' + ext);
   }
   return path.join(baseDir, sanitize(artist + ' - ' + title) + '.' + ext);
+}
+
+/* V4.4.3：落盘前校验文件头魔数——订阅/地区受限时服务器可能回 200 但内容是错误页，
+ * 此前会原样存成 .flac 假文件。校验不过即失败（重试无意义，带 noRetry 直接抛出）。 */
+function checkAudioMagic(file, ext) {
+  let head;
+  try {
+    const fd = fs.openSync(file, 'r');
+    head = Buffer.alloc(8);
+    fs.readSync(fd, head, 0, 8, 0);
+    fs.closeSync(fd);
+  } catch { return false; }
+  if (ext === 'flac') return head.toString('latin1', 0, 4) === 'fLaC';
+  if (ext === 'mp3') return head.toString('latin1', 0, 3) === 'ID3' || (head[0] === 0xFF && (head[1] & 0xE0) === 0xE0);
+  return true; // 其他扩展名不校验
 }
 
 /** 单曲下载（带重试 + .part 续传）。getFileUrl 每次重试现签，规避 URL 时效。 */
@@ -67,11 +84,15 @@ async function downloadOne(client, quality, item, baseDir, isCanceled, emit) {
           emit('progress', { id: item.id, received, total });
         }
       } finally { await new Promise((res) => out.end(res)); }
+      if (!checkAudioMagic(part, ext)) {
+        try { fs.unlinkSync(part); } catch { }
+        throw Object.assign(new Error('下载内容不是有效音频（可能被订阅/地区限制拦截）'), { noRetry: true });
+      }
       fs.renameSync(part, dest); // 完成转移
       return { skipped: false, path: dest, size: received };
     } catch (e) {
       lastErr = e;
-      if (e.canceled) throw e;
+      if (e.canceled || e.noRetry) throw e;
       if (attempt < MAX_ATTEMPT) await new Promise((res) => setTimeout(res, 1000 * Math.pow(2, attempt - 1))); // 1s/2s 指数退避
     }
   }
@@ -80,21 +101,29 @@ async function downloadOne(client, quality, item, baseDir, isCanceled, emit) {
 
 /**
  * 队列下载：并发 3，全程事件回报。
- * @param items Qobuz 曲目对象数组（可附 albumTitle/albumArtist 字段启用专辑子目录命名）
+ * @param items Qobuz 曲目对象数组（可附 albumTitle/albumArtist/coverUrl 字段启用专辑子目录命名与封面嵌入）
  * @param emit (phase, data) => void；phase: begin|progress|done|fail|skip|end
+ * @param post V4.4.3：可选后处理钩子 async (item, destPath) => any——写标签/封面/歌词。
+ *   下载完成与「跳过（文件已存在）」都会调用：跳过也跑是为了修复历史遗留的无标签文件（幂等重写）。
  */
-async function runQueue(client, quality, items, baseDir, isCanceled, emit) {
+async function runQueue(client, quality, items, baseDir, isCanceled, emit, post) {
   const stat = { total: items.length, done: 0, fail: 0, skip: 0 };
   emit('begin', { total: stat.total });
   let cursor = 0;
+  async function runPost(item, dest) {
+    if (!post || isCanceled()) return null;
+    try { return await post(item, dest); }
+    catch (e) { console.warn('[qobuz-dl] 后处理失败:', item && item.title, e && e.message); return null; }
+  }
   async function worker() {
     while (cursor < items.length && !isCanceled()) {
       const item = items[cursor++];
       emit('trackBegin', { id: item.id, title: item.title });
       try {
         const r = await downloadOne(client, quality, item, baseDir, isCanceled, emit);
-        if (r.skipped) { stat.skip++; emit('skip', { id: item.id, path: r.path, stat }); }
-        else { stat.done++; emit('done', { id: item.id, path: r.path, stat }); }
+        const postInfo = await runPost(item, r.path);
+        if (r.skipped) { stat.skip++; emit('skip', { id: item.id, path: r.path, stat, post: postInfo }); }
+        else { stat.done++; emit('done', { id: item.id, path: r.path, stat, post: postInfo }); }
       } catch (e) {
         if (e.canceled) { emit('end', { stat, canceled: true }); return; }
         stat.fail++;

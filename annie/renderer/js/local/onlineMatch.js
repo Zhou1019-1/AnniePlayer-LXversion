@@ -60,7 +60,13 @@
     var ckCover = mkCheck(oRow, '保存封面（cover.jpg）', defOf('cover', true));
     var ckOverwrite = mkCheck(oRow, '覆盖已有封面', false);
     var ckEmbed = mkCheck(oRow, '同时嵌入文件标签', defOf('embed', false));
+    // V4.4.3：标签匹配（MusicBrainz 候选写全套：标题/艺人/专辑/曲目号/日期；其余来源写三件套）
+    var ckTags = mkCheck(oRow, '写入曲目标签（标题/艺人/专辑等）', defOf('tags', false));
     dlg.appendChild(oRow);
+    // V4.4.3：国际补充源开关（境外服务，连不上自动降级国内五源）
+    var oRow2 = el('div', 'match-opts');
+    var ckIntl = mkCheck(oRow2, '国际源（LRCLIB 歌词 / MusicBrainz 标签）', defOf('intl', true));
+    dlg.appendChild(oRow2);
 
     // 候选列表 + 状态行
     var list = el('div', 'match-list');
@@ -89,7 +95,7 @@
 
     function renderList(cands) {
       list.innerHTML = '';
-      if (!cands.length) { list.appendChild(el('div', 'match-empty', '五平台均无结果，试试修改关键词')); return; }
+      if (!cands.length) { list.appendChild(el('div', 'match-empty', '各平台均无结果，试试修改关键词')); return; }
       cands.forEach(function (c) {
         var row = el('div', 'match-row');
         var img = document.createElement('img');
@@ -114,9 +120,9 @@
     }
 
     function doSearch() {
-      status.textContent = '搜索中（五平台并行）…';
+      status.textContent = ckIntl.checked ? '搜索中（国内五平台 + LRCLIB + MusicBrainz）…' : '搜索中（五平台并行）…';
       list.innerHTML = '';
-      window.mine.matchSearch({ path: cur.path, keyword: kwIn.value }).then(function (r) {
+      window.mine.matchSearch({ path: cur.path, keyword: kwIn.value, intl: ckIntl.checked }).then(function (r) {
         if (!overlay) return;
         if (!r || !r.ok) { status.textContent = (r && r.reason) || '搜索失败'; return; }
         cur.local = r.local;
@@ -128,13 +134,13 @@
     }
 
     function doApply(c, btn) {
-      if (!ckLrc.checked && !ckCover.checked && !ckEmbed.checked) { status.textContent = '请至少勾选一个保存项'; return; }
+      if (!ckLrc.checked && !ckCover.checked && !ckEmbed.checked && !ckTags.checked) { status.textContent = '请至少勾选一个保存项'; return; }
       btn.disabled = true; btn.textContent = '…';
       status.textContent = '正在保存：' + c.name + '（' + c.providerLabel + '）…';
       window.mine.matchApply({
-        path: cur.path, provider: c.provider, song: c.song,
+        path: cur.path, provider: c.provider, song: c.song, _lrclib: c._lrclib, _mb: c._mb,
         saveLrc: ckLrc.checked, saveCover: ckCover.checked,
-        embed: ckEmbed.checked, overwriteCover: ckOverwrite.checked,
+        embed: ckEmbed.checked, overwriteCover: ckOverwrite.checked, writeTags: ckTags.checked,
       }).then(function (r) {
         btn.disabled = false; btn.textContent = '应用';
         if (!overlay) return;
@@ -142,7 +148,8 @@
         var parts = [];
         if (r.lrc) parts.push('歌词已存 .lrc');
         if (r.cover) parts.push('封面已存 cover 文件');
-        if (r.embedded) parts.push('已嵌入文件标签');
+        if (r.tagged) parts.push('已写入曲目标签');
+        else if (r.embedded) parts.push('已嵌入文件标签');
         (r.notes || []).forEach(function (n) { parts.push(n); });
         status.textContent = parts.join('；') || '完成';
         toast(parts.join('；') || '匹配完成');

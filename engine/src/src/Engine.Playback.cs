@@ -444,6 +444,21 @@ public sealed partial class Engine
                 _playing = true;
                 ApplyDspLocked();
             }
+            // V4.4.3：网络流切歌预缓冲——旧实现 Start 后立即 FadeTo，新源缓冲为空，
+            // 设备回调立刻读到欠载 → 静音↔波形反复硬切换 = 切歌碎裂爆音（PrebufferAndStart
+            // 注释里记载的同款现场，此前只修了普通 Play 路径，crossfade 路径漏了）。
+            // 网络流攒 ≥0.5s（同 quickStart 的 URL 下限）再淡入；本地即时解码不等。
+            // 等待期间旧源仍在播放（mixer 未切换），听感无缝。
+            if (FfmpegPcmStream.IsUrl(path))
+            {
+                long preTarget = (long)(mixRate * mixCh * 4 * 0.5);
+                var pbSw = System.Diagnostics.Stopwatch.StartNew();
+                while (!pcm.EndOfStream && !pcm.Failed && pcm.QueuedBytes < preTarget && pbSw.ElapsedMilliseconds < 8000)
+                {
+                    if (gen != _playGeneration) return new { ok = false, reason = "superseded" }; // _pcm 已换主，清理由新播放请求负责
+                    Thread.Sleep(15);
+                }
+            }
             mixer.FadeTo(source, _crossfadeSec);
             // V1.1.10：暂停后切歌——设备流已被 Pause SafeStop（句柄保留、流已停），
             // FadeTo 只换 mixer 源不重启设备流 → 无声但 UI 已报 playing（用户实测：

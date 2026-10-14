@@ -119,6 +119,19 @@
 - `PLATFORMS` 映射表（provider 键→中文名）在 am-stream.js / streaming.js 顶部。音质 `S.stQuality` / `currentQuality()`。
 - 下载管理 dlManager：见 AGENTS.md 规范第 7 条。
 
+### Qobuz 链路（V4.4.3 摸清并补全，✅ check-syntax 159 文件 0 失败；dev 真机验证待用户跑）
+- **连播**：am-qobuz.js `playTrack(t, album, queue, index)` 建立 `QZ.playQueue[{t,album}]/playIndex`（专辑/歌单/搜索列表整表即队列）；`patchQobuzTransport()` 首次播放时包装 `annieStream.playNext/playPrev` + `AM.nextStream/prevStream`，守卫 `currentStream.provider==='Qobuz' && currentStream.qid===队列当前项 id`（payload 带 `qid`），联动全局播放模式（repeat-one/list-rand 同洛雪语义），播完队列自然停止。历史根因：此前 Qobuz 单曲直连无队列，ended 后三层 playNext 包装守卫全落空。
+- **下载 M3（标签/封面/歌词）**：qobuz/download.js `runQueue(..., post)` 后处理钩子（**done 与 skip 都跑**——skip 补历史无标签文件，幂等）；index.js `makePostProcessor(fill)`：歌词（lyricMatch 阈值 80 落盘宁缺毋滥）→ `tagWriter.writeTags`（标题/艺人/专辑/专辑艺术家/曲目号/碟号/日期+封面 coverUrl+嵌入歌词）→ 旁挂 .lrc；fill 计数随 end 事件 → am-qobuz.js 汇总文案 + **歌词未匹配每批一次 proToast**（不逐曲弹）。coverUrl 由渲染层下载项/主进程 resolveToTracks 双向附着。
+- **健壮性**：download.js `checkAudioMagic` 落盘前校验 fLaC/ID3 魔数（防 403 错误页存成假 FLAC，noRetry 直接失败）；原有 .part 断点续传 + 3 次指数退避（重试现签新 URL）保留。
+- **歌词链**：index.js `lyricMatch(p, minScore)` 模块级函数——**LRCLIB 优先**（extMeta.lrclibGet：/api/get 四参精确 → search 兜底时长 ±3s 采信）→ 落空走 LX 五源打分（播放 60 / 落盘 80）。播放时兜底（fetchLyric，am-qobuz.js）与下载落盘共用。
+- **标签字段补全（V4.4.3 第二轮）**：makePostProcessor 增 genre/composer/publisher（Qobuz 专辑级 `genre.name`/`label.name`，曲目级 `composer.name`）；渲染层「下载全部」附着 genre/publisher/releaseDate；resolveToTracks 专辑分支同步附着。UPC/ISRC/版权 tagWriter 无对应字段，未写。
+- **网络流切歌爆音修复（V4.4.3，引擎侧）**：`Engine.Playback.cs PlayCrossfade` 在 `mixer.FadeTo` 前对 URL 源补预缓冲（≥0.5s，同 quickStart URL 下限，8s 上限 + gen 代际守卫）。根因：crossfade 路径此前无预缓冲（PrebufferAndStart 只服务普通 Play），新源空缓冲被设备回调立刻消费 → 静音↔波形硬切换 = 碎裂爆音；本地文件即时解码无感，Qobuz 高码率 FLAC 最明显。等待期间旧源继续播放，听感无缝。
+
+### 国际元数据源（V4.4.3，`annie/main/extMeta.js`）✅
+- 纯 Node 模块（规范 12 无顶层 electron）；`setHttpFetch` 注入 net.fetch（qobuz/index.js init 里随 qzFetch 一并注入）；UA 带项目标识。
+- **LRCLIB**（同步歌词，免 key）：lrclibGet/lrclibSearch/lrclibById；**MusicBrainz**（标签，限速 1 req/s 内置串行队列 `_mbChain`）：mbSearch 归一化 `{name,artist,album,duration(ms),cover(CAA front-250),_mb:{title,artist,album,albumArtist,date,track,disc,duration,releaseId}}`；**CAA** `caaCover(releaseId, size)`。
+- **onlineMatch 接入**：searchCandidates 加 `intl` 参数（默认开），国际源与五源同一 Promise.allSettled 并行（境外连不上静默降级），候选上限 15→20；`fetchLyricForCand(cand)` 统一取词（lrclib 按 id / musicbrainz 转 LRCLIB / 五源走 lx-sdk），批量匹配与 autoLyric 同链路自动受益；applyMatch 加 `writeTags`（MB 候选写全套标签，其余三件套）+ `_lrclib/_mb` 回传。渲染层 onlineMatch.js 弹窗加「写入曲目标签」「国际源」两个勾选（默认 关/开），结果文案加「已写入曲目标签」。
+
 > FB2K 接流媒体要点：数据源用 `splList()` 的 items.map(x=>x.song)；播放/上下曲走 AM 在线歌单那套（需读 am-stream.js 的 nextStream/prevStream/playStreamSong 确认 `state._playList` 结构）；歌词查 `__annieStreamLrcByPath`；歌曲行渲染要适配 song 结构（无 .path/.dir/.ext/.meta，用 song.name/artist/album/duration(ms)/cover）——与本地 track 结构差异大，是改造核心。
 
 ## 五、粒子舞台（legacy 主题）— ✅已全面审查（2026-10-08）

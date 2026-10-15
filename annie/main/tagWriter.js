@@ -29,6 +29,13 @@ function metaValue(v) {
   return String(v).replace(/[`\r\n]/g, ' ').trim();
 }
 
+/** 歌词字段专用清洗：保留换行（多行 LRC 是合法标签值；若用 metaValue 把换行洗成空格，
+ *  内嵌歌词会变成单行，渲染层 parseLrc 只认行首时间戳 → 歌词无时间轴不滚动） */
+function lyricValue(v) {
+  if (v == null) return '';
+  return String(v).replace(/`/g, '').trim();
+}
+
 /** 下载封面图片字节（主进程直连，带超时与大小上限；kwcdn 走 http） */
 async function fetchCoverBytes(url, timeoutMs = 10000, maxBytes = 8 * 1024 * 1024) {
   const u = String(url || '');
@@ -110,8 +117,8 @@ async function writeTags(opts) {
   // 实测：flac + LYRICS 有效；mp3 + lyrics 有效（写成 ID3 标签，播放器/ffprobe 可读）。
   // V4.3.22：embedLrc/embedTLrc 开关（洛雪「嵌入歌词 / 同时嵌入翻译歌词」）
   if (opts.embedLrc !== false) {
-    let lrc = metaValue(opts.lyrics);
-    if (lrc && opts.embedTLrc !== false && opts.tlyric) lrc += '\n' + metaValue(opts.tlyric);
+    let lrc = lyricValue(opts.lyrics);
+    if (lrc && opts.embedTLrc !== false && opts.tlyric) lrc += '\n' + lyricValue(opts.tlyric);
     if (lrc) {
       const lyricKey = ext === 'flac' ? 'LYRICS' : 'lyrics';
       args.push('-metadata', `${lyricKey}=${lrc}`);

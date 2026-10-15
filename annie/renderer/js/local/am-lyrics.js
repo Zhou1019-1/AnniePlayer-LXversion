@@ -120,7 +120,12 @@
   }
   function parseLrc(text) {
     var out = [];
-    String(text || '').split(/\r?\n/).forEach(function (line) {
+    // 兼容单行 LRC：历史版本 tagWriter.metaValue 会把内嵌歌词的换行洗成空格，
+    // 所有时间戳挤在一行 → 只识别出第一句、无时间轴不滚动。
+    // 这里在「非 ] 字符之后的时间戳」前补换行拆行；行首连续时间戳（[t1][t2]同一句多时间点）
+    // 的 [ 前面是 ]，不受影响，仍由下方多时间戳逻辑展开。
+    text = String(text || '').replace(/([^\r\n\]])(\[\d+:\d+(\.\d+)?\])/g, '$1\n$2');
+    text.split(/\r?\n/).forEach(function (line) {
       // lxlyric 行格式：[起始ms,时长ms]文本（行内 <相对ms,时长ms> 词标签走同一提取）
       var lx = /^\s*\[(\d+),(\d+)\](.*)$/.exec(line);
       if (lx) {

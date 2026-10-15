@@ -114,6 +114,7 @@
 ### 歌词/封面缓存
 - 歌词：`mine.streamLyric({provider, song})` → `{lrc, tlyric}`（tlyric 译文轨，wy/tx/kg 源自带）。缓存按 `state.currentPath`（即 URL）键控：`window.__annieStreamLrcByPath[path]=lrc`、`__annieStreamTlyByPath[path]=tlyric`（streaming.js:400-406），并广播 `annie-stream-lyric` CustomEvent。
 - FB2K 接歌词：`loadLyrics`（fb2k.js:1171 对 http 直接 return）改为先查 `__annieStreamLrcByPath[state.currentPath]`，命中即用；未命中监听 `annie-stream-lyric` 事件补。
+- **内嵌歌词换行事故（2026-10-15 修复 ✅）**：tagWriter.js 的 `metaValue()`（:27-30）把 `\r\n` 洗成空格，下载嵌入歌词（writeTags :120-121 走该函数）被压成单行 → 渲染层 `parseLrc`（am-lyrics.js:121，按物理行切段、只认行首时间戳）只解析出第一句、无时间轴不滚动。旁挂 .lrc 不受影响（writeLyric 原文直写）。修复：① writeTags 歌词字段改用 `lyricValue()`（:34-37，保换行仅去反引号）——ffmpeg 命令行参数传多行值实测没问题（ffmpeg 7.x 回环验证 PASS）；② `parseLrc` 入口加单行 LRC 归一化：`/([^\r\n\]])(\[\d+:\d+(\.\d+)?\])/g → '$1\n$2'`，在「非 ] 字符后的时间戳」前补换行，存量坏文件无需重下即可恢复滚动；行首连续时间戳 `[t1][t2]同句多时间点` 前字符是 `]` 不匹配，行为不变。注意：PowerShell `node -e "..."` 双引号串里 `$1/$2` 会被 PS 展开吞掉，正则替换测试要写临时脚本文件跑。
 
 ### 平台/音质
 - `PLATFORMS` 映射表（provider 键→中文名）在 am-stream.js / streaming.js 顶部。音质 `S.stQuality` / `currentQuality()`。

@@ -707,9 +707,40 @@ function registerIpc() {
 
   // V3.5.8：批量删除文件（移入回收站）并同步曲库/收藏
   // V4.3.22：顺带清理播放列表引用（删掉的文件不该在歌单里留尸）
+  // V4.4.5：特权路径白名单——track:readFile / lib:deleteFiles 这类按路径操作磁盘的 IPC，
+  // 只允许触碰「曲库文件夹内」或「曲库 tracks 列表里」的文件（后者兜住拖入曲库外文件的既有体验）。
+  // 调用方经 preload 注入渲染层，渲染层被 XSS 污染时可任意传路径——这是纵深防御，不是修漏洞。
+  // CUE/ISO 虚拟轨剥 #cueN/#isoN 后缀按真实容器校验。
+  const VIRTUAL_PATH_RE = /#(cue|iso)\d+$/i;
+  function pathAllowed(p) {
+    try {
+      let real = String(p == null ? '' : p).replace(VIRTUAL_PATH_RE, '');
+      if (!real) return false;
+      const norm = (s) => path.resolve(String(s)).replace(/[\\/]+$/, '');
+      const rp = norm(real);
+      const store = loadStore();
+      for (const t of (store.tracks || [])) {
+        if (t && t.path && norm(t.path).replace(VIRTUAL_PATH_RE, '') === rp) return true;
+      }
+      // 拖入的曲库外文件会进 playlists.paths（不一定进 tracks）——纳入白名单，别误伤其节拍分析/删除
+      for (const pl of (store.playlists || [])) {
+        for (const pp of ((pl && pl.paths) || [])) {
+          if (pp && norm(pp).replace(VIRTUAL_PATH_RE, '') === rp) return true;
+        }
+      }
+      for (const f of (store.folders || [])) {
+        const root = norm(f);
+        if (rp === root || rp.startsWith(root + path.sep)) return true;
+      }
+      return false;
+    } catch { return false; }
+  }
+
   ipcMain.handle('lib:deleteFiles', async (_e, paths) => {
     const done = [], failed = [];
     for (const p of (paths || [])) {
+      // V4.4.5：曲库白名单——拒绝删除曲库目录外的任意文件（防渲染层被污染后乱删磁盘）
+      if (!pathAllowed(p)) { failed.push({ path: p, error: 'not-in-library' }); continue; }
       try { await shell.trashItem(p); done.push(p); }
       catch (e) { failed.push({ path: p, error: String(e && e.message || e) }); }
     }
@@ -1965,6 +1996,8 @@ function registerIpc() {
     // Pro：CUE 虚拟分轨剥离 #cueN 后缀，读真实整轨文件
     const cut = p.includes('#cue') ? p.indexOf('#cue') : (p.includes('#iso') ? p.indexOf('#iso') : -1);
     const real = cut >= 0 ? p.slice(0, cut) : p;
+    // V4.4.5：曲库白名单——拒绝读取曲库外任意文件内容（防渲染层被污染后外泄磁盘文件）
+    if (!pathAllowed(p)) throw new Error('not-in-library');
     const buf = library.readFileBuffer(real);
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   });

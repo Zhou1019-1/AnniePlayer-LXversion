@@ -1521,6 +1521,10 @@ window.mine.onEngineEvent((event, d) => {
       break;
     case 'engine-started': // 引擎 RPC 就绪（含故障恢复后）——清除故障提示
       hideEngineBanner();
+      // V4.4.5：兜底重推 EQ——bootApply 只有 8s 重试窗口，引擎首次 WASAPI 枚举 ~20s 时可能全部失败
+      try {
+        if (window.annieEQ) window.mine.engine('eq.set', { gains: window.annieEQ.state.gains.slice(), enabled: window.annieEQ.state.enabled }).catch(function () { });
+      } catch (e) { }
       if (!state.playing) setChainPhase({ phase: 'stopped' });
       break;
     case 'engine-dead':
@@ -1889,4 +1893,9 @@ async function applyAudioSettings() {
   // V3.5.19：参量 EQ + 声道工具 启动同步
   try { await window.mine.engine('peq.set', { enabled: !!u.peqOn, bands: u.peqBands || [] }); } catch { }
   try { await window.mine.engine('channel.set', { mode: u.chMode || 'stereo', balance: u.chBalance || 0 }); } catch { }
+  // V4.4.5：15 段 EQ 重推——EQ 增益是引擎内存态，崩溃重启后归 0；此前 applyAudioSettings 漏了 eq.set，
+  // 崩溃恢复后 EQ 静默失效（面板仍显示旧值）。从 annieEQ Store 读当前值重推。
+  try {
+    if (window.annieEQ) await window.mine.engine('eq.set', { gains: window.annieEQ.state.gains.slice(), enabled: window.annieEQ.state.enabled });
+  } catch { }
 }

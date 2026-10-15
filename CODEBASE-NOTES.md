@@ -407,6 +407,25 @@
 - **CSS**：am.css `.am-st-histpop/.am-st-histrow/.am-st-histtxt/.am-st-histdel/.am-st-histfoot`（z-index 60 在内容层之上、低于全局 R.pop 的 90）。
 - **验证**：check-syntax 157 文件 0 失败；dev 真机验证待用户跑。
 
+## 十二、DSD 白噪修复 + 特权 IPC 白名单 + 播放链路状态实时化（V4.4.5 待发）✅
+### 1. DSD 转 PCM「假成功」白噪修复（红叶抄诊断包实锤）
+- **故障链**（诊断日志逐行）：`[dsd] Native DSD 打开失败: kAsioCanDoIoFormat 被拒` → `[asio] 采样率探测返回 0，将以 352800Hz 直接尝试打开` → `[asio] 已以 float32 格式成功初始化` = 全程白噪。根因：DSF 的 ffmpeg 默认输出率（DSD64→352.8kHz）当 PCM 率直开 ASIO，驱动 Init「假成功」但取数速率错配。
+- **修复 A（Engine.Playback.cs `OpenWithChannels`）**：DSD 源（`info.Codec` 含 dsd）且 rate>176400 时钳到 **176400Hz**（DoP 同族率），标 `resampled=true` 并 emit notify；format 事件 `dsdMode` 如实报 `"pcm"`（此前报 `_dsdMode` 全局值，渲染层会误显 Native DSD 徽标），`reason` 写「DSD 转 PCM（钳至 176400Hz 安全回退）」。
+- **修复 B（Outputs.cs `AsioBackend.TryOpenCore`）**：驱动采样率探测返回 0 且 requestedRate>192000 时，不再硬开——先按 `AsioFallbackRates` 找 ≤192k 的可对齐率（优先 176400/88200）交给引擎重采样；全被拒才硬开。
+- **Stats 补字段（Engine.cs）**：`dsdNativeActive = _asioDsd != null`——注意 `dopActive` 在 Native 和 DoP 路径都为 true，区分必须看 `dsdNativeActive`，状态页判断顺序先 Native 后 DoP。
+- **验证**：引擎编译 0 error（109 警告全是既有 CS8632 nullable 注释）；真机白噪消除待用户验证（用户设备 XMOS USB Audio 2.0 ST 3059 + ASIO Native）。
+
+### 2. 特权 IPC 曲库白名单（安全审计第 2 批）
+- **实现（main.js `registerIpc` 内 `pathAllowed(p)`）**：路径剥 `#cueN/#isoN` 后缀后，必须命中 `store.tracks[].path` ∪ `store.playlists[].paths` ∪ `store.folders[]` 前缀（含根目录自身）。playlists.paths 入白名单是为兜住「拖入曲库外文件」的既有体验（这类文件进歌单不一定进 tracks）。`path.resolve` 归一防 `..` 穿越，大小写按 Windows 语义。
+- **套用点**：`lib:deleteFiles`（拒绝时 `failed.push({error:'not-in-library'})` 不删）、`track:readFile`（拒绝时 throw）。两者与 `pathAllowed` 同在 `registerIpc` 作用域（闭包可见）。
+- **未套用**：`iso:extractTrack`（src 须是曲库轨才被 UI 触发，且产物落 userData/isoCache，风险低）；tagWriter/backup 走 dialog 自选路径天然受限。sandbox:true 升级未做（需专项验证手机遥控第二窗口）。
+- **验证**：check-syntax 0 失败；行为回归待用户验证（拖入曲库外文件的节拍分析/删除不应被误拒）。
+
+### 3. 播放链路状态页（设置 → 音频输出 → 输出健康）
+- **范围决策**：不新建页面——「输出健康」区（settings.js:962 起）已含设备/格式/缓冲/欠载/限幅 + 链路图 + 全参数对照浮层（openChainDetail），本次只补差距。
+- **本次增量**：① 文本区补「音频输出」行（ASIO/WASAPI + 独占/共享说明）与「DSD 处理」行（Native DSD / DoP / 不适用，依赖 stats.dsdNativeActive）；② 自动刷新——`setInterval` 2.5s 且仅在 `panel.open && currentPage==='audio'` 时拉 `engine('stats')`（与统计页 3454 行同款「面板开着才轮询」模式，关闭零开销）。
+- **验证**：check-syntax 0 失败；真机显示待用户验证。
+
 ---
 
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

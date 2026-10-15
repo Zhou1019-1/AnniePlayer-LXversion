@@ -815,6 +815,23 @@ public sealed class AsioBackend : IOutputBackend
 
         if (aligned <= 0)
         {
+            // V4.4.5：驱动采样率查询已失败（探测返回 0）却按超高率（DSD 转 PCM 352.8k 等）硬开，
+            // 驱动 Init「假成功」实际取数速率错配 = 全程白噪（红叶抄诊断实锤）。这种情况下宁可
+            // 走回退表对齐一个驱动曾报告过的常用率（优先 DoP 同族 176.4k/88.2k），也不要赌硬开。
+            if (requestedRate > 192000)
+            {
+                foreach (var r in AsioFallbackRates)
+                {
+                    if (r >= requestedRate || r > 192000) continue;
+                    Console.Error.WriteLine($"[asio] 采样率探测失败且请求 {requestedRate}Hz 超高，尝试对齐 {r}Hz…");
+                    if (ProbeAndAlignRateCore(r) == r)
+                    {
+                        Console.Error.WriteLine($"[asio] 已对齐 {r}Hz（防驱动假成功），交由引擎重采样");
+                        Resampled = true;
+                        return r;
+                    }
+                }
+            }
             Console.Error.WriteLine($"[asio] 采样率探测返回 0，将以 {requestedRate}Hz 直接尝试打开。");
         }
 

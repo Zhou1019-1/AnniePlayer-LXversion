@@ -45,6 +45,13 @@ public sealed class EqChain
         for (int b = 0; b < BandCount; b++)
         {
             double db = b < gains.Length ? Math.Clamp(gains[b], -12.0, 12.0) : 0.0;
+            // V4.4.5：奈奎斯特保护——频段 ≥ 0.45×采样率时 biquad 系数数学越界（A2 可超稳定域 → 发散破音）。
+            // 22.05k/32k 低采样率源（老网络流/低码率有声书）上 12.5k/16k 段会触发；置全通系数跳过该段。
+            if (Frequencies[b] >= SampleRate * 0.45)
+            {
+                set.Bands[b] = new BandCoeffs { B0 = 1.0, B1 = 0, B2 = 0, A1 = 0, A2 = 0 };
+                continue;
+            }
             if (Math.Abs(db) > 0.01) set.AnyActive = true;
             double a = Math.Pow(10.0, db / 40.0);
             double w0 = 2.0 * Math.PI * Frequencies[b] / SampleRate;

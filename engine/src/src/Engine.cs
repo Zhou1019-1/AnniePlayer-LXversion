@@ -216,6 +216,7 @@ public sealed partial class Engine
             streamPaused = _streamPaused,
             crossfading = _mixer?.Crossfading ?? false,
             dopActive = _dopActive,
+            dsdNativeActive = _asioDsd != null,
             underrunCount = src is null ? 0 : System.Threading.Interlocked.Read(ref src.UnderrunCount),
             underrunFrames = src is null ? 0 : System.Threading.Interlocked.Read(ref src.UnderrunFrames),
             limiterClipBlocks = src is null ? 0 : System.Threading.Interlocked.Read(ref src.LimiterClipBlocks),

@@ -25,7 +25,7 @@ public sealed partial class Engine
             for (int i = 0; i < EqChain.BandCount && i < arr.Count; i++)
                 _eqGains[i] = arr[i]?.GetValue<double>() ?? 0;
         if (p["enabled"] is JsonNode en) _eqEnabled = en.GetValue<bool>();
-        lock (_gate) { ApplyEqLocked(); }
+        lock (_gate) { ApplyEqLocked(); ApplyDspLocked(); } // V4.4.5：EQ 正增益变化后前级补偿立即重算（此前要等换歌/dsp.set，拖滑块瞬间可能削波）
         return new { ok = true, enabled = _eqEnabled, gains = _eqGains };
     }
 

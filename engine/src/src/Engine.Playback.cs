@@ -139,6 +139,20 @@ public sealed partial class Engine
         if (rate <= 0) { Console.Error.WriteLine($"[engine] 曲目采样率异常({info.SampleRate})，按 44100 兜底"); rate = 44100; }
         bool resampled = false;
 
+        // V4.4.5：DSD 转 PCM 降速修正——DSD 位率（DSD64=2822400Hz）当 PCM 输出率直出设备是「假成功」高发区：
+        // Native DSD 被驱动拒绝回退此处时，曾按 352800Hz（DSD64 的 ffmpeg 默认输出率）直开 ASIO，
+        // 驱动 Init 通过但实际按别的速率取数 → 全程白噪（红叶抄诊断包实锤）。
+        // 统一钳到 176.4kHz（DoP 同族率，全 DSD 族最保守的常用率）让引擎重采样后输出，宁慢勿炸。
+        bool dsdSource = info.Codec.Contains("dsd", StringComparison.OrdinalIgnoreCase);
+        if (dsdSource && rate > 176400)
+        {
+            int origRate = rate;
+            rate = 176400;
+            resampled = true;
+            Console.Error.WriteLine($"[engine] DSD 转 PCM：{origRate}Hz → {rate}Hz（防驱动假成功白噪）");
+            _rpc.Emit("notify", new { text = $"DSD 已转为 {rate / 1000}kHz PCM 输出（Native/DoP 未走通时的安全回退）" });
+        }
+
         for (int attempt = 0; attempt < 2; attempt++)
         {
             var pcm = FfmpegPcmStream.Start(path, offsetSec, resampled ? rate : 0, rate, channels, headers, CapacityFor(info, rate, channels), _resampleHq);
@@ -215,9 +229,11 @@ public sealed partial class Engine
                     outFormat = $"{backend.ActiveFormat.SampleRate}Hz/{backend.ActiveFormat.BitsPerSample}bit",
                     // Pro：Bit-perfect 直通判定（黄点原因由渲染侧展示）
                     bitPerfect = !resampled && !info.Codec.Contains("dsd", StringComparison.OrdinalIgnoreCase),
-                    reason = resampled ? $"引擎重采样至 {rate}Hz"
+                    reason = resampled ? (dsdSource ? $"DSD 转 PCM（钳至 {rate}Hz 安全回退）" : $"引擎重采样至 {rate}Hz")
                         : info.Codec.Contains("dsd", StringComparison.OrdinalIgnoreCase) ? "DSD 转 PCM" : "",
-                    dsdMode = _dsdMode, dop = false
+                    // V4.4.5：如实上报实际 DSD 处理方式——PCM 回退就是 "pcm"，
+                    // 否则渲染层会按全局设置误显示 Native DSD 徽标（实际在放转出来的 PCM）
+                    dsdMode = dsdSource ? "pcm" : _dsdMode, dop = false
                 });
                 _rpc.Emit("state", new { state = "playing", path });
                 _positionTimer.Change(0, 100);

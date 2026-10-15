@@ -1176,13 +1176,21 @@
 
     function renderAudioHealth() {
       healthBtn.disabled = true;
-      window.mine.engine('stats').then(function (s) {
+      return window.mine.engine('stats').then(function (s) {
         if (!s || s.ok === false) throw new Error((s && s.error) || 'stats 失败');
         renderChain(s);
         var fmt = s.outputRate ? (s.requestedRate + ' → ' + s.outputRate + 'Hz / ' + s.bitsPerSample + 'bit / ' + s.channels + 'ch' + (s.resampled ? '（重采样）' : '')) : '未播放';
         var upSec = Math.round(s.uptimeSec || 0);
+        // V4.4.5：播放链路状态页——补「音频输出模式」「DSD 处理」两行（此前只有设备括号注记，不够直观）
+        var backendName = s.backendKind === 'asio' ? 'ASIO' : (s.backendKind === 'wasapi' ? 'WASAPI' : (s.backendKind || '-'));
+        var exclusiveTxt = s.backendKind === 'asio' ? '（ASIO 独占驱动，天然独占）' : (s.exclusive ? '（独占，绕过系统混音器）' : '（共享，经 Windows 混音器）');
+        // Native 活动时 dopActive 也为 true（引擎内部同一状态位），必须先判 Native
+        var dsdModeTxt = s.dsdNativeActive ? 'Native DSD（ASIO DSD 直推）'
+          : (s.dopActive ? 'DoP（DSD 位流封装直通）' : '不适用（当前非 DSD 或已转 PCM）');
         healthText.textContent =
-          '设备：' + (s.deviceName || '-') + '（' + (s.backendKind || '-') + (s.exclusive ? ' 独占' : ' 共享') + (s.dopActive ? ' / DoP' : '') + '）\n' +
+          '设备：' + (s.deviceName || '-') + '\n' +
+          '音频输出：' + backendName + exclusiveTxt + '\n' +
+          'DSD 处理：' + dsdModeTxt + '\n' +
           '格式：' + fmt + '\n' +
           '缓冲：' + (s.bufferedSec || 0) + 's / ' + Math.round((s.bufferedBytes || 0) / 1048576) + 'MB（目标 ' + (s.bufferMs || 0) + 'ms' + (s.preload ? '，整轨预载' : '') + '）\n' +
           '健康（本次引擎运行累计 ' + Math.floor(upSec / 60) + '分' + (upSec % 60) + '秒）：欠载 ' + (s.underrunCount || 0) + ' 次 / ' + (s.underrunFrames || 0) + ' 帧；限幅 ' + (s.limiterClipBlocks || 0) + ' 块；解码失败 ' + (s.decodeFailed ? '是' : '否') + '\n' +
@@ -1194,6 +1202,11 @@
     }
     healthBtn.onclick = renderAudioHealth;
     onOpenHooks.push(function () { if (currentPage === 'audio') renderAudioHealth(); });
+    // V4.4.5：播放链路状态页实时化——设置面板开着且停在「音频输出」页时每 2.5s 自动刷新
+    //（与统计页同款「仅面板开着才轮询」模式，面板关闭零开销，不引入常驻定时器成本）
+    setInterval(function () {
+      if (panel && panel.classList.contains('open') && currentPage === 'audio' && !healthBtn.disabled) renderAudioHealth();
+    }, 2500);
 
     /* ================= 播放 ================= */
     // —— 播放模式（默认；与底栏/AM 顶栏按钮共用 playmode.js） ——

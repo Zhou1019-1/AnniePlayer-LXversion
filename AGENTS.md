@@ -68,6 +68,11 @@
 - 需要 electron API 时用**惰性加载**（函数内 require，参考 engineClient.js 的 `electronApp()/electronBrowserWindow()`）。
 - ci.yml 与 release.yml 依赖准备不对称：release.yml 有 `npm ci`，ci.yml 没有。**往 ci.yml 加测试步骤前，先确认被测链路不碰 node_modules 里的包**。
 
+### 13. 编辑工具的落盘验证（V4.4.5 发版事故）
+- **AI 编辑工具可能「假成功」**：V4.4.5 发版时 Edit 工具对 package.json / helpContent.js / 更新日志.md / player.js / Eq.cs / Engine.Dsp.cs 的写入全部报告成功但磁盘未变（git status 无这些文件），导致打出一版缺 EQ 修复的安装包、还覆盖了 4.4.4 本地包。
+- **硬规则：关键文件（版本号/changelog/发版文档/引擎源码）编辑后必须立刻用独立手段验证**——git status 里看到该文件、或 Grep/Read 读回关键串；发版第 1-3 步改完后先 git status 全量核对再进第 4 步。
+- Edit 工具在同一文件上失败两次后，**不要再试第三次**，直接换 node 脚本写（读文件 → 字符串替换 → 写回 → 复读验证，单条命令完成）。
+
 ## 三、发版规范（每次发版必须七步走全，本地+在线同步）
 
 1. **package.json**：升版本号 + 补 `changelog` 条目（应用内「本版新变化」弹窗读取）。

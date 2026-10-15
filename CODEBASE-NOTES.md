@@ -371,6 +371,42 @@
 - **渲染层**：player.js 启动 `loadLibrary()` 后检查 `_pendingRescan` → saveSettings 清除 + proToast + scanStart（换机/重装导入后自动重建索引）。settings.js 曲库工具区「曲库备份与迁移」：导出面板 7 项勾选（analysis 默认不勾，各项实时显示条数+预估字节+总计）；导入向导内联两步（B 切片暂不含路径映射步）：摘要（版本/时间/各项数量/roots）→ 模式（覆盖/合并 radio）+ 内容勾选 → confirm → apply → listenStats 写回 localStorage（merge 时本机已有报告则保留）→ 800ms 后 relaunchApp。
 - **验证**：check-syntax 157 文件 0 失败；纯 Node 单测 44 项断言全过（v2 导出/白名单/roots 聚类/覆盖/合并全口径/v1 兼容/坏文件三种形态拒绝/部分分区导入）。
 
+## 八、DSD 播放链路与已知坑（V4.4.3 诊断实锤，首案 DIAG-20261014-2144 XMOS 沙沙声）
+
+- **三模式**（settings.js:34 dsdMode `pcm|dop|native`，IPC `dsd.setMode`）：
+  - `pcm` 转 PCM（默认）：ffmpeg DSF 解码器直出 **352800Hz**（DSD64/8）float PCM 走普通 Play 路径（Engine.Playback.cs:69 条件 `_dsdMode!="pcm"`）。
+  - `dop`：**仅 WASAPI 独占**（TryPlayDop 对非 WasapiExclusiveBackend 直接 notify 回退，Engine.Playback.cs:260-264）；引擎自封装 DoP = DsdRate/16 → 176.4k/24bit（Dop.cs:128）；设备能力 `wb.SupportsDop(rate)` 实测（devices.json `dop:true/false`）。
+  - `native`：TryPlayDop 分发到 TryPlayNativeDsd（Engine.Playback.cs:259 → :326），**仅 ASIO**；`AsioNativeDsdOutput.Open()` 用 kAsioCanDoIoFormat 探 DSD 原始格式，被拒即 notify 并**回退普通 PCM 路径（=352.8k ffmpeg 直出）**。
+- **⚠️ 已实锤坑：Native 被拒后回退 352.8k float 直出 ASIO 会出「全程沙沙白噪」**。AsioBackend.TryOpenCore 在 `getSampleRate` 返 ASE_NotPresent（驱动未运行态，良性）时「按请求率直试」（Outputs.cs:816-819），`AsioOut.Init` 不抛异常只代表缓冲建成（日志「已以 float32 格式成功初始化」），**不保证 DSD 能力驱动真按 352.8k 线性 PCM 重放**——Thesycon 系 XMOS 驱动（XMOS USB Audio 2.0 ST 3059 实测）Init 假成功、DAC 输出沙沙。
+- **处置口径**（给用户）：ASIO+native 沙沙/异常 → 改 **WASAPI 独占 + DoP**（devices.json dop:true 的设备即支持，真 DSD 直通）；ASIO 刚需 → 选 foo_dsd_asio/DSDTranscoder 代理驱动（设备枚举里可见，需自配）；pcm 模式在同类驱动的 352.8k 上同样可能异常。
+- **可选引擎加固（未做，待授权）**：DSF 转 PCM 对 ASIO 后端优先降到 176.4k/24bit（DoP 同族率）而非 352.8k 直出；ASIO 通道 sampleType 为 ASIOSTDSDInt8* 时禁止以 float PCM Init；Native 失败 notify 带「超高率 PCM 部分驱动会出噪，建议 WASAPI DoP」文案。
+- 判据速记：DSD 沙沙（全程宽带白噪、持续）= 格式错配，不是欠载（欠载是静音断续）；看 engine-log 有无「Native DSD 打开失败」+「352800Hz…float32 成功初始化」相邻两行即可定性。
+
+## 九、安全审计加固（V4.4.3，群友秋野奈静态审计反馈，第 1 批已修）✅
+- **P0 流缓存源流错误崩溃（已修）**：streamCache.js fill() 旧实现 `Readable.fromWeb(resp.body).pipe(ws)` 只监听 ws 的 error，网络中断时源流 unhandled 'error' 异步抛出、try/catch 抓不到 → 主进程无提示退出（与「失败静默」注释矛盾）。改用 `stream/promises` 的 `pipeline()`（错误统一走 catch，失败销毁两端）。
+- **P0 主进程全局兜底（已修）**：main.js 顶部注册 `process.on('uncaughtException'/'unhandledRejection')` → `processErrorRing`（50 条环形，console.error 留痕，不主动退出——Electron 主进程多数未捕获错误可恢复）；诊断包新增 **main-process-errors.txt**。此前全项目零兜底。
+- **P1 渲染层封面缓存 LRU（已修，上限均 300）**：proUi.js `npfCoverCache`（Map+npfCoverSet 触顶删最旧键）、pro.js `coverCache`（Map+coverSet）、remote.js `coverCache`（普通对象+coverKeys FIFO，因 fetchCover 用 `in` 判占位）。对照已有的 library.js coverCache 300 / streaming coverCache 200。
+- **P2 HTML 注入面（已修）**：fb2k.js 新增本地 `escHtml()`（与 player.js:547 同口径 `&<>"'`），元信息面板两处 innerHTML 拼接（流媒体 sg.* + 本地 m.*/文件路径）元素内容与 key 都转义（title 属性原有 `&quot;` 替换保留）；fakeScan.js buildHtml 报告的 path/grade/reason 转义（score 是数字不转）。实际威胁低（数据源是曲库+平台 API，无远程页面），属纵深防御。
+- **src/ 目录真相（审计误判澄清）**：`package.json "main":"src/main.js"`——src/main.js 是**真入口**（便携模式/单例锁/托盘/require annie 主模块），进打包，**绝不能删**。仅 `src/preload.js`（svlx:* 7 通道主进程零 handler）、`src/launcher.js`、`src/launcher.html`（无 loadFile）是旧启动器残留，V4.4.3 已精确删除。
+- **未修（第 2/3 批，待拍板）**：① `track:readFile`（main.js:1943→library.readFileBuffer 只限 64MB 无目录约束）与 `lib:deleteFiles`（shell.trashItem 任意路径）拟加「必须在已加入曲库目录内」白名单；② senderFrame 来源校验（单窗口应用价值低）、sandbox:true（需验证手机遥控第二窗口）；③ backgroundThrottling:false 是 V4.4 为彩胶遮挡停转有意关闭，hide 时节流方案用户 2026-10-14 已拍板放弃省电方向；④ 591 空 catch 多为有意静默降级，不搞运动式整改。
+
+## 十、AM 专辑详情页排序（V4.4.3）✅
+- **需求**：专辑详情页（albums 视图点入某专辑）曲目多方式排序 + 默认按「发布顺序」。
+- **设置键**：`ui.amAlbumDetailSort`（settings.js DEFAULTS，默认 `release`；与专辑列表页 `amAlbumSort` 独立）。
+- **实现**：am.js `sortAlbumDetailTracks(list, mode)`——
+  - `release`：碟号 disc → 曲目号 track（'no/of' 取前段 `parseInt(s.split('/')[0])`，与 library.js orderAudioPaths 同口径）；无碟号按 1 处理；无号沉底按文件名 azCollator；CUE 虚拟分轨无 track 标签 → `#cueN`/`#isoN` 数字续排（正 `#(cue|iso)(\d+)`）。
+  - `az` 标题 / `azArtist` 演唱者（副键标题）/ `name` 文件名 / `durDesc|durAsc` 时长。
+  - `trackMeta(t)` 扩展返回 `track/disc` 原始串（metaCache 白名单字段本就含）。
+  - `currentTracks()` 在 `albums&&albumKey` 分支末尾调用。
+- **UI**：am-dom.js 详情页头部改为「‹ 专辑 + 专辑名 + am-sort-sel 排序下拉」（复用 `.am-view-head` 样式与下拉持久化逻辑，headKeyFor 加 `albumDetail#key#mode` 保证 IME/切换不重建搜索框——详情页无搜索框，故自建 head 而非 buildViewHead）。
+- **验证**：check-syntax 157 文件 0 失败；dev 真机验证待用户跑。
+
+## 十一、在线搜索历史交互（V4.4.3）✅
+- **需求**：在线音乐搜索历史支持单条删除 + 清空全部。
+- **实现**：am-stream.js 搜索输入行（仅 search 页签）去掉原生 `<datalist>`（不支持交互），改自绘下拉弹层 `.am-st-histpop`（输入行内 `position:absolute` 挂载，复用玻璃风 CSS 变量）——聚焦/输入时弹出，每行 ✕ 单删（改 localStorage `annieplayer.stHistory`），底部「清空全部」；blur 120ms 后关闭（给点击留窗口，不自建 document 外点监听，避免与 R.pop 机制冲突）。
+- **CSS**：am.css `.am-st-histpop/.am-st-histrow/.am-st-histtxt/.am-st-histdel/.am-st-histfoot`（z-index 60 在内容层之上、低于全局 R.pop 的 90）。
+- **验证**：check-syntax 157 文件 0 失败；dev 真机验证待用户跑。
+
 ---
 
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

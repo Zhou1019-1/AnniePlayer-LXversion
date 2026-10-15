@@ -826,6 +826,8 @@
   var SONG_SORT_OPTS = [['az', '首字母 A–Z（标题）'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'],
     ['mtimeDesc', '修改时间 · 新→旧'], ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']];
   var ALBUM_SORT_OPTS = [['az', '名称 A–Z'], ['azArtist', '艺人 A–Z'], ['countDesc', '曲目数 · 多→少'], ['countAsc', '曲目数 · 少→多']];
+  // V4.4.3：专辑详情页（进入某张专辑后）曲目排序——默认按发布顺序（碟号+曲目号标签）
+  var ALBUM_DETAIL_SORT_OPTS = [['release', '按专辑发布顺序'], ['az', '标题 A–Z'], ['azArtist', '演唱者 A–Z'], ['name', '文件名'], ['durDesc', '时长 · 长→短'], ['durAsc', '时长 · 短→长']];
   function viewQuery(view) { return (S.viewQuery && S.viewQuery[view]) || ''; }
   /* V4.3.24：带搜索框三视图的头部身份键（视图 + 排序）。同键重绘复用旧头部 DOM——
      搜索框不被重建，中文 IME 组词会话/焦点/光标原位保留；排序切换后键变化，头部按新配置重建。
@@ -835,6 +837,7 @@
     if (S.view === 'songs' && AM.songSortMode) return 'songs#' + AM.songSortMode();
     if (S.view === 'favorites' && AM.favSortMode) return 'favorites#' + AM.favSortMode();
     if (S.view === 'albums' && !S.albumKey && AM.albumSortMode) return 'albums#' + AM.albumSortMode();
+    if (S.view === 'albums' && S.albumKey && AM.albumDetailSortMode) return 'albumDetail#' + S.albumKey + '#' + AM.albumDetailSortMode(); // V4.4.3
     return null;
   }
   function buildViewHead(title, cfg) {
@@ -1049,10 +1052,30 @@
         c.appendChild(row);
       });
     } else if (S.view === 'albums' && S.albumKey) {
-      var back = el('button', 'am-btn', '‹ 专辑');
-      back.onclick = function () { S.albumKey = null; renderView(); };
-      c.appendChild(back);
-      c.appendChild(el('div', 'am-view-h', S.albumKey));
+      // V4.4.3：详情页头部 = ‹ 专辑 返回 + 共享头（标题 + 排序下拉，复用 buildViewHead 的下拉逻辑但无搜索框）
+      if (!reuseHead) {
+        var back = el('button', 'am-btn', '‹ 专辑');
+        back.onclick = function () { S.albumKey = null; renderView(); };
+        var dhead = el('div', 'am-view-head');
+        dhead.dataset.hkey = 'albumDetail#' + S.albumKey + '#' + (AM.albumDetailSortMode ? AM.albumDetailSortMode() : 'release');
+        dhead.style.cssText = 'display:flex;align-items:center;gap:10px';
+        dhead.appendChild(back);
+        dhead.appendChild(el('div', 'am-view-h', S.albumKey));
+        var dsel = el('select', 'am-sort-sel');
+        dsel.title = '排序方式';
+        ALBUM_DETAIL_SORT_OPTS.forEach(function (o) {
+          var op = document.createElement('option');
+          op.value = o[0]; op.textContent = o[1];
+          dsel.appendChild(op);
+        });
+        dsel.value = AM.albumDetailSortMode ? AM.albumDetailSortMode() : 'release';
+        dsel.onchange = function () {
+          if (window.annieSettings) { annieSettings.ui.amAlbumDetailSort = dsel.value; annieSettings.save(); }
+          renderView();
+        };
+        dhead.appendChild(dsel);
+        c.appendChild(dhead);
+      }
     } else if (S.view.indexOf('pl:') === 0) {
       renderPlaylistHead(c);
     } else if (S.view === 'favorites') {

@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
+const { pipeline } = require('stream/promises'); // V4.4.3 安全审计：pipeline 转发源流错误，防 unhandled error 崩主进程
 const { app, ipcMain, dialog, BrowserWindow, net } = require('electron');
 
 let loadStore = null, touchStore = null, flushStore = null;
@@ -82,12 +83,10 @@ function fill(ck) {
       fs.mkdirSync(cacheDir(), { recursive: true });
       const resp = await net.fetch(ck.url, { headers: ck.headers || {} });
       if (!resp.ok || !resp.body) throw new Error('http-' + resp.status);
-      await new Promise((res, rej) => {
-        const ws = fs.createWriteStream(part);
-        Readable.fromWeb(resp.body).pipe(ws);
-        ws.on('finish', res);
-        ws.on('error', rej);
-      });
+      // V4.4.3 安全审计（P0）：旧实现 pipe() 只监听写入端，网络中断时源流 unhandled 'error'
+      // 异步抛出、try/catch 抓不到 → 主进程无提示退出（与「失败静默」注释自相矛盾）。
+      // pipeline 自动转发源流错误并在失败时销毁两端，统一走 catch 静默清理。
+      await pipeline(Readable.fromWeb(resp.body), fs.createWriteStream(part));
       const size = fs.statSync(part).size;
       if (!size) throw new Error('empty');
       try { fs.renameSync(part, fin); } catch { fs.copyFileSync(part, fin); fs.unlinkSync(part); }

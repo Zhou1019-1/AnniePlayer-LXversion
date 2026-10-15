@@ -605,6 +605,23 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 }
 .am-st-input:focus { border-color: var(--am-accent); }
 .am-st-input::placeholder { color: var(--am-text-3); }
+/* V4.4.3：搜索历史自绘下拉弹层（输入行内绝对定位；复用玻璃风） */
+.am-st-histpop {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60;
+  background: var(--am-glass); border: 1px solid var(--am-sep); border-radius: 10px;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: var(--am-shadow); padding: 4px; display: none; max-height: 260px; overflow-y: auto;
+}
+.am-st-histpop.on { display: block; }
+.am-st-histrow { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 7px; }
+.am-st-histrow:hover { background: color-mix(in srgb, var(--am-accent) 14%, transparent); }
+.am-st-histtxt { flex: 1; min-width: 0; padding: 6px 0; cursor: pointer; font: 13px var(--am-font); color: var(--am-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.am-st-histdel { flex: none; border: 0; background: transparent; color: var(--am-text-3); cursor: pointer;
+  width: 22px; height: 22px; border-radius: 5px; font-size: 12px; line-height: 1; padding: 0; }
+.am-st-histdel:hover { background: var(--am-accent); color: #fff; }
+.am-st-histfoot { display: flex; justify-content: center; padding: 6px 4px 2px; border-top: 1px solid var(--am-sep); margin-top: 2px; }
+.am-st-histfoot .am-btn { padding: 4px 14px; font-size: 12px; }
 .am-st-status { font-size: 12px; color: var(--am-text-2); min-height: 18px; margin-bottom: 8px; }
 .am-st-status.warn { color: var(--am-accent); }
 .am-qbadge {

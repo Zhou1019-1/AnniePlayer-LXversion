@@ -777,11 +777,47 @@
       var bGo = el('button', 'am-btn am-btn-accent', '搜索');
       bGo.onclick = function () { S.stKw = inp.value.trim(); doStreamSearch(true); };
       inpRow.appendChild(inp); inpRow.appendChild(bGo);
-      // 搜索历史提示（datalist）
-      var dl = el('datalist'); dl.id = 'am-st-history';
-      stHist().forEach(function (h) { var o = document.createElement('option'); o.value = h; dl.appendChild(o); });
-      inp.setAttribute('list', 'am-st-history');
-      inpRow.appendChild(dl);
+      // V4.4.3：搜索历史改自绘下拉弹层（datalist 不支持删除/清空）——
+      // 每行 ✕ 单删、底部「清空全部」；输入行内绝对定位，外点关闭走 blur 机制
+      var histPop = el('div', 'am-st-histpop');
+      // V4.4.3 修复：mousedown 阻止默认失焦——点 ✕/清空时输入框不 blur，弹层不闪关，
+      // 连续删多条不用反复点击输入框（blur 只在真切走时才生效）
+      histPop.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      inpRow.style.position = 'relative';
+      inpRow.appendChild(histPop);
+      function renderHistPop() {
+        histPop.innerHTML = '';
+        var list = stHist();
+        if (!list.length) { histPop.classList.remove('on'); return; }
+        list.forEach(function (h) {
+          var row = el('div', 'am-st-histrow');
+          var txt = el('span', 'am-st-histtxt', h);
+          txt.onclick = function () { inp.value = h; histPop.classList.remove('on'); inp.focus(); };
+          row.appendChild(txt);
+          var del = el('button', 'am-st-histdel', '✕');
+          del.title = '删除此条';
+          del.onclick = function (e) {
+            e.stopPropagation();
+            var a = stHist().filter(function (x) { return x !== h; });
+            try { localStorage.setItem(STH_KEY, JSON.stringify(a)); } catch (e2) { }
+            renderHistPop();
+          };
+          row.appendChild(del);
+          histPop.appendChild(row);
+        });
+        var foot = el('div', 'am-st-histfoot');
+        var bClr = el('button', 'am-btn', '清空全部');
+        bClr.onclick = function (e) {
+          e.stopPropagation();
+          try { localStorage.removeItem(STH_KEY); } catch (e2) { }
+          histPop.classList.remove('on');
+        };
+        foot.appendChild(bClr);
+        histPop.appendChild(foot);
+      }
+      inp.addEventListener('focus', function () { renderHistPop(); if (stHist().length) histPop.classList.add('on'); });
+      inp.addEventListener('input', function () { renderHistPop(); if (stHist().length) histPop.classList.add('on'); });
+      inp.addEventListener('blur', function () { setTimeout(function () { histPop.classList.remove('on'); }, 120); }); // 给点击留窗口
       c.appendChild(inpRow);
     }
 

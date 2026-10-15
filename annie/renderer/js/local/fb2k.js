@@ -14,6 +14,12 @@
     get: function (k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
   };
+  // V4.4.3 安全审计（P2）：inner HTML 拼接前的文本转义（与 player.js escHtml 同口径）
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
 
   /* ---------------- 状态 ---------------- */
   var S = {
@@ -1681,7 +1687,8 @@
         ['来源', '流媒体（联网解析播放）']
       ];
       R.meta.innerHTML = srows.map(function (r) {
-        return '<div class="f2-meta-row"><span class="k">' + r[0] + '</span><span class="v" title="' + String(r[1]).replace(/"/g, '&quot;') + '">' + r[1] + '</span></div>';
+        return '<div class="f2-meta-row"><span class="k">' + escHtml(r[0]) +
+          '</span><span class="v" title="' + String(r[1]).replace(/"/g, '&quot;') + '">' + escHtml(r[1]) + '</span></div>';
       }).join('');
       return;
     }
@@ -1712,7 +1719,7 @@
       ['采样比特', m.bitsPerSample ? m.bitsPerSample + ' bits' : '-'], ['声道', channelsText(m.channels)]
     ];
     R.meta.innerHTML = rows.map(function (r) {
-      return '<div class="f2-meta-row"><span class="k">' + r[0] + '</span><span class="v" title="' + String(r[1]).replace(/"/g, '&quot;') + '">' + r[1] + '</span></div>';
+      return '<div class="f2-meta-row"><span class="k">' + escHtml(r[0]) + '</span><span class="v" title="' + String(r[1]).replace(/"/g, '&quot;') + '">' + escHtml(r[1]) + '</span></div>';
     }).join('');
   }
 

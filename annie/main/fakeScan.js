@@ -6,6 +6,13 @@
 const path = require('path');
 const { detectLossless } = require('./losslessDetect');
 
+// V4.4.3 安全审计（P2）：导出 HTML 报告前转义用户可控文本（文件路径/理由等，文件名可含 < >）
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 /* 自称无损的扩展名（这些若探测出实际是有损编码 → 伪装判疑似） */
 const STRICT_LOSSLESS_EXT = /\.(flac|wav|ape|aiff?|alac|tta|wv|dsf|dff)$/i;
 /* 批量入口接受的扩展名（m4a 可能是 ALAC 也可能是 AAC，探测后定夺） */
@@ -87,9 +94,9 @@ function buildHtml(items) {
     return `<svg width="250" height="80" xmlns="http://www.w3.org/2000/svg">${rects}</svg>`;
   };
   const rows = items.map(it => `<tr class="${it.verdict === 'suspect' ? 'sus' : ''}">
-    <td>${it.path}</td><td>${it.score != null ? it.score : '-'}</td>
-    <td>${it.grade || (it.verdict === 'suspect' ? '⚠ 疑似假无损' : '✓ 正常')}</td>
-    <td>${it.reason || ''}</td><td>${bar(it.profileDb)}</td></tr>`).join('\n');
+    <td>${escHtml(it.path)}</td><td>${it.score != null ? it.score : '-'}</td>
+    <td>${escHtml(it.grade || (it.verdict === 'suspect' ? '⚠ 疑似假无损' : '✓ 正常'))}</td>
+    <td>${escHtml(it.reason || '')}</td><td>${bar(it.profileDb)}</td></tr>`).join('\n');
   return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>无损鉴别报告</title>
 <style>body{font:13px/1.6 "Microsoft YaHei UI",sans-serif;background:#10131c;color:#e8eaf0;padding:24px}
 h1{font-size:18px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #333a4d;padding:6px 8px;vertical-align:top}

@@ -199,8 +199,15 @@
 
   /* ================== Now Playing 全屏信息页 ================== */
   let npf = null, npfOn = false;
-  /* 封面直读 meta（本地）/ track.cover（流媒体），按 path|url 缓存 */
+  /* 封面直读 meta（本地）/ track.cover（流媒体），按 path|url 缓存。
+   * V4.4.3 安全审计（P1）：加 LRU 上限——dataURL 每条约 100KB+，托盘常驻只写不淘汰会持续涨内存。 */
+  const NPF_COVER_MAX = 300;
   const npfCoverCache = new Map();
+  function npfCoverSet(k, v) {
+    if (npfCoverCache.has(k)) npfCoverCache.delete(k); // 重新置到最新（LRU touch）
+    npfCoverCache.set(k, v);
+    if (npfCoverCache.size > NPF_COVER_MAX) npfCoverCache.delete(npfCoverCache.keys().next().value);
+  }
   /* 当前曲目：流媒体优先（流媒体播放时 index=-1，queue[-1] 为 undefined） */
   function nowTrack() {
     return state.currentStream || state.queue[state.index];
@@ -211,7 +218,7 @@
     const img = document.getElementById('npf-cover');
     const ph = document.getElementById('npf-cover-ph');
     const apply = (c) => {
-      npfCoverCache.set(path, c);
+      npfCoverSet(path, c);
       const cur = nowTrack();
       if (!npfOn || !cur || (cur.path || cur.url) !== path) return;
       if (c) { img.src = c; img.style.display = ''; ph.style.display = 'none'; }

@@ -26,6 +26,7 @@
     amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
     amFavSort: 'az',        // V4.3.22：AM 喜爱歌曲视图排序（选项同歌曲视图）
     amAlbumSort: 'az',      // V4.3.22：AM 专辑视图排序 az|azArtist|countDesc|countAsc
+    amAlbumDetailSort: 'release', // V4.4.3：AM 专辑详情页曲目排序 release(按发布碟号/曲目号)|az|azArtist|name|durDesc|durAsc
     // 侧栏宽度（px）与可视化面板整体关闭状态（持久化，重启后恢复）
     sidebarWidth: 320, vizBarHidden: false,
     // Plus：配色方案（gold 暗夜金 / aurora 靛蓝极光 / jade 翡翠深空 / day 白昼）

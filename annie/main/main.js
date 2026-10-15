@@ -27,6 +27,26 @@ const healthCheck = require('./healthCheck'); // V4.4.2：媒体库体检（H1-H
 const backup = require('./backup'); // V4.4.2：备份 2.0（分内容导出/inspect/覆盖+合并 apply）
 const trackMatcher = require('./trackMatcher'); // V4.4.2：五级匹配共享（.anniepl 导入 + 备份迁移二次匹配）
 
+// V4.4.3 安全审计（P0）：主进程最后防线——任何未捕获异常/未处理 Promise 拒绝都先写环形缓冲
+// （诊断包带出）再决定是否退出。流缓存等「本应静默」的异步错误此前会直接让整个播放器消失。
+const processErrorRing = [];
+function recordProcessError(kind, err) {
+  try {
+    const line = { t: new Date().toISOString(), kind, msg: (err && (err.stack || err.message)) || String(err) };
+    processErrorRing.push(line);
+    if (processErrorRing.length > 50) processErrorRing.shift();
+    console.error('[uncaught]', kind, line.msg);
+  } catch { }
+}
+process.on('uncaughtException', (err) => {
+  recordProcessError('uncaughtException', err);
+  // 不主动退出：Electron 主进程多数未捕获错误（流错误/IPC 处理器抛出）恢复性良好；
+  // 真到了致命状态（句柄损坏）进程会自行崩，届时崩溃现场仍在系统错误日志里。
+});
+process.on('unhandledRejection', (reason) => {
+  recordProcessError('unhandledRejection', reason);
+});
+
 const engine = new EngineClient();
 let mainWindow = null;
 let dlyrWinRef = null; // 桌面歌词窗引用（引擎事件分流用，由 registerIpc 内 dlyrics:toggle 维护）
@@ -1457,6 +1477,7 @@ function registerIpc() {
             return s.length > 30000 ? '...(截断)...\n' + s.slice(-30000) : s;
           } catch { return '(读取失败)'; }
         })() },
+      { name: 'main-process-errors.txt', content: processErrorRing.map(x => x.t + ' [' + x.kind + '] ' + x.msg).join('\n') || '(空)' }, // V4.4.3：主进程未捕获异常兜底记录
     ]);
     fs.writeFileSync(r.filePath, zip);
     return { ok: true, path: r.filePath };

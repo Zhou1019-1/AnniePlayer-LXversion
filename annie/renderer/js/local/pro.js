@@ -85,9 +85,16 @@
     return state.library.tracks.filter(t => (metaOf(t.path).artist || UNKNOWN_ARTIST) === key);
   }
 
-  /* ================= 粒子舞台：媒体库视图渲染 ================= */
-  /* 专辑封面懒加载（并发 3，避免一次拉爆 meta 通道） */
+  /* ================== 粒子舞台：媒体库视图渲染 ================== */
+  /* 专辑封面懒加载（并发 3，避免一次拉爆 meta 通道）。
+   * V4.4.3 安全审计（P1）：LRU 上限 300——dataURL 无界缓存会随浏览持续累积。 */
+  const COVER_MAX = 300;
   const coverCache = new Map();
+  function coverSet(k, v) {
+    if (coverCache.has(k)) coverCache.delete(k);
+    coverCache.set(k, v);
+    if (coverCache.size > COVER_MAX) coverCache.delete(coverCache.keys().next().value);
+  }
   const coverQueue = [];
   let coverRunning = 0;
   function lazyCover(imgEl, firstPath) {
@@ -101,7 +108,7 @@
       coverRunning++;
       window.mine.meta(p).then(m => {
         const c = m && m.cover;
-        if (c) { coverCache.set(p, c); if (imgEl.isConnected) imgEl.src = c; }
+        if (c) { coverSet(p, c); if (imgEl.isConnected) imgEl.src = c; }
       }).catch(() => { }).finally(() => { coverRunning--; pumpCover(); });
     }
   }

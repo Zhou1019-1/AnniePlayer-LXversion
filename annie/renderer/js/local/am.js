@@ -76,7 +76,10 @@
     return {
       title: (m && m.title) || String(t.name || '').replace(/\.[^.]+$/, ''),
       artist: (m && m.artist) || '未知艺术家',
-      album: (m && m.album) || ''
+      album: (m && m.album) || '',
+      track: (m && m.track) || '',  // V4.4.3：专辑详情按发布顺序排序用（no/of 原始串）
+      disc: (m && m.disc) || '',
+      duration: (m && m.duration) || 0  // V4.4.3：时长排序用（metaCache 秒字段，非 track 对象上）
     };
   }
   /* 按需批量取标签（渲染行时调用，已缓存的自动跳过） */
@@ -328,6 +331,7 @@
       }).filter(Boolean);
     } else if (S.view === 'albums' && S.albumKey) {
       list = list.filter(function (t) { return (trackMeta(t).album || '未知专辑') === S.albumKey; });
+      list = sortAlbumDetailTracks(list); // V4.4.3：详情页独立排序（默认按发布碟号/曲目号）
     } else if (S.view === 'folders' && S.folderPath) {
       var fp = normP(S.folderPath).replace(/\\+$/, '').toLowerCase();
       list = list.filter(function (t) { return normP(t.dir || '').toLowerCase() === fp; }); // 仅本层直属文件，子目录以文件夹行呈现
@@ -477,6 +481,49 @@
   AM.songSortMode = songSortMode;
   AM.favSortMode = favSortMode;
   AM.albumSortMode = albumSortMode;
+  /* V4.4.3：专辑详情页排序（独立持久化 ui.amAlbumDetailSort，与专辑列表页 amAlbumSort 分开）。
+   * release = 按专辑发布顺序：碟号 disc → 曲目号 track（'no/of' 取前段）；
+   *   无号曲目沉底按文件名自然序；CUE 虚拟分轨无标签，按 #cueN 数字续排；其余四种直接比较。 */
+  function albumDetailSortMode() {
+    return (window.annieSettings && annieSettings.ui.amAlbumDetailSort) || 'release';
+  }
+  function sortAlbumDetailTracks(list, mode) {
+    mode = mode || albumDetailSortMode();
+    var arr = list.slice();
+    if (mode === 'release') {
+      var num = function (s) { var n = parseInt(String(s || '').split('/')[0], 10); return isFinite(n) && n > 0 ? n : 0; };
+      var cueNo = function (p) { var m = String(p || '').match(/#(cue|iso)(\d+)/i); return m ? parseInt(m[2], 10) : 0; };
+      var metaOf = {};
+      arr.forEach(function (t) { metaOf[t.path] = trackMeta(t); });
+      arr.sort(function (a, b) {
+        var am = metaOf[a.path], bm = metaOf[b.path];
+        var ad = num(am.disc) || 1, bd = num(bm.disc) || 1; // 无碟号按第 1 碟处理（与单碟专辑同序）
+        if (ad !== bd) return ad - bd;
+        var at = num(am.track), bt = num(bm.track);
+        var ac = cueNo(a.path), bc = cueNo(b.path);
+        // CUE 分轨无 track 标签 → 用 #cueN；混合实体/分轨时无号沉底按文件名
+        if (!at) at = ac;
+        if (!bt) bt = bc;
+        var ah = at > 0 ? 0 : 1, bh = bt > 0 ? 0 : 1;
+        if (ah !== bh) return ah - bh;
+        if (ah === 0 && at !== bt) return at - bt;
+        var d = azCollator().compare(a.name, b.name);
+        return d || azCollator().compare(a.path, b.path);
+      });
+      return arr;
+    }
+    if (mode === 'az') arr.sort(function (a, b) { return azCollator().compare(trackMeta(a).title, trackMeta(b).title); });
+    else if (mode === 'azArtist') arr.sort(function (a, b) {
+      var d = azCollator().compare(trackMeta(a).artist, trackMeta(b).artist);
+      return d || azCollator().compare(trackMeta(a).title, trackMeta(b).title);
+    });
+    else if (mode === 'name') arr.sort(function (a, b) { return azCollator().compare(a.name, b.name); });
+    else if (mode === 'durDesc') arr.sort(function (a, b) { return (trackMeta(b).duration) - (trackMeta(a).duration); });
+    else if (mode === 'durAsc') arr.sort(function (a, b) { return (trackMeta(a).duration) - (trackMeta(b).duration); });
+    return arr;
+  }
+  AM.albumDetailSortMode = albumDetailSortMode;
+  AM.sortAlbumDetailTracks = sortAlbumDetailTracks;
   AM.songSearchField = songSearchField;
   AM.azCollator = azCollator;
   AM.refreshPlaylists = refreshPlaylists;

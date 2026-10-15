@@ -10,12 +10,23 @@
   var lastCover = '';
   var metaFetching = {}; // 防重复拉取
   var coverCache = {};   // path -> dataURL|''（metaBatch 批量标签不含封面，封面要单拉 meta()）
+  // V4.4.3 安全审计（P1）：LRU 上限 300——普通对象无淘汰，托盘常驻长时间遥控会持续累积 dataURL
+  var COVER_MAX = 300;
+  var coverKeys = [];
+  function coverPut(p, v) {
+    if (!(p in coverCache)) coverKeys.push(p);
+    coverCache[p] = v;
+    if (coverKeys.length > COVER_MAX) {
+      var old = coverKeys.shift();
+      delete coverCache[old];
+    }
+  }
 
   function fetchCover(path) {
     if (coverCache[path] !== undefined) return;
-    coverCache[path] = ''; // 占位防重入
+    coverPut(path, ''); // 占位防重入
     window.mine.meta(path).then(function (mm) {
-      coverCache[path] = (mm && mm.cover) || '';
+      coverPut(path, (mm && mm.cover) || '');
     }).catch(function () { });
   }
 

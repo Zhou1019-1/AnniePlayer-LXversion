@@ -765,8 +765,20 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 .am-imm-closebar .am-tbtn:hover { background: rgba(255,255,255,.16); color: #fff; }
 /* V4.3.26：沉浸布局整体居中——两栏改为等分 grid，各自以屏幕左右半区中轴对称。
    旧版 flex+justify-center 把「固定宽封面列 + 46% 歌词列」整体居中，两栏宽度不等导致视觉左重右轻。 */
-.am-imm-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 56px 40px 40px; }
-.am-imm-left { position: relative; width: min(44vh, 480px); flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; justify-self: center; }
+.am-imm-main {
+  position: relative; z-index: 1; flex: 1; min-height: 0; display: grid;
+  grid-template-columns: minmax(0, min(42vw, 890px)) minmax(0, min(42vw, 890px));
+  column-gap: min(3vw, 62px);
+  justify-content: center;
+  align-items: center;
+  padding: min(4.5vh, 56px) min(1.8vw, 40px) min(3.2vh, 40px);
+}
+.am-imm-left {
+  position: relative;
+  width: min(28vw, 48vh, 640px);
+  flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+  justify-self: center;
+}
 .am-imm-cover {
   width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
   box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);

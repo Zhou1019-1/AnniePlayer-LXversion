@@ -816,7 +816,7 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.near { color: var(--am-text-2); }
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.cur { color: var(--am-text); }
 /* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词）；V4.3.26：占满右半区并向中轴靠拢，与左栏对称 */
-.am-imm-lyr { display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
+.am-imm-lyr { mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
 /* V4.4：沉浸模式未开歌词时，封面+信息+控制栏整体居中
  *（.am-imm-main 恒为 1fr 1fr 双列，歌词隐藏后左列仍停在左半屏，右半全空） */

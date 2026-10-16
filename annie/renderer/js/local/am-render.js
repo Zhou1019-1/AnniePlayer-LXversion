@@ -480,6 +480,21 @@
     bExit.title = '退出沉浸模式';
     bExit.onclick = function () { toggleImmersive(false); };
     cb.appendChild(bExit);
+        /* 沉浸界面直接切换真全屏（与「设置 → AM 界面」同源，立即生效并持久化） */
+    R.immBtnFs = el('button', 'am-tbtn', '⛶');
+    R.immBtnFs.title = '真全屏（隐藏任务栏）';
+    R.immBtnFs.onclick = function (e) {
+      e.stopPropagation();
+      var ui = window.annieSettings && annieSettings.ui;
+      var on = !(ui && ui.amImmFullscreen);
+      if (ui) ui.amImmFullscreen = on;
+      try { window.annieSettings.save(); } catch (x) { }
+      try { if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(on); } catch (x) { }
+      R.immBtnFs.classList.toggle('on', on);
+      R.immBtnFs.title = on ? '退出真全屏（显示任务栏）' : '真全屏（隐藏任务栏）';
+    };
+    try { R.immBtnFs.classList.toggle('on', !!(window.annieSettings && annieSettings.ui && annieSettings.ui.amImmFullscreen)); } catch (x) { }
+    cb.insertBefore(R.immBtnFs, bExit);
     ov.appendChild(cb);
 
     R.immCover = document.createElement('img');

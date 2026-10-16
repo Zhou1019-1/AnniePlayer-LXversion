@@ -157,7 +157,7 @@
     var merged = [];
     out.forEach(function (l) {
       var prev = merged[merged.length - 1];
-      if (prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text) prev.tly = l.text;
+      if (!/^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i.test(l.text || '') && prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text) prev.tly = l.text;
       else if (l.text) merged.push({ t: l.t, text: l.text, tly: '', words: l.words || null });
     });
     return merged;
@@ -172,7 +172,7 @@
         var d = Math.abs(lines[i].t - x.t);
         if (d < bd) { bd = d; best = i; }
       }
-      if (best >= 0 && !lines[best].tly) lines[best].tly = x.text;
+      if (best >= 0 && !lines[best].tly && x.text !== lines[best].text && !/^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i.test(x.text || '')) lines[best].tly = x.text;
     });
     return lines;
   }

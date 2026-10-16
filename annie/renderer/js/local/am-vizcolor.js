@@ -81,19 +81,27 @@
       var img = new Image();
       img.crossOrigin = 'anonymous';
       var done = false;
-      function fail() { if (!done) { done = true; settle(url, null); } }
+      // V4.4.6：瞬时失败（超时/加载失败/canvas 异常）不写入缓存——下次 analyze 重新尝试。
+      // 此前 settle(url, null) 会把失败永久缓存，大图在启动卡顿期间超时后整局无封面色。
+      function failTransient(reason) {
+        if (done) return; done = true;
+        console.warn('[vizcolor] 取色失败（下轮重试）:', reason);
+        delete cache[url];
+        (waiters[url] || []).forEach(function (cb) { try { cb(null); } catch (e) {} });
+        delete waiters[url];
+      }
       img.onload = function () {
         if (done) return; done = true;
         try {
           if (!cv) { cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE; cx = cv.getContext('2d', { willReadFrequently: true }); }
           cx.clearRect(0, 0, SIZE, SIZE);
           cx.drawImage(img, 0, 0, SIZE, SIZE);
-          settle(url, analyzePixels(cx.getImageData(0, 0, SIZE, SIZE).data));
-        } catch (e) { settle(url, null); } // canvas 被污染（CORS）→ null
+          settle(url, analyzePixels(cx.getImageData(0, 0, SIZE, SIZE).data)); // 分析结果 null（黑白封面）仍缓存——那是稳定结论
+        } catch (e) { failTransient('canvas: ' + (e && e.message)); } // canvas 被污染（CORS）
       };
-      img.onerror = fail;
+      img.onerror = function () { failTransient('img.onerror'); };
       img.src = url;
-      setTimeout(fail, 8000); // 慢图兜底
+      setTimeout(function () { failTransient('超时8s'); }, 8000); // 慢图兜底
     }
   };
 })();

@@ -133,7 +133,7 @@
     });
     R.btnLocate = el('button', 'am-tbtn', '🎯'); R.btnLocate.title = '定位当前播放文件';
     R.btnLocate.onclick = locatePlaying;
-    right.appendChild(R.btnExcl); right.appendChild(R.btnLocate);
+    // V4.4.6：顶栏精简——低频按钮不再直接入栏（对象照建，同步逻辑不受影响），收进「⋯」菜单
     // V4.4：主界面待播清单抽屉（此前仅沉浸/迷你能看队列）
     R.btnQ = el('button', 'am-tbtn', '☰'); R.btnQ.title = '待播清单 / 历史记录';
     R.btnQ.style.position = 'relative';
@@ -156,20 +156,17 @@
     R.btnTimer = el('button', 'am-tbtn', '⏲');
     R.btnTimer.onclick = function (e) { e.stopPropagation(); toggleTimerPop(); };
     document.addEventListener('annie-sleeptimer-changed', syncTimerBtn);
-    right.appendChild(R.btnTimer);
     // 沉浸式播放界面 / 迷你模式
     R.btnImm = el('button', 'am-tbtn', '⤢'); R.btnImm.title = '沉浸式播放界面';
     R.btnImm.onclick = function () { toggleImmersive(); };
     right.appendChild(R.btnImm);
     R.btnMiniM = el('button', 'am-tbtn', '🗕'); R.btnMiniM.title = '迷你模式';
     R.btnMiniM.onclick = function () { enterMini(); };
-    right.appendChild(R.btnMiniM);
     // 桌面歌词快捷入口（Alt+L；状态跟随 annie-dlyrics-changed）
     var btnDlyr = el('button', 'am-tbtn' + ((window.annieDlyricsOn && window.annieDlyricsOn()) ? ' on' : ''), '🎤');
     btnDlyr.title = '桌面歌词（Alt+L）';
     btnDlyr.onclick = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
     document.addEventListener('annie-dlyrics-changed', function (e) { btnDlyr.classList.toggle('on', !!(e.detail && e.detail.on)); });
-    right.appendChild(btnDlyr);
     // V4.3.5：播放中一键收藏（仅在线歌曲；本地歌曲走行内 ♥）
     var btnNpFav = el('button', 'am-tbtn', '♥');
     btnNpFav.title = '收藏正在播放的在线歌曲到在线歌单';
@@ -178,12 +175,10 @@
       var r = btnNpFav.getBoundingClientRect();
       if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
     };
-    right.appendChild(btnNpFav);
     // V4.3.16：复制播放中在线歌的平台分享链接
     var btnNpShare = el('button', 'am-tbtn', '🔗');
     btnNpShare.title = '复制正在播放的在线歌曲的分享链接';
     btnNpShare.onclick = function () { if (AM.copyCurrentStreamLink) AM.copyCurrentStreamLink(); };
-    right.appendChild(btnNpShare);
     // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
     var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
     btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };
@@ -207,7 +202,52 @@
       var order = ['legacy', 'fb2k', 'am'];
       window.annieTheme.switch(order[(order.indexOf(annieTheme.current) + 1) % order.length]);
     };
-    right.appendChild(R.btnLyr); right.appendChild(R.btnLight); right.appendChild(R.btnTheme);
+    right.appendChild(R.btnLyr);
+    /* V4.4.6：顶栏精简——低频入口收进「⋯」展开菜单（共享弹层 R.pop，外点关闭走全局监听）。
+     * 留在栏上：音量 / 待播清单 / 播放模式 / 沉浸 / 歌词面板 / 设置；
+     * 收进菜单：独占 / 定位 / 定时 / 迷你 / 桌面歌词 / 收藏 / 分享 / 亮暗 / 主题。
+     * 菜单每次打开重建，图标直接读按钮对象 textContent（独占🔒🔓、亮暗🌙☀ 等状态自然同步）。 */
+    R.btnMore = el('button', 'am-tbtn', '⋯'); R.btnMore.title = '更多';
+    R.btnMore.onclick = function (e) { e.stopPropagation(); openTbMoreMenu(); };
+    right.appendChild(R.btnMore);
+    function openTbMoreMenu() {
+      var pop = R.pop;
+      pop.innerHTML = '';
+      function item(btn, label, action, onCls) {
+        var it = el('button', 'am-pop-item' + (onCls && onCls() ? ' on' : ''), btn.textContent + ' ' + label);
+        it.onclick = function (e) {
+          e.stopPropagation(); // 防外点监听把定时弹层等二级弹层立刻关掉
+          pop.classList.remove('on');
+          action();
+        };
+        pop.appendChild(it);
+      }
+      item(R.btnExcl, '独占/共享输出', function () { R.btnExcl.onclick(); });
+      item(R.btnLocate, '定位当前播放', function () { locatePlaying(); });
+      item(R.btnTimer, '睡眠定时', function () { toggleTimerPop(); });
+      pop.appendChild(el('div', 'am-pop-sep'));
+      item(R.btnMiniM, '迷你模式', function () { enterMini(); });
+      item(btnDlyr, '桌面歌词', function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); },
+        function () { return btnDlyr.classList.contains('on'); });
+      pop.appendChild(el('div', 'am-pop-sep'));
+      item(btnNpFav, '收藏正在播放', function () {
+        var r = R.btnMore.getBoundingClientRect(); // 原按钮不在 DOM，锚点改用 ⋯ 位置
+        if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
+      });
+      item(btnNpShare, '复制分享链接', function () { if (AM.copyCurrentStreamLink) AM.copyCurrentStreamLink(); });
+      pop.appendChild(el('div', 'am-pop-sep'));
+      item(R.btnLight, isLight() ? '切换到暗色' : '切换到亮色', function () { R.btnLight.onclick(); });
+      item(R.btnTheme, '切换主题', function () { R.btnTheme.onclick(); });
+      pop.classList.add('on');
+      var r = R.btnMore.getBoundingClientRect();
+      var w = pop.offsetWidth, h = pop.offsetHeight;
+      pop.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 12)) + 'px';
+      // 顶栏置底时向上弹出，否则向下
+      var tbBottom = root.classList.contains('am-topbar-bottom');
+      pop.style.top = tbBottom
+        ? Math.max(8, r.top - h - 6) + 'px'
+        : Math.min(r.bottom + 6, window.innerHeight - h - 12) + 'px';
+    }
     var wb = el('div', 'am-winbtns');
     var bMin = el('button', 'am-tbtn', '—'); bMin.title = '最小化'; bMin.onclick = function () { window.mine.winMin(); };
     var bMax = el('button', 'am-tbtn', '▢'); bMax.title = '最大化'; bMax.onclick = function () { window.mine.winMax(); };
@@ -662,12 +702,45 @@
     };
     sb.appendChild(add);
 
-    // V4.3.22：导入 foobar2000 .fpl 播放列表（扫描曲库时也会自动识别媒体库内的 .fpl）
-    var impFpl = el('button', 'am-nav am-new');
-    impFpl.appendChild(el('span', 'am-nav-ico', '📥'));
-    impFpl.appendChild(el('span', 'am-nav-name', '导入 FPL 播放列表…'));
-    impFpl.title = '导入 foobar2000 播放列表（.fpl）；媒体库文件夹内的 .fpl 会在扫描曲库时自动导入';
-    impFpl.onclick = function () {
+    // V4.4.6：三个导入入口合并为「导入播放列表…」——点击弹选择层（复用共享弹层 R.pop），
+    // 用户先选导入类型（FPL / M3U / 安妮歌单），再引导到文件选择。
+    var impBtn = el('button', 'am-nav am-new');
+    impBtn.appendChild(el('span', 'am-nav-ico', '📥'));
+    impBtn.appendChild(el('span', 'am-nav-name', '导入播放列表…'));
+    impBtn.title = '导入外部播放列表：foobar2000 (.fpl) / M3U (.m3u/.m3u8) / 安妮歌单 (.anniepl)';
+    impBtn.onclick = function (e) {
+      e.stopPropagation();
+      var rect = impBtn.getBoundingClientRect();
+      openImportMenu(rect.right + 8, rect.top);
+    };
+    sb.appendChild(impBtn);
+
+    /* 导入类型选择弹层（共享弹层 R.pop，外点关闭由全局监听负责） */
+    function openImportMenu(x, y) {
+      var pop = R.pop;
+      pop.innerHTML = '';
+      pop.appendChild(el('div', 'am-pop-head', '选择导入格式'));
+      pop.appendChild(el('div', 'am-pop-sep'));
+      var items = [
+        ['🎵', 'foobar2000 播放列表 (.fpl)', '从 foobar2000 导出的 .fpl 文件', doImportFpl],
+        ['📄', 'M3U 播放列表 (.m3u / .m3u8)', '通用播放列表格式，多数播放器支持导出', doImportM3u],
+        ['📦', '安妮歌单 (.anniepl)', '另一台电脑的安妮播放器导出（含标签指纹匹配）', function () { importPlaylistFiles(); }],
+      ];
+      items.forEach(function (it) {
+        var btn = el('button', 'am-pop-item');
+        btn.appendChild(el('span', '', it[0] + ' ' + it[1]));
+        btn.title = it[2];
+        btn.onclick = function () { pop.classList.remove('on'); it[3](); };
+        pop.appendChild(btn);
+      });
+      pop.classList.add('on');
+      var w = pop.offsetWidth, h = pop.offsetHeight;
+      pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
+      pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
+    }
+
+    // FPL 导入（原 impFpl.onclick 逻辑原样保留）
+    function doImportFpl() {
       // 首次使用给引导：fpl 默认在 fb2k 配置目录，不在歌曲文件夹里
       try {
         if (localStorage.getItem('annieplayer.fplGuide') !== '1') {
@@ -690,22 +763,32 @@
         var msg = oks.length ? ('已导入 ' + oks.length + ' 个播放列表（共 ' + total + ' 首）') : '';
         if (fails) msg += (msg ? '，' : '') + fails + ' 个解析失败';
         try { if (msg && typeof proToast === 'function') proToast(msg); } catch (e) { }
-        if (oks.length === 1) { // 只导入一个时直接跳过去
+        if (oks.length === 1) {
           var last = S.playlists[S.playlists.length - 1];
           if (last) { S.view = 'pl:' + last.id; renderSidebar(); renderView(); return; }
         }
         renderSidebar();
       }).catch(function () { });
-    };
-    sb.appendChild(impFpl);
+    }
 
-    // V4.3.25：导入安妮歌单文件（.anniepl，另一台电脑导出；主进程按多指纹匹配本机歌曲）
-    var impPl = el('button', 'am-nav am-new');
-    impPl.appendChild(el('span', 'am-nav-ico', '📦'));
-    impPl.appendChild(el('span', 'am-nav-name', '导入安妮歌单…'));
-    impPl.title = '导入 .anniepl 歌单文件（另一台电脑的安妮播放器导出）；按路径/文件名/标签智能匹配本机歌曲，可多选批量导入';
-    impPl.onclick = function () { importPlaylistFiles(); };
-    sb.appendChild(impPl);
+    // M3U/M3U8 导入
+    function doImportM3u() {
+      window.mine.m3uImport().then(function (r) {
+        if (!r || r.canceled) return;
+        if (r.playlists) S.playlists = r.playlists;
+        var oks = (r.results || []).filter(function (x) { return x.ok; });
+        var fails = (r.results || []).length - oks.length;
+        var total = oks.reduce(function (s, x) { return s + x.count; }, 0);
+        var msg = oks.length ? ('已导入 ' + oks.length + ' 个播放列表（共 ' + total + ' 首）') : '';
+        if (fails) msg += (msg ? '，' : '') + fails + ' 个解析失败';
+        try { if (msg && typeof proToast === 'function') proToast(msg); } catch (e) { }
+        if (oks.length === 1) {
+          var last = S.playlists[S.playlists.length - 1];
+          if (last) { S.view = 'pl:' + last.id; renderSidebar(); renderView(); return; }
+        }
+        renderSidebar();
+      }).catch(function () { });
+    }
 
     // V4.3.5：在线歌单（流媒体收藏；与本地播放列表并列但互不相混）
     sb.appendChild(el('div', 'am-side-h', '在线歌单'));
@@ -1234,6 +1317,20 @@
       playList(tracks, Math.floor(Math.random() * tracks.length));
     };
     acts.appendChild(bPlay); acts.appendChild(bShuffle);
+    // V4.4.6：播放列表排序下拉（原始顺序 / 演唱者 A–Z）
+    var plSortSel = el('select', 'am-sort-sel');
+    plSortSel.title = '排序方式';
+    [['default', '原始顺序'], ['azArtist', '演唱者 A–Z']].forEach(function (o) {
+      var op = document.createElement('option');
+      op.value = o[0]; op.textContent = o[1];
+      plSortSel.appendChild(op);
+    });
+    plSortSel.value = AM.plSortMode ? AM.plSortMode() : 'default';
+    plSortSel.onchange = function () {
+      if (window.annieSettings) { annieSettings.ui.amPlSort = plSortSel.value; annieSettings.save(); }
+      renderView();
+    };
+    acts.appendChild(plSortSel);
     info.appendChild(acts);
     head.appendChild(info);
     c.appendChild(head);
@@ -1292,7 +1389,8 @@
     }
     tr.appendChild(acts);
     // V4.3.22：播放列表内拖拽排序（与迷你待播清单同一交互：拖到目标行放下即插入该行前）
-    if (opts.inPlaylist && !S.msOn) {
+    // V4.4.6：azArtist 排序模式下视图顺序≠paths 顺序，拖拽落点会错位——此时禁用拖拽
+    if (opts.inPlaylist && !S.msOn && !(AM.plSortMode && AM.plSortMode() === 'azArtist')) {
       tr.draggable = true;
       tr.title = '拖拽调整顺序';
       tr.addEventListener('dragstart', function (e) {

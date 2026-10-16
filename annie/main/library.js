@@ -141,18 +141,45 @@ function setCachedCover(filePath, mtimeMs, cover) {
  * 返回值语义与 getCachedCover 一致：undefined = 未缓存；null = 已知无封面。 */
 let coverDiskDir = null;
 let coverDiskIndex = null; // sha1 -> filename
+let coverDiskBytes = 0;    // V4.4.7：封面缓存总字节数（增量估算，启动时全量校正）
 const COVER_DISK_MAX = 3000;
+const COVER_DISK_MAX_BYTES = 512 * 1024 * 1024; // V4.4.7：磁盘封面缓存总大小上限 512MB
 
 function initCoverDiskCache(dir) {
   try {
     fs.mkdirSync(dir, { recursive: true });
     coverDiskDir = dir;
     coverDiskIndex = new Map();
+    coverDiskBytes = 0;
     for (const f of fs.readdirSync(dir)) {
       const m = /^([0-9a-f]{40})_\d+\..+$/.exec(f);
-      if (m) coverDiskIndex.set(m[1], f);
+      if (m) {
+        coverDiskIndex.set(m[1], f);
+        try { coverDiskBytes += fs.statSync(path.join(dir, f)).size; } catch { }
+      }
     }
-  } catch { coverDiskDir = null; coverDiskIndex = null; }
+    // 启动即裁剪（V4.4.7 前无上限，存量目录可能已超限）
+    if (coverDiskBytes > COVER_DISK_MAX_BYTES) pruneCoverDiskBySize();
+  } catch { coverDiskDir = null; coverDiskIndex = null; coverDiskBytes = 0; }
+}
+
+/* V4.4.7：按总大小裁剪封面磁盘缓存——按 mtime 从旧到新删到上限的 80% */
+function pruneCoverDiskBySize() {
+  if (!coverDiskDir || !coverDiskIndex) return;
+  const entries = [...coverDiskIndex.entries()].sort((a, b) => {
+    const ta = parseInt(a[1].split('_')[1], 10) || 0, tb = parseInt(b[1].split('_')[1], 10) || 0;
+    return ta - tb; // 最旧的在前
+  });
+  const target = COVER_DISK_MAX_BYTES * 0.8;
+  for (const [h, fn] of entries) {
+    if (coverDiskBytes <= target) break;
+    try {
+      const sz = fs.statSync(path.join(coverDiskDir, fn)).size;
+      fs.unlinkSync(path.join(coverDiskDir, fn));
+      coverDiskBytes -= sz;
+    } catch { }
+    coverDiskIndex.delete(h);
+  }
 }
 const coverSha1 = (p) => crypto.createHash('sha1').update(p).digest('hex');
 
@@ -192,6 +219,9 @@ function setDiskCover(filePath, mtimeMs, coverDataUrl) {
       fs.writeFileSync(path.join(coverDiskDir, fn), Buffer.from(m[2], 'base64'));
     }
     coverDiskIndex.set(h, fn);
+    // V4.4.7：写入后跟踪大小（新封面文件的实际字节数）
+    try { coverDiskBytes += fs.statSync(path.join(coverDiskDir, fn)).size; } catch { }
+    if (coverDiskBytes > COVER_DISK_MAX_BYTES) pruneCoverDiskBySize();
     // 容量剪枝：超上限按缓存文件的时间戳从旧到新删到 2500
     if (coverDiskIndex.size > COVER_DISK_MAX) {
       const entries = [...coverDiskIndex.entries()].sort((a, b) => {
@@ -298,6 +328,31 @@ function runTool(name, args, maxBuffer = 8 * 1024 * 1024, encoding = 'utf8') {
 
 const MP4_FAMILY = new Set(['.m4a', '.mp4', '.m4b', '.m4v', '.aac']);
 
+/* V4.4.7：超大封面自动降分辨率（>500KB → 640px JPEG q85）
+ * 秋野奈定位：Chromium 对 CSS url() 有 ~2MB 长度上限（url::kMaxURLChars），
+ * 封面 <img src> 不受影响但背景 background-image 受影响——「封面能显示、背景丢失」。
+ * 在主进程出口统一缩放，下游背景/取色/SMTC/IPC/磁盘缓存全部受益。 */
+const COVER_SHRINK_THRESHOLD = 500 * 1024; // 500KB 以上才缩
+const COVER_SHRINK_SIZE = 640;             // 沉浸模式最大封面 640px，超过无意义
+async function shrinkCoverIfNeeded(buf) {
+  if (!buf || buf.length <= COVER_SHRINK_THRESHOLD) return buf;
+  const os = require('os');
+  const tmpIn = path.join(os.tmpdir(), 'annie-cov-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.bin');
+  const tmpOut = tmpIn + '.jpg';
+  try {
+    fs.writeFileSync(tmpIn, buf);
+    await runTool('ffmpeg.exe', [
+      '-y', '-v', 'error', '-i', tmpIn,
+      '-vf', `scale=${COVER_SHRINK_SIZE}:${COVER_SHRINK_SIZE}:force_original_aspect_ratio=decrease`,
+      '-f', 'image2pipe', '-vcodec', 'mjpeg', '-q:v', '5', tmpOut
+    ]);
+    const out = fs.readFileSync(tmpOut);
+    // 缩完反而更大（极端情况：原图是小尺寸高压缩 PNG）→ 保留原图
+    return out.length < buf.length ? out : buf;
+  } catch { return buf; } // ffmpeg 不可用等异常：保原图
+  finally { try { fs.unlinkSync(tmpIn); } catch { } try { fs.unlinkSync(tmpOut); } catch { } }
+}
+
 /** ffprobe 兜底：标签 + 格式参数（不含封面）；失败返回 null。 */
 async function ffprobeTags(filePath) {
   const out = await runTool('ffprobe.exe', ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', filePath]);
@@ -324,7 +379,7 @@ async function ffprobeTags(filePath) {
 
 /** ffmpeg 兜底抽封面（attached_pic 流直出，不重编码）；无封面返回 null。 */
 async function ffprobeCover(filePath) {
-  const buf = await runTool('ffmpeg.exe',
+  let buf = await runTool('ffmpeg.exe',
     ['-v', 'error', '-i', filePath, '-map', '0:v:0', '-frames:v', '1', '-c', 'copy', '-f', 'image2pipe', 'pipe:1'],
     48 * 1024 * 1024, 'buffer'); // 二进制必须 Buffer，默认 utf8 字符串会把图片数据毁成乱码
   if (!buf || !buf.length) return null;
@@ -336,7 +391,9 @@ async function ffprobeCover(filePath) {
     console.log('[cover-fallback] 非图片输出，已丢弃:', filePath, buf.length + 'B', buf.slice(0, 12).toString('hex'));
     return null;
   }
-  return `data:${isPng ? 'image/png' : 'image/jpeg'};base64,${buf.toString('base64')}`;
+  buf = await shrinkCoverIfNeeded(buf); // V4.4.7：超大封面同样降分辨率（缩放后统一 JPEG）
+  const outIsPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+  return `data:${outIsPng ? 'image/png' : 'image/jpeg'};base64,${buf.toString('base64')}`;
 }
 
 /** 读内嵌标签（标题/艺术家/专辑/时长/码率 + 封面 dataURL）。 */
@@ -348,16 +405,21 @@ async function readMeta(filePath) {
     let cover = null;
     if (Array.isArray(c.picture) && c.picture.length > 0) {
       const pic = c.picture[0];
-      cover = `data:${pic.format || 'image/jpeg'};base64,${Buffer.from(pic.data).toString('base64')}`;
+      // V4.4.7：超大封面先降分辨率再转 dataURL（>500KB → 640px JPEG）
+      const picBuf = await shrinkCoverIfNeeded(Buffer.from(pic.data));
+      const isJpeg = picBuf.length >= 3 && picBuf[0] === 0xFF && picBuf[1] === 0xD8 && picBuf[2] === 0xFF;
+      cover = `data:${isJpeg ? 'image/jpeg' : (pic.format || 'image/jpeg')};base64,${picBuf.toString('base64')}`;
     }
     // 内嵌无封面时，尝试读取同目录外部封面文件
     if (!cover) {
       const extCover = findExternalCover(path.dirname(filePath));
       if (extCover) {
         try {
-          const buf = fs.readFileSync(extCover);
+          let buf = fs.readFileSync(extCover);
           if (buf.length > 0 && buf.length < 16 * 1024 * 1024) {
-            cover = `data:${mimeFromExt(path.extname(extCover))};base64,${buf.toString('base64')}`;
+            buf = await shrinkCoverIfNeeded(buf); // V4.4.7：同样降分辨率（缩放后统一 JPEG）
+            const outIsPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+            cover = `data:${outIsPng ? 'image/png' : 'image/jpeg'};base64,${buf.toString('base64')}`;
           }
         } catch { }
       }

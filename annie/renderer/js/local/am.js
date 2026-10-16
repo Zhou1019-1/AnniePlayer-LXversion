@@ -295,6 +295,13 @@
   function albumSortMode() {
     return (window.annieSettings && annieSettings.ui.amAlbumSort) || 'az';
   }
+  /* V4.4.6：播放列表/在线歌单排序（各自持久化） */
+  function plSortMode() {
+    return (window.annieSettings && annieSettings.ui.amPlSort) || 'default';
+  }
+  function splSortMode() {
+    return (window.annieSettings && annieSettings.ui.amSplSort) || 'default';
+  }
   /* 视图内搜索的匹配字段跟随当前排序方式：标题排序搜标题、演唱者排序搜演唱者、文件名排序搜文件名 */
   function songSearchField(mode) {
     return mode === 'azArtist' ? 'artist' : mode === 'name' ? 'name' : 'title';
@@ -355,6 +362,7 @@
     }
     if (isSongs) list = sortSongs(list); // V4.3.15：歌曲视图（含搜索结果）按所选方式排序
     else if (S.view === 'favorites') list = sortSongs(list, favSortMode()); // V4.3.22：喜爱歌曲同样可多方式排序
+    else if (S.view.indexOf('pl:') === 0 && plSortMode() === 'azArtist') list = sortByInitial(list, 'artist'); // V4.4.6：播放列表按演唱者首字母
     return list;
   }
   function refreshPlaylists() {
@@ -481,6 +489,8 @@
   AM.songSortMode = songSortMode;
   AM.favSortMode = favSortMode;
   AM.albumSortMode = albumSortMode;
+  AM.plSortMode = plSortMode;   // V4.4.6
+  AM.splSortMode = splSortMode; // V4.4.6
   /* V4.4.3：专辑详情页排序（独立持久化 ui.amAlbumDetailSort，与专辑列表页 amAlbumSort 分开）。
    * release = 按专辑发布顺序：碟号 disc → 曲目号 track（'no/of' 取前段）；
    *   无号曲目沉底按文件名自然序；CUE 虚拟分轨无标签，按 #cueN 数字续排；其余四种直接比较。 */

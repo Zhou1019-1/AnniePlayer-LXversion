@@ -897,6 +897,35 @@ function registerIpc() {
     return { canceled: false, results, playlists: loadStore().playlists };
   });
 
+  // V4.4.6：导入 M3U/M3U8 播放列表——文本解析（./m3u.js），每个文件建一个本地播放列表
+  ipcMain.handle('lib:playlist:importM3u', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '导入 M3U 播放列表',
+      filters: [{ name: 'M3U 播放列表', extensions: ['m3u', 'm3u8'] }],
+      properties: ['openFile', 'multiSelections']
+    });
+    if (r.canceled || !r.filePaths.length) return { canceled: true };
+    const { parseM3u } = require('./m3u');
+    const store = loadStore();
+    const results = [];
+    for (const fp of r.filePaths) {
+      let paths;
+      try { paths = parseM3u(fs.readFileSync(fp), path.dirname(fp)); }
+      catch (e) { results.push({ file: fp, ok: false, error: String((e && e.message) || e) }); continue; }
+      if (!paths.length) { results.push({ file: fp, ok: false, error: '未解析到本地文件路径' }); continue; }
+      let name = path.basename(fp).replace(/\.(m3u8?)$/i, '') || 'M3U 导入';
+      const names = new Set(store.playlists.map(p => p.name));
+      const base = name; let n = 2;
+      while (names.has(name)) name = base + ' (' + (n++) + ')';
+      store.playlists.push({
+        id: 'pl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        name, paths, created: Date.now(), m3uPath: fp
+      });
+      results.push({ file: fp, ok: true, name, count: paths.length });
+    }
+    saveStore({ playlists: store.playlists });
+    return { canceled: false, results, playlists: loadStore().playlists };
+  });
   /* V4.3.25：自建歌单导出 / 导入（换机复现；导出 .anniepl——JSON 载体，
    * 每首带多指纹：绝对路径、相对媒体库根路径、文件名、大小、时长、标题/艺人。
    * 导入在目标机曲库内 5 级降级匹配，未命中曲目随结果返回，前端列清单告知。

@@ -68,10 +68,13 @@
     var pop = R.timerPop;
     if (pop.classList.contains('on')) { pop.classList.remove('on'); return; }
     renderTimerPop();
-    var r = R.btnTimer.getBoundingClientRect();
+    // V4.4.6：顶栏精简后 btnTimer 收进「⋯」菜单（不在 DOM，rect 全 0），锚点改用 ⋯ 按钮
+    var anchor = (R.btnTimer && R.btnTimer.isConnected) ? R.btnTimer : R.btnMore;
+    var r = anchor.getBoundingClientRect();
+    pop.classList.add('on'); // 先显示再测量（display:none 时 offsetHeight 为 0）
     pop.style.left = Math.max(8, r.right - 280) + 'px';
-    pop.style.top = (r.bottom + 8) + 'px';
-    pop.classList.add('on');
+    var tbBottom = document.getElementById('am-root').classList.contains('am-topbar-bottom');
+    pop.style.top = tbBottom ? Math.max(8, r.top - pop.offsetHeight - 8) + 'px' : (r.bottom + 8) + 'px';
   }
   function renderTimerPop() {
     var pop = R.timerPop;
@@ -480,6 +483,36 @@
     bExit.title = '退出沉浸模式';
     bExit.onclick = function () { toggleImmersive(false); };
     cb.appendChild(bExit);
+    /* V4.4.7（秋野奈 PR#4）：沉浸界面直接切换真全屏（与「设置 → AM 界面」同源，持久化） */
+    R.immBtnFs = el('button', 'am-tbtn', '⛶');
+    R.immBtnFs.title = '真全屏（隐藏任务栏）';
+    R.immBtnFs.onclick = function (e) {
+      e.stopPropagation();
+      var ui = window.annieSettings && annieSettings.ui;
+      var on = !(ui && ui.amImmFullscreen);
+      if (ui) ui.amImmFullscreen = on;
+      try { window.annieSettings.save(); } catch (x) { }
+      try { if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(on); } catch (x) { }
+      R.immBtnFs.classList.toggle('on', on);
+      R.immBtnFs.title = on ? '退出真全屏（显示任务栏）' : '真全屏（隐藏任务栏）';
+    };
+    try { R.immBtnFs.classList.toggle('on', !!(window.annieSettings && annieSettings.ui && annieSettings.ui.amImmFullscreen)); } catch (x) { }
+    cb.insertBefore(R.immBtnFs, bExit);
+    /* V4.4.7（秋野奈 PR#5）：沉浸界面最小化按钮（CSS 画横线图标，不用字形——em dash 太宽、U+2212 太窄） */
+    R.immBtnMin = el('button', 'am-tbtn', '');
+    R.immBtnMin.title = '最小化';
+    R.immBtnMin.style.display = 'inline-flex';
+    R.immBtnMin.style.alignItems = 'center';
+    R.immBtnMin.style.justifyContent = 'center';
+    var _minBar = document.createElement('span');
+    _minBar.style.display = 'block';
+    _minBar.style.width = '.78em';
+    _minBar.style.height = '.1em';
+    _minBar.style.borderRadius = '1px';
+    _minBar.style.background = 'currentColor';
+    R.immBtnMin.appendChild(_minBar);
+    R.immBtnMin.onclick = function (e) { e.stopPropagation(); try { window.mine.winMin(); } catch (x) { } };
+    cb.insertBefore(R.immBtnMin, bExit);
     ov.appendChild(cb);
 
     R.immCover = document.createElement('img');

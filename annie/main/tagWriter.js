@@ -36,9 +36,29 @@ function lyricValue(v) {
   return String(v).replace(/`/g, '').trim();
 }
 
-/** 下载封面图片字节（主进程直连，带超时与大小上限；kwcdn 走 http） */
+/** 下载封面图片字节（主进程直连，带超时与大小上限；kwcdn 走 http）
+ *  V4.4.6：① 支持 dataURL 直接解码——渲染层 coverProxy 会把 kw http 封面转成 dataURL 回写
+ *  song.cover，下载链路拿到 dataURL 此前直接判死（只认 http）→ kw 下载不嵌封面；
+ *  ② 魔数校验——只接受 JPEG/PNG/GIF/WEBP，HTML 错误页/重定向页不再被当封面嵌入。 */
+function isImageBytes(buf) {
+  if (!buf || buf.length < 12) return false;
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true; // JPEG
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true; // PNG
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true; // GIF
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+    && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true; // RIFF+WEBP
+  return false;
+}
 async function fetchCoverBytes(url, timeoutMs = 10000, maxBytes = 8 * 1024 * 1024) {
   const u = String(url || '');
+  if (/^data:image\//i.test(u)) {
+    const m = /^data:image\/[a-z]+;base64,(.+)$/is.exec(u);
+    if (!m) return null;
+    try {
+      const buf = Buffer.from(m[1], 'base64');
+      return (buf.length > 0 && buf.length <= maxBytes && isImageBytes(buf)) ? buf : null;
+    } catch { return null; }
+  }
   if (!/^https?:\/\//i.test(u)) return null;
   try {
     const ctrl = new AbortController();
@@ -47,7 +67,7 @@ async function fetchCoverBytes(url, timeoutMs = 10000, maxBytes = 8 * 1024 * 102
     clearTimeout(to);
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
-    if (buf.length === 0 || buf.length > maxBytes) return null;
+    if (buf.length === 0 || buf.length > maxBytes || !isImageBytes(buf)) return null;
     return buf;
   } catch { return null; }
 }
@@ -90,9 +110,11 @@ async function writeTags(opts) {
     if (fs.existsSync(tmpCover)) args.push('-i', tmpCover);
     coverFile = tmpCover;
   }
-  // -map 0（原音频流）+ 封面作为附加图；先输出元数据
+  // 音频流全保留；有新封面要写入时显式剔除源文件自带的旧封面流（-map 0:a? 之外排除 0:v），
+  // 否则 -map 0 会把旧 attached_pic 一并拷出 → 双封面并存，读取方只认第一张（旧的），
+  // 表现为「封面错」：wy 源文件自带 APIC 封面，实测写完两图并存、旧图在前盖新图。
   args.push('-map', '0');
-  if (coverFile) args.push('-map', '1:v', '-c:v', 'copy', '-disposition:v', 'attached_pic');
+  if (coverFile) args.push('-map', '-0:v', '-map', '1:v', '-c:v', 'copy', '-disposition:v', 'attached_pic');
 
   const meta = {
     title: metaValue(opts.title),

@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('mine', {
   playlistReorder: (id, paths) => ipcRenderer.invoke('lib:playlist:reorder', id, paths), // V4.3.22：拖拽排序
   // V4.3.22：导入 foobar2000 .fpl 播放列表
   fplImport: () => ipcRenderer.invoke('lib:playlist:importFpl'),
+  // V4.4.6：导入 M3U/M3U8 播放列表
+  m3uImport: () => ipcRenderer.invoke('lib:playlist:importM3u'),
   // V4.3.25：自建歌单导出（.anniepl）/ 导入换机复现（多指纹匹配）
   playlistExportFile: (id) => ipcRenderer.invoke('lib:playlist:exportFile', id),
   playlistImportFile: () => ipcRenderer.invoke('lib:playlist:importFile'),

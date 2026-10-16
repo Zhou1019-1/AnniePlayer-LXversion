@@ -7,11 +7,15 @@
   function setMeta(m) {
     try {
       if ('mediaSession' in navigator) {
+        // V4.4.6：Chromium 对 MediaImage src 有长度上限（超限整个 metadata 被静默丢弃，
+        // 控制台报 "MediaImage src exceeds maximum URL length"）。本地封面 dataURL 可超 3MB，
+        // 超限时不带图，保住标题/艺人/专辑。
+        var cover = (m.cover && m.cover.length < 512 * 1024) ? m.cover : '';
         navigator.mediaSession.metadata = new MediaMetadata({
           title: m.title || '未知曲目',
           artist: m.artist || '',
           album: m.album || '',
-          artwork: m.cover ? [{ src: m.cover }] : [],
+          artwork: cover ? [{ src: cover }] : [],
         });
       }
     } catch (e) { }

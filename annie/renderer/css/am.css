@@ -535,6 +535,8 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
   padding: 7px 10px; border-radius: 7px; font: 13px var(--am-font); text-align: left;
 }
 .am-pop-item:hover { background: var(--am-accent); color: #fff; }
+/* V4.4.6：顶栏「⋯」菜单项激活态（如桌面歌词已开启） */
+.am-pop-item.on { color: var(--am-accent); font-weight: 600; }
 /* V4.4：菜单分组标题（不可点）——旧实现复用 .am-pop-item（cursor:pointer + hover 高亮），
  * 用户点「添加到播放列表」标题无任何反应，误以为功能坏了 */
 .am-pop-head { padding: 6px 10px 2px; font: 600 11px var(--am-font); color: var(--am-text-3);
@@ -783,9 +785,10 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
   width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
   box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);
 }
-.am-imm-title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; margin-top: 6px; }
-.am-imm-sub { font-size: 15px; color: rgba(255,255,255,.78); text-align: center; }
-.am-imm-fmt { font-size: 12px; color: rgba(255,255,255,.55); text-align: center; min-height: 15px; }
+/* V4.4.7（秋野奈 PR#4）：标题/歌手/音质字号随封面尺寸缩放——固定 px 在大屏上占比失调 */
+.am-imm-title { font-size: calc(min(28vw, 48vh, 640px) * 0.06); font-weight: 700; color: #fff; text-align: center; margin-top: 6px; }
+.am-imm-sub { font-size: calc(min(28vw, 48vh, 640px) * 0.041); color: rgba(255,255,255,.78); text-align: center; }
+.am-imm-fmt { font-size: calc(min(28vw, 48vh, 640px) * 0.033); color: rgba(255,255,255,.55); text-align: center; min-height: 15px; }
 .am-imm-prog { display: flex; align-items: center; gap: 10px; }
 .am-imm-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.28); cursor: pointer; }
 .am-imm-fill { height: 100%; width: 0; border-radius: 3px; background: #fff; }
@@ -816,7 +819,8 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.near { color: var(--am-text-2); }
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.cur { color: var(--am-text); }
 /* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词）；V4.3.26：占满右半区并向中轴靠拢，与左栏对称 */
-.am-imm-lyr { display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
+/* V4.4.7（秋野奈 PR#5）：经典双栏歌词上下渐隐遮罩——滚动时最上/最下一行不再被硬切断（彩胶已有同款） */
+.am-imm-lyr { mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
 /* V4.4：沉浸模式未开歌词时，封面+信息+控制栏整体居中
  *（.am-imm-main 恒为 1fr 1fr 双列，歌词隐藏后左列仍停在左半屏，右半全空） */

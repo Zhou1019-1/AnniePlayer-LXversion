@@ -1154,6 +1154,20 @@
     var bShuffle = el('button', 'am-btn', '🔀 随机播放');
     bShuffle.onclick = function () { if (pl.items.length) playSplAt(pl, Math.floor(Math.random() * pl.items.length)); };
     acts.appendChild(bPlay); acts.appendChild(bShuffle);
+    // V4.4.6：在线歌单排序下拉（平台原始顺序 / 演唱者 A–Z）
+    var splSortSel = el('select', 'am-sort-sel');
+    splSortSel.title = '排序方式';
+    [['default', '平台原始顺序'], ['azArtist', '演唱者 A–Z']].forEach(function (o) {
+      var op = document.createElement('option');
+      op.value = o[0]; op.textContent = o[1];
+      splSortSel.appendChild(op);
+    });
+    splSortSel.value = AM.splSortMode ? AM.splSortMode() : 'default';
+    splSortSel.onchange = function () {
+      if (window.annieSettings) { annieSettings.ui.amSplSort = splSortSel.value; annieSettings.save(); }
+      renderSplTable();
+    };
+    acts.appendChild(splSortSel);
     info.appendChild(acts);
     head.appendChild(info);
     // V4.3.26：歌单内搜索——输入即过滤定位（IME 组词期不重建输入框；data-st 保留原始索引，随机播放定位不受影响）
@@ -1197,6 +1211,20 @@
         }
         rows.push([i, it]);
       });
+      // V4.4.6：演唱者 A–Z 排序（同一艺人挨着，拼音首字母分组）——data-st 保留原始索引不受影响
+      if (AM.splSortMode && AM.splSortMode() === 'azArtist') {
+        var col = null;
+        try { col = new Intl.Collator(['zh-Hans-u-co-pinyin', 'en'], { sensitivity: 'base', numeric: true }); } catch (e) { }
+        var cmp = col ? col.compare.bind(col) : function (a, b) { return a < b ? -1 : a > b ? 1 : 0; };
+        var letterOf = window.annieInitialOf || function (t) { var ch = String(t || '').replace(/^\s+/, '').charAt(0); return /[a-z]/i.test(ch) ? ch.toUpperCase() : '#'; };
+        rows.sort(function (a, b) {
+          var arA = a[1].song.artist || '未知艺人', arB = b[1].song.artist || '未知艺人';
+          var la = letterOf(arA) === '#' ? '￿' : letterOf(arA), lb = letterOf(arB) === '#' ? '￿' : letterOf(arB);
+          if (la !== lb) return la < lb ? -1 : 1;
+          var c = cmp(arA, arB);
+          return c !== 0 ? c : cmp(a[1].song.name || '', b[1].song.name || '');
+        });
+      }
       if (!rows.length) {
         tbHost.appendChild(el('div', 'am-empty', q ? '歌单内没有匹配「' + S.splSearch + '」的歌曲' : '歌单还是空的'));
         return;

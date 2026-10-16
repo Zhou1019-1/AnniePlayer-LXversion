@@ -154,10 +154,15 @@
     });
     // 翻译行合并：同一时间戳的后续行作为 tly
     out.sort(function (a, b) { return a.t - b.t; });
+    // V4.4.7（秋野奈 PR#6）：元信息行（作词/作曲/编曲）不参与译文合并——这类行时间戳连续（差 0.01s），
+    // 旧逻辑会把「作曲」挂成「作词」的译文、「编曲」直接消失。
+    // 判据：中文短标签（1–6 字）+ 可选空格 + 全/半角冒号，或英文 "xxx by:"。
+    // 一行最多一个译文（!prev.tly 防止第三行覆盖第二行）。
+    var metaLineRe = /^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i;
     var merged = [];
     out.forEach(function (l) {
       var prev = merged[merged.length - 1];
-      if (prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text) prev.tly = l.text;
+      if (prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text && !prev.tly && !metaLineRe.test(l.text)) prev.tly = l.text;
       else if (l.text) merged.push({ t: l.t, text: l.text, tly: '', words: l.words || null });
     });
     return merged;
@@ -165,6 +170,7 @@
   /* 流媒体译文轨合并：tlyric 是独立 LRC 文本，按时间戳就近挂到主歌词行（±0.8s） */
   function mergeTly(lines, tlyText) {
     if (!tlyText || !lines.length) return lines;
+    var metaLineRe = /^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i;
     var tl = parseLrc(tlyText);
     tl.forEach(function (x) {
       var best = -1, bd = 0.8;
@@ -172,7 +178,8 @@
         var d = Math.abs(lines[i].t - x.t);
         if (d < bd) { bd = d; best = i; }
       }
-      if (best >= 0 && !lines[best].tly) lines[best].tly = x.text;
+      // V4.4.7（秋野奈 PR#6）：元信息行不挂译文；译文与原文相同跳过
+      if (best >= 0 && !lines[best].tly && x.text !== lines[best].text && !metaLineRe.test(x.text || '')) lines[best].tly = x.text;
     });
     return lines;
   }
@@ -318,8 +325,12 @@
       }
       ctx.font = n._fw + ' ' + n._fs0 + 'px ' + n._ff;
       var w = ctx.measureText(n._kt).width;
-      // 仅兜底不可折行的超长词（无空白）；其余行一律自然折行，不再缩字号
-      if (w > avail && !/\s/.test(n._kt)) n.style.fontSize = Math.max(n._fs0 * 0.55, Math.floor(n._fs0 * avail / w * 10) / 10) + 'px';
+      // 可折行判定：有空白符（西文按词折行）或 CJK 文本（中日韩按字折行）都可自然折行，
+      // 只有「无空白且非 CJK 的超长拉丁词/URL」才缩字号兜底。
+      // V4.4.6：旧逻辑 /\s/ 只认 ASCII 空白 → 日文歌词无空格被误判为「不可折行」，
+      // 所有超宽日文行都被压到 55% 字号，与其他行字号明显不一致。
+      var canWrap = /\s/.test(n._kt) || /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\uff00-\uffef]/.test(n._kt);
+      if (w > avail && !canWrap) n.style.fontSize = Math.max(n._fs0 * 0.55, Math.floor(n._fs0 * avail / w * 10) / 10) + 'px';
       else n.style.fontSize = '';
     }
   }
@@ -331,10 +342,13 @@
   /* 滚动条仅滚动时出现（停滚 800ms 后隐藏） */
   // V4.4：程序驱动（歌词跟随/恢复位置）的 scrollTop 写入窗口内不显示自动隐藏滚动条，
   // 否则逐行跟随滚动会持续触发 scroll 事件让滚动条竖条常驻
+  // V4.4.6：保护窗 150ms → 800ms——scroll-behavior:smooth 的滚动动画实际持续 300ms+，
+  // 后半段的 scroll 事件超出旧 150ms 窗口被误判成手动滚动，触发 lyrManualUntil 锁死 5 秒，
+  // 表现为「每 3 句才滚一次」（秋野奈定位）。
   var _progScrollUntil = new WeakMap();
   function progScrollTop(box, val) {
     if (!box) return;
-    _progScrollUntil.set(box, Date.now() + 150);
+    _progScrollUntil.set(box, Date.now() + 800);
     box.scrollTop = val;
   }
   AM.progScrollTop = progScrollTop;

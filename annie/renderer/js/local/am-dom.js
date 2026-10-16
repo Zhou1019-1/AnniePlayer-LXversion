@@ -1748,8 +1748,8 @@
       if (sx < 8) sx = Math.max(8, window.innerWidth - sw - 8);
       var sy = br.top - 4;
       sy = Math.max(8, Math.min(sy, window.innerHeight - sh - 8));
-      sub.style.left = sx + 'px';
-      sub.style.top = sy + 'px';
+      var _pr = parentPop.getBoundingClientRect(); sub.style.left = (sx - _pr.left) + 'px';
+      sub.style.top = (sy - _pr.top) + 'px';
     }
     function hide() { sub.classList.remove('on'); }
     btn.onmouseenter = place;

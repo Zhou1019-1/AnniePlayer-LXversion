@@ -783,9 +783,9 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
   width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
   box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);
 }
-.am-imm-title { font-size: 22px; font-weight: 700; color: #fff; text-align: center; margin-top: 6px; }
-.am-imm-sub { font-size: 15px; color: rgba(255,255,255,.78); text-align: center; }
-.am-imm-fmt { font-size: 12px; color: rgba(255,255,255,.55); text-align: center; min-height: 15px; }
+.am-imm-title { font-size: calc(min(28vw, 48vh, 640px) * 0.06); font-weight: 700; color: #fff; text-align: center; margin-top: 6px; }
+.am-imm-sub { font-size: calc(min(28vw, 48vh, 640px) * 0.041); color: rgba(255,255,255,.78); text-align: center; }
+.am-imm-fmt { font-size: calc(min(28vw, 48vh, 640px) * 0.033); color: rgba(255,255,255,.55); text-align: center; min-height: 15px; }
 .am-imm-prog { display: flex; align-items: center; gap: 10px; }
 .am-imm-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.28); cursor: pointer; }
 .am-imm-fill { height: 100%; width: 0; border-radius: 3px; background: #fff; }

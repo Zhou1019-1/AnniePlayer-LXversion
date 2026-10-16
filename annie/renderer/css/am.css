@@ -833,8 +833,10 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
    颜色变量 --vinyl-c1/--vinyl-c2 由 amVizColor 封面取色注入（黑白封面回落主题强调色）；
    背景仍走 .am-imm-bg（封面氛围 / 自定义壁纸 wp-on wp-imm 规则照常生效）。 */
 .am-imm-vinyl .am-imm-vmain { align-items: stretch; padding-bottom: 12px; }
-/* 压过「未开歌词时单列居中」规则：彩胶歌词常驻，恒双列 */
-#am-root.am-imm-on .am-imm-vinyl .am-imm-main { grid-template-columns: 1fr 1fr; }
+/* 压过「未开歌词时单列居中」规则：彩胶歌词常驻，恒双列。
+   列宽与经典双栏同方案（minmax(0, X) 约束列宽，间距由 .am-imm-main 的 column-gap 控制），
+   避免 1fr 双半屏在大屏上把标题歌词列与彩胶越拉越开 */
+#am-root.am-imm-on .am-imm-vinyl .am-imm-main { grid-template-columns: minmax(0, min(42vw, 890px)) minmax(0, min(42vw, 890px)); }
 .am-imm-vinyl .am-imm-vleft {
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   justify-content: center; padding: 0 44px;

@@ -319,7 +319,7 @@
       ctx.font = n._fw + ' ' + n._fs0 + 'px ' + n._ff;
       var w = ctx.measureText(n._kt).width;
       // 仅兜底不可折行的超长词（无空白）；其余行一律自然折行，不再缩字号
-      if (w > avail && !/\s/.test(n._kt)) n.style.fontSize = Math.max(n._fs0 * 0.55, Math.floor(n._fs0 * avail / w * 10) / 10) + 'px';
+      if (w > avail && !/\s/.test(n._kt) && !/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(n._kt)) n.style.fontSize = Math.max(n._fs0 * 0.55, Math.floor(n._fs0 * avail / w * 10) / 10) + 'px';
       else n.style.fontSize = '';
     }
   }
@@ -334,7 +334,7 @@
   var _progScrollUntil = new WeakMap();
   function progScrollTop(box, val) {
     if (!box) return;
-    _progScrollUntil.set(box, Date.now() + 150);
+    _progScrollUntil.set(box, Date.now() + 900);
     box.scrollTop = val;
   }
   AM.progScrollTop = progScrollTop;

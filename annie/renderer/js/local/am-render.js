@@ -480,6 +480,23 @@
     bExit.title = '退出沉浸模式';
     bExit.onclick = function () { toggleImmersive(false); };
     cb.appendChild(bExit);
+      /* 沉浸界面最小化（与迷你模式同一入口 window.mine.winMin）
+     图标不用字形：em dash 太宽、U+2212 太窄，且字形长度与粗细绑死没法单独调；
+     改用 CSS 画一条横线，长度 .78em、粗细 .1em，颜色跟随按钮。 */
+  R.immBtnMin = el('button', 'am-tbtn', '');
+  R.immBtnMin.title = '最小化';
+  R.immBtnMin.style.display = 'inline-flex';
+  R.immBtnMin.style.alignItems = 'center';
+  R.immBtnMin.style.justifyContent = 'center';
+  var _minBar = document.createElement('span');
+  _minBar.style.display = 'block';
+  _minBar.style.width = '.78em';
+  _minBar.style.height = '.1em';
+  _minBar.style.borderRadius = '1px';
+  _minBar.style.background = 'currentColor';
+  R.immBtnMin.appendChild(_minBar);
+  R.immBtnMin.onclick = function (e) { e.stopPropagation(); try { window.mine.winMin(); } catch (x) { } };
+  cb.insertBefore(R.immBtnMin, bExit);
     ov.appendChild(cb);
 
     R.immCover = document.createElement('img');

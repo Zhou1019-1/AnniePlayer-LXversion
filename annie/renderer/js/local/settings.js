@@ -54,6 +54,7 @@
     accent: 'default',       // V3.5.17：强调色（default=主题原色；AM/粒子舞台生效）
     amViz: true,              // V3.5.17：AM 主题底部实时频谱条
     amVizColor: 'cover',      // V4.3.17：频谱条配色 cover|coverMulti|rainbow|heat|accent
+    amLRBar: 'on',            // V4.4.7（PR#6）：信息面板电平条 on|off
     beatAnalysis: true        // V4.4：节拍律动分析（相机随鼓点运动；关闭省整轨解码，弱机建议关）
   };
 
@@ -736,6 +737,24 @@
     vcSel.onchange = function () { ui.amVizColor = vcSel.value; save(); };
     vcRow.appendChild(vcLab); vcRow.appendChild(vcSel);
     s5.appendChild(vcRow);
+    // —— 信息面板电平条（PR#6）：开关（颜色跟随封面） ——
+    var lrRow2 = markItem(el('div', 'set-row'), '电平条 L/R 信息面板 频谱');
+    var lrLab = el('div'); lrLab.appendChild(el('div', '', '信息面板电平条'));
+    lrLab.appendChild(el('div', 'set-hint', '信息面板里那两条 L / R 电平指示，颜色跟随封面'));
+    var lrSel = document.createElement('select');
+    [['on', '显示'], ['off', '隐藏']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; lrSel.appendChild(op);
+    });
+    lrSel.value = ui.amLRBar === 'off' ? 'off' : 'on';
+    try { localStorage.setItem('amLRBar', lrSel.value); } catch (e3) { }
+    lrSel.onchange = function () {
+      ui.amLRBar = lrSel.value; save();
+      try { localStorage.setItem('amLRBar', lrSel.value); } catch (e3) { }
+      var rr = document.getElementById('am-root');
+      if (rr) rr.classList.toggle('am-lr-off', lrSel.value === 'off');
+    };
+    lrRow2.appendChild(lrLab); lrRow2.appendChild(lrSel);
+    s5.appendChild(lrRow2);
 
     // —— 氛围模式（V3.5.18：全屏频谱，任意主题可用） ——
     var ambRow = markItem(el('div', 'set-row'), '氛围模式 全屏 频谱 可视化 ambient');

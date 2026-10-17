@@ -2063,7 +2063,7 @@
       sub.appendChild(it);
     });
     function place() {
-      sub.classList.add('on');
+      clearTimeout(sub._t); sub.classList.add('on');
       var br = btn.getBoundingClientRect();
       var sw = sub.offsetWidth, sh = sub.offsetHeight;
       var sx = br.right + 4;
@@ -2071,10 +2071,10 @@
       if (sx < 8) sx = Math.max(8, window.innerWidth - sw - 8);
       var sy = br.top - 4;
       sy = Math.max(8, Math.min(sy, window.innerHeight - sh - 8));
-      sub.style.left = sx + 'px';
-      sub.style.top = sy + 'px';
+      var _pr = parentPop.getBoundingClientRect(); sub.style.left = (sx - _pr.left) + 'px';
+      sub.style.top = (sy - _pr.top) + 'px';
     }
-    function hide() { sub.classList.remove('on'); }
+    function hide() { clearTimeout(sub._t); sub._t = setTimeout(function () { sub.classList.remove('on'); }, 180); }
     btn.onmouseenter = place;
     btn.onclick = function (e) { e.stopPropagation(); if (!sub.classList.contains('on')) place(); };
     btn.onmouseleave = function (e) {

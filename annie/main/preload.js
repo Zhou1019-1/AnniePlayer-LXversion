@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('mine', {
   hotkeysSetEnabled: (on) => ipcRenderer.invoke('hotkeys:setEnabled', on),
   playState: (s) => ipcRenderer.send('player:state', s),
   playerProgress: (p) => ipcRenderer.send('player:progress', p), // V3.5.18：任务栏进度条
+  smtcUpdate: (o) => ipcRenderer.send('smtc:update', o), // V4.4.7：系统媒体会话（SMTC）元数据
+  winDragBy: (d) => ipcRenderer.send('win:dragBy', d), // V4.4.7：手动拖窗口（顶栏胶囊长按）
+  onSmtcButton: (cb) => ipcRenderer.on('smtc:button', (_e, t2) => cb(t2)), // 媒体键 / 浮层按钮
 
   // 曲库
   pickFolder: () => ipcRenderer.invoke('lib:pickFolder'),

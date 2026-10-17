@@ -569,6 +569,112 @@ function registerIpc() {
     } catch { }
   });
 
+  /* V4.4.7（PR#6）：SMTC 伴随进程（PowerShell + WinRT）。
+     系统媒体浮层 / 壁纸媒体信息 / BetterLyrics 这类工具读的是 Windows 媒体会话（SMTC），
+     本体音频走自研引擎（WASAPI 直出），而 Chromium 的 navigator.mediaSession 在 Electron 里
+     不会桥到 SMTC；所以这里起一个隐藏的 PowerShell 常驻进程，自己持有静音 MediaPlayer +
+     SystemMediaTransportControls，元数据由渲染层经 IPC 推过来。
+     协议：每行一个 base64(UTF8 JSON)，避免控制台代码页把中文搞乱。 */
+  const NL = String.fromCharCode(10);
+  let smtcProc = null;
+  let smtcAumidDone = false;
+  /* V4.4.7：把会话 AUMID 注册进系统。
+     系统的媒体浮层 / 壁纸引擎这类消费方会按会话的 SourceAppUserModelId 反查应用名和图标，
+     查不到时整条会话可能被直接忽略（实测：BetterLyrics 认、壁纸引擎不认）。
+     AnniePlayer.Fusion.SMTC 不是安装包注册的，这里补 DisplayName + IconUri（指向本体 exe）。 */
+  function smtcRegisterAumid() {
+    if (smtcAumidDone) return;
+    smtcAumidDone = true;
+    try {
+      const { spawnSync } = require('child_process');
+      const BS = String.fromCharCode(92);
+      const key = 'HKCU' + BS + 'Software' + BS + 'Classes' + BS + 'AppUserModelId' + BS + 'AnniePlayer.Fusion.SMTC';
+      spawnSync('reg', ['add', key, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', '安妮播放器', '/f'], { windowsHide: true });
+      spawnSync('reg', ['add', key, '/v', 'IconUri', '/t', 'REG_SZ', '/d', process.execPath, '/f'], { windowsHide: true });
+    } catch { }
+  }
+  function smtcEnsure() {
+    if (smtcProc) return smtcProc;
+    smtcRegisterAumid();
+    try {
+      /* 优先用编译版宿主（能接媒体键 / 浮层按钮）；没有 exe 才退回 PowerShell */
+      const sdir = path.join(process.resourcesPath || '', 'smtc');
+      const sexe = path.join(sdir, 'smtc-host.exe');
+      if (fs.existsSync(sexe)) {
+        const { spawn: sp2 } = require('child_process');
+        smtcProc = sp2(sexe, ['-Silent', path.join(sdir, 'silent.wav'), '-ParentPid', String(process.pid)],
+          { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+        try {
+          smtcProc.stdout.on('data', (buf) => {
+            const txt = buf.toString('utf8');
+            if (txt.indexOf('"evt":"button"') >= 0 && mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('smtc:button', txt);
+            }
+          });
+        } catch { }
+        smtcProc.on('exit', () => { smtcProc = null; });
+        smtcProc.on('error', () => { smtcProc = null; });
+        return smtcProc;
+      }
+    } catch { }
+    try {
+      const script = path.join(process.resourcesPath || '', 'smtc', 'smtc-host.ps1');
+      if (!fs.existsSync(script)) return null;
+      const { spawn } = require('child_process');
+      smtcProc = spawn('powershell',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script],
+        { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+      smtcProc.on('exit', () => { smtcProc = null; });
+      smtcProc.on('error', () => { smtcProc = null; });
+    } catch { smtcProc = null; }
+    return smtcProc;
+  }
+  /* V4.4.7：手动拖窗口——顶栏是 app-region: drag，但格式胶囊改成 no-drag 才能点，
+     所以长按胶囊时由渲染层推增量，这里移动窗口 */
+  ipcMain.on('win:dragBy', (_e, d) => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const dx = Math.round(Number(d && d.dx) || 0), dy = Math.round(Number(d && d.dy) || 0);
+      if (!dx && !dy) return;
+      const b = mainWindow.getBounds();
+      mainWindow.setPosition(b.x + dx, b.y + dy);
+    } catch { }
+  });
+  ipcMain.on('smtc:update', (_e, o) => {
+    if (!o || o.off) {                       /* 设置里关掉：收掉会话 */
+      try {
+        if (smtcProc) {
+          smtcProc.stdin.write(Buffer.from(JSON.stringify({ cmd: 'quit' }), 'utf8').toString('base64') + NL);
+          smtcProc.kill();
+        }
+      } catch { }
+      smtcProc = null;
+      return;
+    }
+    const pr = smtcEnsure();
+    if (!pr || !pr.stdin || pr.stdin.destroyed) return;
+    try {
+      const payload = {
+        title: String((o && o.title) || '').slice(0, 120),
+        artist: String((o && o.artist) || '').slice(0, 120),
+        album: String((o && o.album) || '').slice(0, 120),
+        playing: !!(o && o.playing),
+        cover: String((o && o.cover) || '').slice(0, 2500000),
+        pos: Number((o && o.pos) || 0),
+        dur: Number((o && o.dur) || 0)
+      };
+      pr.stdin.write(Buffer.from(JSON.stringify(payload), 'utf8').toString('base64') + '\n');
+    } catch { }
+  });
+  app.on('will-quit', () => {
+    try {
+      if (!smtcProc) return;
+      smtcProc.stdin.write(Buffer.from(JSON.stringify({ cmd: 'quit' }), 'utf8').toString('base64') + '\n');
+      smtcProc.kill();
+    } catch { }
+    smtcProc = null;
+  });
+
   // EXP 7.28：选目录只更新文件夹列表，扫描交由 lib:scanStart（Worker 异步批量回传）
   ipcMain.handle('lib:pickFolder', async () => {
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'multiSelections'] });

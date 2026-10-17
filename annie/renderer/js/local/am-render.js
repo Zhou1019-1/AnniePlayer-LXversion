@@ -1680,7 +1680,7 @@
                     (state.currentIso && state.currentIso.src) || (t && t.path);
       if (srcPath) (t ? albumCover : ensureCover).call(null, t || srcPath, function (url) {
         if (state.currentPath !== p) return;
-        if (url && url.indexOf('data:') === 0) smtcCoverThumb(url, function (small) { S._smtcCover = small; S._smtcCoverReady = true; pushSmtc(); }); /* V4.4.7：SMTC 封面（先缩到 320px） */
+        if (url && url.indexOf('data:') === 0) smtcCoverThumb(url, function (small) { S._smtcCover = small; S._smtcCoverReady = true; pushSmtc(); }); /* V4.4.7：SMTC 封面（缩到 400px） */
         swapCover(R.npCover, url || null);
         swapAtmosphere(url || null);
         syncAuxViews();
@@ -1691,7 +1691,7 @@
     loadLyrics(state.currentStream ? state.currentPath : ((state.currentCue && state.currentCue.src) || (t && t.path) || null), !!state.currentStream);
   }
 
-  /* V4.4.7（PR#6）：SMTC 封面统一缩到 320px JPEG。
+  /* V4.4.7（PR#6）：SMTC 封面统一缩到 400px JPEG（SMTC 缩略图不需要大图，减小 IPC 体积）。
      原始内嵌封面动辄几百 KB～几 MB（dataURL 更大），直接塞给 PowerShell 宿主既慢又会被
      主进程的 400KB 上限截断——截断后 base64 非法，宿主解码失败就永远没有封面。 */
   var _smtcThumbCache = {};
@@ -1702,10 +1702,10 @@
       var img = new Image();
       img.onload = function () {
         try {
-          var MAXS = 1400;
+          var MAXS = 400;
           var iw = img.width || MAXS, ih = img.height || MAXS;
           var s = Math.min(iw, ih);                 // 先居中裁成正方形
-          var side = Math.max(64, Math.min(MAXS, s)); // 不放大：源图小于 1400 就按源图边长走
+          var side = Math.max(64, Math.min(MAXS, s)); // 不放大：源图小于 400 就按源图边长走
           var cv = document.createElement('canvas');
           cv.width = side; cv.height = side;
           var g = cv.getContext('2d');

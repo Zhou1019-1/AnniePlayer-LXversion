@@ -60,6 +60,10 @@
     var np = el('div', 'am-np');
     var npRow = el('div', 'am-np-row');
     R.npCover = el('img', 'am-np-cover'); R.npCover.alt = '';
+    /* V4.4.7（秋野奈 PR#6）：点顶栏封面直接进沉浸模式——和右上角 ⤢ 按钮同一条路，
+       按钮保留不动，这里只是多一个更顺手的入口 */
+    R.npCover.title = '点击进入沉浸模式';
+    R.npCover.onclick = function () { toggleImmersive(true); };
     var npText = el('div', 'am-np-text');
     R.npText = npText; // V4.1：切歌文本过渡动画需要容器引用
     R.npTitle = el('div', 'am-np-title', '未在播放');
@@ -107,7 +111,7 @@
     function volKeep() { clearTimeout(volHideT); vol.classList.add('vol-open'); }
     function volScheduleHide() {
       clearTimeout(volHideT);
-      volHideT = setTimeout(function () { vol.classList.remove('vol-open'); }, 600);
+      volHideT = setTimeout(function () { vol.classList.remove('vol-open'); }, 200);
     }
     vol.addEventListener('mouseenter', volKeep);
     vol.addEventListener('mouseleave', volScheduleHide);
@@ -131,8 +135,7 @@
     document.addEventListener('annie-exclusive-changed', function (e) {
       if (R.btnExcl) R.btnExcl.textContent = (e.detail && e.detail.exclusive) ? '🔒' : '🔓';
     });
-    R.btnLocate = el('button', 'am-tbtn', '🎯'); R.btnLocate.title = '定位当前播放文件';
-    R.btnLocate.onclick = locatePlaying;
+
     // V4.4.6：顶栏精简——低频按钮不再直接入栏（对象照建，同步逻辑不受影响），收进「⋯」菜单
     // V4.4：主界面待播清单抽屉（此前仅沉浸/迷你能看队列）
     R.btnQ = el('button', 'am-tbtn', '☰'); R.btnQ.title = '待播清单 / 历史记录';
@@ -168,13 +171,51 @@
     btnDlyr.onclick = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
     document.addEventListener('annie-dlyrics-changed', function (e) { btnDlyr.classList.toggle('on', !!(e.detail && e.detail.on)); });
     // V4.3.5：播放中一键收藏（仅在线歌曲；本地歌曲走行内 ♥）
-    var btnNpFav = el('button', 'am-tbtn', '♥');
-    btnNpFav.title = '收藏正在播放的在线歌曲到在线歌单';
+    /* V4.4.7（PR#6）：收藏按钮重绘成 SVG 心形——未收藏是空心描边，收藏后填成主题色（默认红）。
+       本地曲目：直接切换「喜爱歌曲」（与行内 ♥ 同一个 IPC），状态跟着 state.favorites 走；
+       在线曲目：仍走原来的「加到在线歌单」弹层，行为不变。 */
+    var btnNpFav = el('button', 'am-tbtn am-fav-btn');
+    btnNpFav.title = '收藏';
+    // 放在顶栏「歌曲信息」这一行里，格式徽标的左边
+    if (R.npBadge && R.npBadge.parentNode === npRow) npRow.insertBefore(btnNpFav, R.npBadge);
+    else npRow.appendChild(btnNpFav);
+    var favSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    favSvg.setAttribute('class', 'am-fav-ico');
+    favSvg.setAttribute('viewBox', '0 0 16 16');
+    favSvg.setAttribute('width', '15');
+    favSvg.setAttribute('height', '15');
+    favSvg.setAttribute('aria-hidden', 'true');
+    var favPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    favPath.setAttribute('d', 'M8 13.4 C8 13.4 2 9.5 2 5.9 C2 3.7 3.7 2.2 5.5 2.2 C6.7 2.2 7.6 2.9 8 3.7 C8.4 2.9 9.3 2.2 10.5 2.2 C12.3 2.2 14 3.7 14 5.9 C14 9.5 8 13.4 8 13.4 Z');
+    favPath.setAttribute('fill', 'none');
+    favPath.setAttribute('stroke', 'currentColor');
+    favPath.setAttribute('stroke-width', '1.3');
+    favPath.setAttribute('stroke-linejoin', 'round');
+    favSvg.appendChild(favPath);
+    btnNpFav.appendChild(favSvg);
+    function syncNpFav() {
+      var p = state.currentPath;
+      var on = !!(p && !state.currentStream && state.favorites && state.favorites.has(p));
+      btnNpFav.classList.toggle('on', on);
+      btnNpFav.title = on ? '取消收藏' : '收藏';
+      btnNpFav.style.display = p ? '' : 'none'; // 没在播放就不占位
+    }
     btnNpFav.onclick = function (e) {
-      e.stopPropagation(); // 防 document 点击代理把刚打开的收藏弹层立刻关掉
+      e.stopPropagation();
+      var p = state.currentPath;
+      if (p && !state.currentStream) {
+        window.mine.toggleFavorite(p).then(function (favs) {
+          state.favorites = new Set(favs);
+          syncNpFav();
+          if (S.view === 'favorites') renderView();
+        }).catch(function () { });
+        return;
+      }
       var r = btnNpFav.getBoundingClientRect();
       if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
     };
+    syncNpFav();
+    setInterval(syncNpFav, 800); // 切歌/别处收藏后跟上状态（只是 Set.has，开销可忽略）
     // V4.3.16：复制播放中在线歌的平台分享链接
     var btnNpShare = el('button', 'am-tbtn', '🔗');
     btnNpShare.title = '复制正在播放的在线歌曲的分享链接';
@@ -202,56 +243,90 @@
       var order = ['legacy', 'fb2k', 'am'];
       window.annieTheme.switch(order[(order.indexOf(annieTheme.current) + 1) % order.length]);
     };
-    right.appendChild(R.btnLyr);
-    /* V4.4.6：顶栏精简——低频入口收进「⋯」展开菜单（共享弹层 R.pop，外点关闭走全局监听）。
-     * 留在栏上：音量 / 待播清单 / 播放模式 / 沉浸 / 歌词面板 / 设置；
-     * 收进菜单：独占 / 定位 / 定时 / 迷你 / 桌面歌词 / 收藏 / 分享 / 亮暗 / 主题。
-     * 菜单每次打开重建，图标直接读按钮对象 textContent（独占🔒🔓、亮暗🌙☀ 等状态自然同步）。 */
-    R.btnMore = el('button', 'am-tbtn', '⋯'); R.btnMore.title = '更多';
-    R.btnMore.onclick = function (e) { e.stopPropagation(); openTbMoreMenu(); };
-    right.appendChild(R.btnMore);
-    function openTbMoreMenu() {
-      var pop = R.pop;
-      pop.innerHTML = '';
-      function item(btn, label, action, onCls) {
-        var it = el('button', 'am-pop-item' + (onCls && onCls() ? ' on' : ''), btn.textContent + ' ' + label);
-        it.onclick = function (e) {
-          e.stopPropagation(); // 防外点监听把定时弹层等二级弹层立刻关掉
-          pop.classList.remove('on');
-          action();
-        };
-        pop.appendChild(it);
-      }
-      item(R.btnExcl, '独占/共享输出', function () { R.btnExcl.onclick(); });
-      item(R.btnLocate, '定位当前播放', function () { locatePlaying(); });
-      item(R.btnTimer, '睡眠定时', function () { toggleTimerPop(); });
-      pop.appendChild(el('div', 'am-pop-sep'));
-      item(R.btnMiniM, '迷你模式', function () { enterMini(); });
-      item(btnDlyr, '桌面歌词', function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); },
-        function () { return btnDlyr.classList.contains('on'); });
-      pop.appendChild(el('div', 'am-pop-sep'));
-      item(btnNpFav, '收藏正在播放', function () {
-        var r = R.btnMore.getBoundingClientRect(); // 原按钮不在 DOM，锚点改用 ⋯ 位置
-        if (AM.favCurrentStream) AM.favCurrentStream(r.left, r.bottom + 6);
-      });
-      item(btnNpShare, '复制分享链接', function () { if (AM.copyCurrentStreamLink) AM.copyCurrentStreamLink(); });
-      pop.appendChild(el('div', 'am-pop-sep'));
-      item(R.btnLight, isLight() ? '切换到暗色' : '切换到亮色', function () { R.btnLight.onclick(); });
-      item(R.btnTheme, '切换主题', function () { R.btnTheme.onclick(); });
-      pop.classList.add('on');
-      var r = R.btnMore.getBoundingClientRect();
-      var w = pop.offsetWidth, h = pop.offsetHeight;
-      pop.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 12)) + 'px';
-      // 顶栏置底时向上弹出，否则向下
-      var tbBottom = root.classList.contains('am-topbar-bottom');
-      pop.style.top = tbBottom
-        ? Math.max(8, r.top - h - 6) + 'px'
-        : Math.min(r.bottom + 6, window.innerHeight - h - 12) + 'px';
+    /* V4.4.7（PR#6）：低频入口不再是「⋯」弹层，改成「就地向左展开」的收缩栏：
+       点一下，被收起的按钮从 ⋯ 左侧滑出来（就地展开，不弹窗）；再点一下收起。
+       状态是「钉住」的——只有这个按钮能改，点别处（调音量/切歌…）不会自己收回去。
+       留在栏上：音量 / 待播清单 / 播放模式 / 沉浸 / 设置。 */
+    var moreWrap = el('div', 'am-tb-more');
+    var MORE_KEY = 'annieplayer.tbmore.open'; // 展开/收起状态持久化（跨重启）
+    function moreGroup(list) {
+      list.forEach(function (b) { if (b) moreWrap.appendChild(b); });
     }
+    moreGroup([R.btnExcl, R.btnTimer]);
+    moreGroup([R.btnMiniM, R.btnLyr, btnDlyr]);
+    moreGroup([btnNpShare]);
+    moreGroup([R.btnLight, R.btnTheme]);
+    right.appendChild(moreWrap);
+    R.btnMore = el('button', 'am-tbtn am-tb-more-btn');
+    R.btnMore.title = '展开更多';
+    var moreChev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    moreChev.setAttribute('class', 'am-more-chev');
+    moreChev.setAttribute('viewBox', '0 0 10 12');
+    moreChev.setAttribute('width', '9');
+    moreChev.setAttribute('height', '11');
+    moreChev.setAttribute('aria-hidden', 'true');
+    var moreChevP = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    moreChevP.setAttribute('d', 'M7.5 1.5 L3 6 L7.5 10.5');
+    moreChevP.setAttribute('fill', 'none');
+    moreChevP.setAttribute('stroke', 'currentColor');
+    moreChevP.setAttribute('stroke-width', '1.7');
+    moreChevP.setAttribute('stroke-linecap', 'round');
+    moreChevP.setAttribute('stroke-linejoin', 'round');
+    moreChev.appendChild(moreChevP);
+    R.btnMore.appendChild(moreChev);
+    function setMore(open, silent) {
+      /* V4.4.7：清掉可能残留的内联样式（调试/外部写入会把 max-width 钉死，
+         导致点「收起」没反应——现象是类名变了但宽度不变） */
+      moreWrap.style.maxWidth = '';
+      moreWrap.style.marginRight = '';
+      moreWrap.style.transition = '';
+      moreWrap.classList.toggle('open', open);
+      R.btnMore.classList.toggle('on', open);
+      R.btnMore.title = open ? '收起' : '展开更多';
+      if (!silent) { try { localStorage.setItem(MORE_KEY, open ? '1' : '0'); } catch (e) { } }
+    }
+    R.btnMore.onclick = function (e) {
+      e.stopPropagation();
+      setMore(!moreWrap.classList.contains('open'));
+    };
+    right.appendChild(R.btnMore);
+    // 恢复上次的展开/收起状态（重启后不再默认收起）；直接落定，不播一遍展开动画
+    try {
+      if (localStorage.getItem(MORE_KEY) === '1') {
+        moreWrap.classList.add('no-anim');
+        setMore(true, true);
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () { moreWrap.classList.remove('no-anim'); });
+        });
+      }
+    } catch (e) { }
     var wb = el('div', 'am-winbtns');
-    var bMin = el('button', 'am-tbtn', '—'); bMin.title = '最小化'; bMin.onclick = function () { window.mine.winMin(); };
-    var bMax = el('button', 'am-tbtn', '▢'); bMax.title = '最大化'; bMax.onclick = function () { window.mine.winMax(); };
-    var bClose = el('button', 'am-tbtn am-close', '✕'); bClose.title = '关闭'; bClose.onclick = function () { window.mine.winClose(); };
+    /* V4.4.7（PR#6）：最小化/最大化/关闭改用 SVG 画。
+       原来用「— ▢ ✕」三个字形：粗细、字面高度、基线都跟左边那排图标对不上（还随字体变）。
+       现在统一 1.5px 描边、11px 画布、圆角端点，靠 flex 居中，三个和左边一行齐平。 */
+    function winIcon(d) {
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'am-win-ico');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('width', '16');
+      svg.setAttribute('height', '16');
+      svg.setAttribute('aria-hidden', 'true');
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.3');
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(p);
+      return svg;
+    }
+    var bMin = el('button', 'am-tbtn', ''); bMin.title = '最小化'; bMin.appendChild(winIcon('M3 8 H13'));
+    bMin.onclick = function () { window.mine.winMin(); };
+    var bMax = el('button', 'am-tbtn', ''); bMax.title = '最大化'; bMax.appendChild(winIcon('M3.6 3.6 H12.4 V12.4 H3.6 Z'));
+    bMax.onclick = function () { window.mine.winMax(); };
+    var bClose = el('button', 'am-tbtn am-close', ''); bClose.title = '关闭'; bClose.appendChild(winIcon('M4.2 4.2 L11.8 11.8 M11.8 4.2 L4.2 11.8'));
+    bClose.onclick = function () { window.mine.winClose(); };
     wb.appendChild(bMin); wb.appendChild(bMax); wb.appendChild(bClose);
     right.appendChild(wb);
     // V4.4：设置「顶栏置底」已开启时（AM build 晚于 settings hydrate），构建后立刻把三键挂到
@@ -342,10 +417,90 @@
     body.appendChild(btnLyrFold);
 
     // V4.3.16：悬浮回顶部——滚过约 1.5 屏才浮出，点击平滑回顶（挂 .am-body 不随 content 清空，全视图通用）
-    var backTop = el('button', 'am-backtop', '⤒');
+    /* V4.4.7（PR#6）：回顶部图标同样改成 SVG——原来的「⤒」字形本身重心偏上，
+       在圆钮里怎么摆都显得不居中 */
+    var backTop = el('button', 'am-backtop');
+    (function () {
+      var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      s.setAttribute('class', 'am-backtop-ico');
+      s.setAttribute('viewBox', '0 0 16 16');
+      s.setAttribute('width', '16');
+      s.setAttribute('height', '16');
+      s.setAttribute('aria-hidden', 'true');
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', 'M8 13.4 V3.4 M3.9 7.4 L8 3.3 L12.1 7.4');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.5');
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-linejoin', 'round');
+      s.appendChild(p);
+      backTop.appendChild(s);
+    })();
     backTop.title = '返回顶部';
     backTop.onclick = function () { R.content.scrollTo({ top: 0, behavior: 'smooth' }); };
     body.appendChild(backTop);
+    /* V4.4.7（PR#6）：定位当前播放——从顶栏「更多」里挪出来，做成右下角圆钮（与「回顶部」并排）。
+       图标重绘成准星（SVG）；只在「当前页面看不到正在播放的那一行」时出现。 */
+    R.btnLocate = el('button', 'am-backtop am-locate-fab');
+    R.btnLocate.title = '定位当前播放';
+    var locSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    locSvg.setAttribute('class', 'am-locate-ico');
+    locSvg.setAttribute('viewBox', '0 0 16 16');
+    locSvg.setAttribute('width', '16');
+    locSvg.setAttribute('height', '16');
+    locSvg.setAttribute('aria-hidden', 'true');
+    var locRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    locRing.setAttribute('cx', '8');
+    locRing.setAttribute('cy', '8');
+    locRing.setAttribute('r', '4.3');
+    locRing.setAttribute('fill', 'none');
+    locRing.setAttribute('stroke', 'currentColor');
+    locRing.setAttribute('stroke-width', '1.4');
+    locSvg.appendChild(locRing);
+    var locPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    locPath.setAttribute('d', 'M8 1.3 V3.2 M8 12.8 V14.7 M1.3 8 H3.2 M12.8 8 H14.7');
+    locPath.setAttribute('fill', 'none');
+    locPath.setAttribute('stroke', 'currentColor');
+    locPath.setAttribute('stroke-width', '1.4');
+    locPath.setAttribute('stroke-linecap', 'round');
+    locSvg.appendChild(locPath);
+    R.btnLocate.appendChild(locSvg);
+    R.btnLocate.onclick = function (e) { e.stopPropagation(); locatePlaying(); };
+    body.appendChild(R.btnLocate);
+    /* 当前曲目在不在「本视图的列表」里、行是不是在可视区。
+       返回 'none'（不显示）/ 'on'（行就在眼前）/ 'off'（该显示按钮）。
+       注意：列表是窗口化渲染的（可视区 ±15 行），正在播放那一行通常**不在 DOM 里**，
+       所以「在不在列表」必须查 S._tbl.tracks，不能查 DOM。 */
+    function playingRowState() {
+      var p = state.currentPath;
+      if (!p || !R.content) return 'none';
+      var row = null;
+      try { row = R.content.querySelector('.am-tr[data-path="' + CSS.escape(p) + '"]'); } catch (e) { row = null; }
+      var list = (S._tbl && S._tbl.tracks) || null, inList;
+      if (list) {
+        inList = false;
+        for (var li = 0; li < list.length; li++) { if (list[li].path === p) { inList = true; break; } }
+      } else {
+        inList = !!row;                     // 未窗口化：DOM 里就是全部
+      }
+      if (!inList) {
+        /* 本视图没有这首歌（在别的播放列表里播）：歌曲全库视图下照样给按钮，
+           点了由 locatePlaying() 切回全库并滚到它 */
+        return S.view === 'songs' ? 'off' : 'none';
+      }
+      if (!row) return 'off';               // 列表里有但没渲染 = 一定在视野外
+      var r = row.getBoundingClientRect(), c = R.content.getBoundingClientRect();
+      return (r.bottom > c.top + 6 && r.top < c.bottom - 6) ? 'on' : 'off';
+    }
+    function updateLocateFab() {
+      /* 行就在眼前 → 收起（定位成功后也要消失）；滚出去了 / 本视图没有这首歌 → 浮出来。
+         build133 试过「歌曲视图常驻」，结果定位成功后按钮不消失，已撤回。 */
+      R.btnLocate.classList.toggle('on', playingRowState() === 'off');
+    }
+    R.content.addEventListener('scroll', updateLocateFab, { passive: true });
+    setInterval(updateLocateFab, 700);      // 切歌 / 换视图 / 窗口化重建后跟上
+    updateLocateFab();
     R.content.addEventListener('scroll', function () {
       backTop.classList.toggle('on', R.content.scrollTop > R.content.clientHeight * 1.5);
     }, { passive: true });
@@ -355,6 +510,36 @@
     /* 播放定时弹层 */
     R.timerPop = el('div', 'am-pop am-timer-pop');
 
+    /* V4.4.7（PR#6）：顶栏这一排用的是 emoji 字形，每个字形的墨迹基线都不一样
+       （最夸张的 🗕 比中线低 5.7px，⏸ 比左右邻键低 2.2px），整排看着不齐。
+       这里按实测逐个做竖直微调；用 position/top 而不是 transform，避免盖掉 :active 的按下缩放。
+       播放键会在 ▶/⏸ 之间换字形、独占键 🔒/🔓、亮暗键 🌙/☀——换完要重新贴一次，
+       否则会一直沿用旧字形的偏移量。 */
+    (function () {
+      var nudge = { '⏮': -1.3, '▶': -0.9, '⏸': -2.9, '⏭': -1.3, '⇥': -1.3, '🗕': -5.7, '💬': -0.3, '🔗': -0.4, '🌙': -1.3, '🎨': -0.4, '🔊': -1.0, '⤢': 0.4, '⚙': 0.4, '⏲': 0.4, '🔓': -1.3, '🎤': 0.4, '🔒': 0.4 };
+      function applyNudge(b) {
+        if (!b) return;
+        var t = (b.textContent || '').trim();
+        var n = nudge[t];
+        if (!t || n === undefined) { b.style.paddingTop = ''; b.style.paddingBottom = ''; return; }
+        if (/play/i.test(b.className || '')) { b.style.paddingTop = ''; b.style.paddingBottom = ''; return; } // 播放键由 setPlayIcon 单独管
+        /* V4.4.7：用上下内边距（2n 的差）挪字形，而不是 top——
+           用 top 会把按钮的悬停底色块一起挪走，看起来那个图标整块高了一截 */
+        b.style.paddingTop = (n > 0 ? n * 2 : 0) + 'px';
+        b.style.paddingBottom = (n < 0 ? -n * 2 : 0) + 'px';
+      }
+      var btns = top.querySelectorAll('.am-tbtn'); /* 此刻 top 还没进文档，只能从 top 里查 */
+      for (var i = 0; i < btns.length; i++) applyNudge(btns[i]);
+      var watch = [R.btnPlay, R.btnExcl, R.btnLight];
+      if (typeof MutationObserver === 'function') {
+        for (var w = 0; w < watch.length; w++) {
+          (function (b) {
+            if (!b) return;
+            new MutationObserver(function () { applyNudge(b); }).observe(b, { childList: true, characterData: true, subtree: true });
+          })(watch[w]);
+        }
+      }
+    })();
     root.appendChild(top); root.appendChild(body); root.appendChild(R.pop); root.appendChild(R.timerPop);
     // V3.5.17：实时频谱可视化条（引擎 32 频段 10Hz 推送，贴底细条，迷你/沉浸下隐藏）
     R.vizBar = document.createElement('canvas'); R.vizBar.className = 'am-vizbar';
@@ -954,23 +1139,128 @@
       head.appendChild(inp);
     }
     if (cfg.sort) {
-      var sel = el('select', 'am-sort-sel');
-      sel.title = '排序方式';
-      cfg.sort.opts.forEach(function (o) {
-        var op = document.createElement('option');
-        op.value = o[0]; op.textContent = o[1];
-        sel.appendChild(op);
-      });
-      sel.value = cfg.sort.value;
-      sel.onchange = function () {
-        if (window.annieSettings) { annieSettings.ui[cfg.sort.key] = sel.value; annieSettings.save(); }
+      head.appendChild(sortDropdown(cfg.sort.opts, cfg.sort.value, function (v) {
+        if (window.annieSettings) { annieSettings.ui[cfg.sort.key] = v; annieSettings.save(); }
         renderView();
-      };
-      head.appendChild(sel);
+      }));
     }
     return head;
   }
   /* 搜索框占位符：明示当前匹配字段（跟随排序方式） */
+  /* V4.4.7（PR#6）：行内小按钮统一用 SVG。符号字形（⊕ ✕ ⋯）各自的墨迹基线不同，
+     和 SVG 混在一排永远对不齐；连同 .am-mini-btn 的 inline-flex 居中，三个图标严格同线。 */
+  function miniIco(btn, d, size, ringR) {
+    var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('class', 'am-fav-ico');
+    s.setAttribute('viewBox', '0 0 16 16');
+    s.setAttribute('width', size || 14);
+    s.setAttribute('height', size || 14);
+    s.setAttribute('aria-hidden', 'true');
+    if (ringR) {
+      var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', '8'); c.setAttribute('cy', '8'); c.setAttribute('r', String(ringR));
+      c.setAttribute('fill', 'none');
+      c.setAttribute('stroke', 'currentColor');
+      c.setAttribute('stroke-width', '1.3');
+      s.appendChild(c);
+    }
+    var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', 'currentColor');
+    p.setAttribute('stroke-width', '1.3');
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    s.appendChild(p);
+    btn.appendChild(s);
+  }
+
+  /* V4.4.7（PR#6）：自定义排序下拉。
+     原生 <select> 的展开列表是系统绘制的（蓝底 + 系统高亮），既没法样式化也跟主题玻璃皮肤对不上，
+     这里换成「胶囊按钮 + .am-pop 弹层」一套。弹层全应用共用一个实例，避免每次 renderView 往 body 里堆节点。 */
+  var _sortPop = null, _sortOwner = null;
+  function _sortOnDoc(e) {
+    if (!_sortPop) return;
+    if (_sortPop.contains(e.target)) return;
+    if (_sortOwner && _sortOwner.contains(e.target)) return;
+    _sortClose();
+  }
+  function _sortOnKey(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); _sortClose(); }
+  }
+  function _sortClose() {
+    if (!_sortPop) return;
+    _sortPop.classList.remove('on');
+    if (_sortOwner) _sortOwner.classList.remove('open');
+    _sortOwner = null;
+    document.removeEventListener('mousedown', _sortOnDoc, true);
+    document.removeEventListener('keydown', _sortOnKey, true);
+  }
+  function sortDropdown(opts, value, onPick) {
+    if (!_sortPop) {
+      _sortPop = el('div', 'am-pop am-sort-pop');
+      // 必须挂在 #am-root 里：主题变量（--am-glass / --am-text …）都定义在它上面，
+      // 挂 body 的话背景色/文字色全部失效（弹层会变全透明）
+      (document.getElementById('am-root') || document.body).appendChild(_sortPop);
+    }
+    var wrap = el('div', 'am-sort-dd');
+    var btn = el('button', 'am-sort-btn');
+    btn.title = '排序方式';
+    var lab = el('span', 'am-sort-lab');
+    var chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('class', 'am-sort-chev');
+    chev.setAttribute('viewBox', '0 0 16 10');
+    chev.setAttribute('width', '11');
+    chev.setAttribute('height', '7');
+    chev.setAttribute('aria-hidden', 'true');
+    var chP = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    chP.setAttribute('d', 'M2 2 L8 8 L14 2');
+    chP.setAttribute('fill', 'none');
+    chP.setAttribute('stroke', 'currentColor');
+    chP.setAttribute('stroke-width', '1.6');
+    chP.setAttribute('stroke-linecap', 'round');
+    chP.setAttribute('stroke-linejoin', 'round');
+    chev.appendChild(chP);
+    btn.appendChild(lab); btn.appendChild(chev);
+    wrap.appendChild(btn);
+    var cur = value;
+    function labelOf(v) {
+      for (var i = 0; i < opts.length; i++) if (opts[i][0] === v) return opts[i][1];
+      return opts.length ? opts[0][1] : '';
+    }
+    function paint() {
+      lab.textContent = labelOf(cur);
+      _sortPop.innerHTML = '';
+      opts.forEach(function (o) {
+        var it = el('button', 'am-pop-item' + (o[0] === cur ? ' on' : ''), o[1]);
+        it.onclick = function (e) {
+          e.stopPropagation();
+          cur = o[0];
+          lab.textContent = labelOf(cur);
+          _sortClose();
+          onPick(o[0]);
+        };
+        _sortPop.appendChild(it);
+      });
+    }
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      if (_sortOwner === wrap) { _sortClose(); return; }
+      _sortClose();
+      paint();
+      var r = btn.getBoundingClientRect();
+      _sortPop.style.minWidth = Math.max(150, Math.round(r.width)) + 'px';
+      _sortPop.style.left = Math.round(r.left) + 'px';
+      _sortPop.style.top = Math.round(r.bottom + 6) + 'px';
+      _sortPop.classList.add('on');
+      wrap.classList.add('open');
+      _sortOwner = wrap;
+      document.addEventListener('mousedown', _sortOnDoc, true);
+      document.addEventListener('keydown', _sortOnKey, true);
+    };
+    lab.textContent = labelOf(cur);
+    return wrap;
+  }
   function songSearchPh(mode) {
     var f = AM.songSearchField(mode);
     return f === 'artist' ? '搜索演唱者' : f === 'name' ? '搜索文件名' : '搜索标题';
@@ -1144,19 +1434,10 @@
         dhead.style.cssText = 'display:flex;align-items:center;gap:10px';
         dhead.appendChild(back);
         dhead.appendChild(el('div', 'am-view-h', S.albumKey));
-        var dsel = el('select', 'am-sort-sel');
-        dsel.title = '排序方式';
-        ALBUM_DETAIL_SORT_OPTS.forEach(function (o) {
-          var op = document.createElement('option');
-          op.value = o[0]; op.textContent = o[1];
-          dsel.appendChild(op);
-        });
-        dsel.value = AM.albumDetailSortMode ? AM.albumDetailSortMode() : 'release';
-        dsel.onchange = function () {
-          if (window.annieSettings) { annieSettings.ui.amAlbumDetailSort = dsel.value; annieSettings.save(); }
+        dhead.appendChild(sortDropdown(ALBUM_DETAIL_SORT_OPTS, AM.albumDetailSortMode ? AM.albumDetailSortMode() : 'release', function (v) {
+          if (window.annieSettings) { annieSettings.ui.amAlbumDetailSort = v; annieSettings.save(); }
           renderView();
-        };
-        dhead.appendChild(dsel);
+        }));
         c.appendChild(dhead);
       }
     } else if (S.view.indexOf('pl:') === 0) {
@@ -1318,19 +1599,11 @@
     };
     acts.appendChild(bPlay); acts.appendChild(bShuffle);
     // V4.4.6：播放列表排序下拉（原始顺序 / 演唱者 A–Z）
-    var plSortSel = el('select', 'am-sort-sel');
-    plSortSel.title = '排序方式';
-    [['default', '原始顺序'], ['azArtist', '演唱者 A–Z']].forEach(function (o) {
-      var op = document.createElement('option');
-      op.value = o[0]; op.textContent = o[1];
-      plSortSel.appendChild(op);
-    });
-    plSortSel.value = AM.plSortMode ? AM.plSortMode() : 'default';
-    plSortSel.onchange = function () {
-      if (window.annieSettings) { annieSettings.ui.amPlSort = plSortSel.value; annieSettings.save(); }
-      renderView();
-    };
-    acts.appendChild(plSortSel);
+    acts.appendChild(sortDropdown([['default', '原始顺序'], ['azArtist', '演唱者 A–Z']],
+      AM.plSortMode ? AM.plSortMode() : 'default', function (v) {
+        if (window.annieSettings) { annieSettings.ui.amPlSort = v; annieSettings.save(); }
+        renderView();
+      }));
     info.appendChild(acts);
     head.appendChild(info);
     c.appendChild(head);
@@ -1364,7 +1637,24 @@
     tr.appendChild(el('td', 'am-c-dim', esc(m.artist)));
     tr.appendChild(el('td', 'am-c-dim', esc(m.album)));
     var acts = el('td', 'am-c-acts');
-    var bFav = el('button', 'am-mini-btn' + (state.favorites && state.favorites.has(t.path) ? ' faved' : ''), '♥');
+    /* V4.4.7（PR#6）：行内收藏键与顶栏同款——未收藏空心描边，收藏后填成主题色 */
+    var bFav = el('button', 'am-mini-btn' + (state.favorites && state.favorites.has(t.path) ? ' faved' : ''));
+    (function () {
+      var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      s.setAttribute('class', 'am-fav-ico');
+      s.setAttribute('viewBox', '0 0 16 16');
+      s.setAttribute('width', '14');
+      s.setAttribute('height', '14');
+      s.setAttribute('aria-hidden', 'true');
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', 'M8 13.4 C8 13.4 2 9.5 2 5.9 C2 3.7 3.7 2.2 5.5 2.2 C6.7 2.2 7.6 2.9 8 3.7 C8.4 2.9 9.3 2.2 10.5 2.2 C12.3 2.2 14 3.7 14 5.9 C14 9.5 8 13.4 8 13.4 Z');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.3');
+      p.setAttribute('stroke-linejoin', 'round');
+      s.appendChild(p);
+      bFav.appendChild(s);
+    })();
     bFav.title = '喜爱';
     bFav.onclick = function (e) {
       e.stopPropagation();
@@ -1374,19 +1664,13 @@
         if (S.view === 'favorites') renderView();
       });
     };
-    var bAdd = el('button', 'am-mini-btn', '⊕');
+    var bAdd = el('button', 'am-mini-btn');
+    miniIco(bAdd, 'M8 5.3 V10.7 M5.3 8 H10.7', 14, 5.3);
     bAdd.title = '添加到播放列表';
     bAdd.onclick = function (e) { e.stopPropagation(); openAddMenu(e.clientX, e.clientY, t.path); };
     acts.appendChild(bFav); acts.appendChild(bAdd);
-    if (opts.inPlaylist) {
-      var bRm = el('button', 'am-mini-btn', '✕');
-      bRm.title = '从播放列表移除';
-      bRm.onclick = function (e) {
-        e.stopPropagation();
-        window.mine.playlistRemove(opts.plId, t.path).then(function (pls) { S.playlists = pls; renderSidebar(); renderView(); });
-      };
-      acts.appendChild(bRm);
-    }
+    /* V4.4.7（PR#6）：行内「从播放列表移除」的 ✕ 去掉了——太容易误触删歌；
+       需要移除时走右键菜单（多选逻辑都还在） */
     tr.appendChild(acts);
     // V4.3.22：播放列表内拖拽排序（与迷你待播清单同一交互：拖到目标行放下即插入该行前）
     // V4.4.6：azArtist 排序模式下视图顺序≠paths 顺序，拖拽落点会错位——此时禁用拖拽
@@ -1397,14 +1681,24 @@
         S._plDragPath = t.path;
         try { e.dataTransfer.effectAllowed = 'move'; } catch (er) { }
       });
-      tr.addEventListener('dragover', function (e) { e.preventDefault(); tr.classList.add('drag-over'); });
-      tr.addEventListener('dragleave', function () { tr.classList.remove('drag-over'); });
-      tr.addEventListener('drop', function (e) {
-        e.preventDefault(); tr.classList.remove('drag-over');
-        var from = S._plDragPath; S._plDragPath = null;
-        if (from && from !== t.path) movePlRow(opts.plId, from, t.path);
+      /* V4.4.7（PR#6）：拖动指示改成和侧栏歌单一致的「插入线」——
+         落在行上半 = 插到该行前，下半 = 插到该行后；原来整行红框看不出方向 */
+      tr.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        var r = tr.getBoundingClientRect();
+        var before = (e.clientY - r.top) < r.height / 2;
+        tr.classList.toggle('drop-before', before);
+        tr.classList.toggle('drop-after', !before);
+        tr._dropBefore = before;
       });
-      tr.addEventListener('dragend', function () { S._plDragPath = null; tr.classList.remove('drag-over'); });
+      tr.addEventListener('dragleave', function () { tr.classList.remove('drop-before', 'drop-after'); });
+      tr.addEventListener('drop', function (e) {
+        e.preventDefault();
+        tr.classList.remove('drop-before', 'drop-after');
+        var from = S._plDragPath; S._plDragPath = null;
+        if (from && from !== t.path) movePlRow(opts.plId, from, t.path, !tr._dropBefore);
+      });
+      tr.addEventListener('dragend', function () { S._plDragPath = null; tr.classList.remove('drop-before', 'drop-after'); });
     }
     if (S.msOn) {
       tr.onclick = function (e) {
@@ -1423,14 +1717,15 @@
 
   /* ---------- V4.3.22：本地曲库多选 + 删除（歌曲/专辑详情/喜爱歌曲） ---------- */
   /* 播放列表拖拽排序：from 插到 to 行之前（按路径定位——窗口化行索引在 paths 有缺口时会错位） */
-  function movePlRow(plId, fromPath, toPath) {
+  function movePlRow(plId, fromPath, toPath, after) {
     var pl = S.playlists.find(function (p) { return p.id === plId; });
     if (!pl) return;
     var arr = pl.paths;
     var fi = arr.indexOf(fromPath), ti = arr.indexOf(toPath);
     if (fi < 0 || ti < 0) return;
     arr.splice(fi, 1);
-    arr.splice(arr.indexOf(toPath), 0, fromPath); // 删除后目标索引自动前移，插到它前面=占据原视觉位
+    var at = arr.indexOf(toPath);          // 删除后目标索引自动前移
+    arr.splice(after ? at + 1 : at, 0, fromPath); // 上半屏插前、下半屏插后
     renderView(); // 本地先重排即时反馈，持久化随后
     window.mine.playlistReorder(plId, arr).then(function (pls) { S.playlists = pls; }).catch(function () { });
   }

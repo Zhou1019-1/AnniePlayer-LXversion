@@ -1289,3 +1289,113 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-mini-on .am-backtop, #am-root.am-imm-on .am-backtop { display: none; }
 /* 索引跳转/定位播放时，行顶部预留 sticky 表头 + 一行的高度，避免首行被表头遮挡（非窗口化路径由 scrollIntoView 走这里） */
 .am-table tbody .am-tr { scroll-margin-top: 100px; }
+/* 1) 音量条改为「竖直、向下弹出」：原来向右盖住 ⛶ / − 等按钮。
+      竖直滑块用「水平条整体 rotate(-90deg)」实现——Chrome 的 writing-mode 竖直滑块
+      滑钮在横轴上会有 1~2px 的偏心，旋转法沿用水平方向久经验证的居中（thumb margin-top 补半格），
+      左右绝对对得齐。旋转后：0 在下、100 在上。 */
+.am-vol { position: relative; }
+.am-vol input[type="range"] {
+  left: 50%; right: auto; top: calc(100% + 8px); bottom: auto;
+  /* 布局盒 112×30，绕自身中心转 -90° 后视觉尺寸 30×112；
+     translateY 补 (112-30)/2 = 41，让视觉顶边正好落在图标下方 8px */
+  transform: translateX(-50%) translateY(41px) rotate(90deg);
+  width: 112px; height: 30px; padding: 0 14px; box-sizing: border-box;
+}
+/* 悬停隐形桥跟着变窄变高（原桥向右铺 118px，正是挡按钮的元凶） */
+.am-vol::after {
+  left: 50%; right: auto; top: 100%; bottom: auto; transform: translateX(-50%);
+  width: 52px; height: 128px;
+}
+/* 音量条现在单独浮在下方，不再贴着按钮底色，需要一条看得见的槽 */
+.am-vol input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: color-mix(in srgb, var(--am-text) 22%, transparent);
+}
+.am-vol input[type="range"]::-webkit-slider-thumb { margin-top: -4px; }
+/* 3) 顶栏封面可点进沉浸模式——必须 no-drag，否则点击被窗口拖拽区吃掉（这就是「点了没反应」的根因） */
+.am-np-cover {
+  -webkit-app-region: no-drag; cursor: pointer;
+  transition: transform .15s ease, filter .15s ease;
+}
+.am-np-cover:hover { filter: brightness(1.12); transform: scale(1.04); }
+.am-np-cover:active { transform: scale(.97); }
+/* 4) 排序下拉：原生 <select> 的展开列表由系统绘制（蓝底高亮），没法跟皮肤统一，
+      改成「胶囊按钮 + .am-pop 弹层」（见 am-dom.js 的 sortDropdown）。 */
+.am-sort-dd { flex: none; position: relative; display: inline-flex; }
+.am-sort-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 12px 0 14px; border: 0; border-radius: 9px;
+  background: var(--am-glass-2); color: var(--am-text);
+  font: 600 13px var(--am-font); cursor: pointer;
+  transition: background-color .15s;
+}
+.am-sort-btn:hover { background-color: var(--am-hover); }
+.am-sort-btn.on { background-color: var(--am-hover); }
+.am-sort-chev { flex: none; opacity: .65; transition: transform .18s ease; }
+.am-sort-dd.open .am-sort-chev { transform: rotate(180deg); }
+.am-sort-dd.open .am-sort-btn { background-color: var(--am-hover); }
+.am-sort-pop { min-width: 150px; }
+.am-sort-pop .am-pop-item { white-space: nowrap; }
+.am-pl-actions .am-sort-dd { margin: 0; }
+/* 5) 顶栏「更多」：低频按钮不再弹层，就地收进一条可横向展开的收缩栏 */
+.am-tb-more {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  max-width: 0; overflow: hidden; opacity: 0; pointer-events: none;
+  /* 收起时容器宽度 0，但它在顶栏这一行里仍占「左右各一个 6px gap」，
+     于是 💬 → ‹ 的空隙变成 12px（其它图标之间都是 6px）。
+     用 -6px 右外边距抵掉右边那个 gap：收起 6px、展开 6px，两头都对齐。 */
+  margin-right: -6px;
+  transition: max-width .26s cubic-bezier(.25,.8,.3,1), opacity .2s ease, margin-right .26s cubic-bezier(.25,.8,.3,1);
+}
+.am-tb-more.open { max-width: 520px; opacity: 1; pointer-events: auto; margin-right: 0; }
+.am-tb-more.no-anim { transition: none; } /* 恢复上次展开状态时不要播一遍动画 */
+.am-tb-more > * { flex: none; }
+/* 窗口三键原来的 margin-left:4px 会让展开按钮右侧多出 4px，清零 */
+.am-winbtns { margin-left: 0; gap: 4px; }
+/* 三键按钮收窄到与其它工具栏按钮同宽（原 40px 让图标显得又小又散） */
+.am-winbtns .am-tbtn { width: 34px; border-radius: 8px; }
+.am-win-ico { display: block; }
+/* 收藏按钮：未收藏=空心描边，已收藏=主题色实心（默认红） */
+.am-fav-ico { display: block; }
+.am-fav-btn.on, .am-fav-btn.on:hover { color: var(--am-accent); }
+.am-fav-btn.on .am-fav-ico path { fill: currentColor; }
+.am-fav-btn.on .am-fav-ico { animation: amFavPop .28s cubic-bezier(.25,.8,.3,1); }
+@keyframes amFavPop { 0% { transform: scale(.82); } 55% { transform: scale(1.14); } 100% { transform: scale(1); } }
+/* 顶栏歌曲信息行里的收藏键：比工具栏按钮略小一号，跟 38px 封面同一视觉重量；
+   再往格式徽标贴一点（负左边距吃掉一半行内 gap），并轻微下移 2px 让视觉重心落在文字基线上 */
+.am-np-row .am-fav-btn { width: 28px; height: 28px; border-radius: 8px; margin: 0 0 0 4px; position: relative; left: 3px; top: 0px; }
+.am-more-chev { transition: transform .26s cubic-bezier(.25,.8,.3,1); }
+.am-tb-more-btn.on .am-more-chev { transform: rotate(180deg); }
+/* 6) A–Z 索引条与歌词面板那把「❮/❯」把手都会撞：把手在窗口右缘占 26px，
+      索引条原来 right:14px 正好压在它上面；歌词面板开着时把手挪到面板左缘（right:360 + 26），
+      原规则只让到 374px 也不够。两态各让一次。 */
+#am-root .am-az { right: 40px; }
+#am-root.am-lyr-on .am-az { right: 392px; }
+/* 7) 定位当前播放：坐在「回顶部」正上方的圆钮（复用 .am-backtop 的外观与显隐机制） */
+/* 两个圆钮原来用 1px border 画描边，在非整数缩放下会变成 0.88px 且左右落点不同像素，
+   圆心视觉上会偏。改成 border:0 + inset 阴影画描边——描边永远精确贴在盒子内缘，
+   圆和里面的图标都严格同心。 */
+.am-backtop {
+  border: 0; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 0 1px var(--am-sep), 0 4px 16px rgba(0, 0, 0, .25);
+}
+.am-backtop-ico { display: block; }
+.am-locate-fab { right: 22px; bottom: 70px; }
+.am-locate-ico { display: block; }
+#am-root.am-lyr-on .am-locate-fab { right: 382px; }
+.am-mini-btn { display: inline-flex; align-items: center; justify-content: center; line-height: 1; vertical-align: middle; }
+/* 操作列原来是 overflow:hidden + text-overflow:ellipsis，宽度只够两个按钮；
+   播放列表视图里三个按钮（26x3=78px）超出内容盒，浏览器就在右端画一个「…」，
+   看着像多出一个三点图标。改成可见溢出，让第三个按钮完整显示。 */
+.am-table .am-c-acts { overflow: visible !important; text-overflow: clip !important; }
+/* 歌曲行拖拽落点：和侧栏歌单一样用 2px 强调色插入线（上/下沿）代替整行红框 */
+.am-tr.drop-before { box-shadow: inset 0 2px 0 0 var(--am-accent); }
+.am-tr.drop-after { box-shadow: inset 0 -2px 0 0 var(--am-accent); }
+.am-mini-btn.faved .am-fav-ico path { fill: currentColor; }
+/* 8) 顶栏 64px 时「歌曲信息」整块在竖直方向只剩 3px 余量，封面几乎贴住上边框。
+      把顶栏加高到 70px，内容块居中后上下各留 6.5px。 */
+.am-topbar { height: 70px; }
+/* 5) 右侧 A–Z 索引条不再常驻：默认隐形，鼠标移到那条窄条上才淡入（窄条本身仍可点） */
+.am-az { opacity: 0; transition: opacity .18s ease; }
+.am-az:hover, .am-az:focus-within { opacity: 1; }

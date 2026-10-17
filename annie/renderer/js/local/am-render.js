@@ -1663,6 +1663,11 @@
       btn.classList.remove('am-ico-sw'); void btn.offsetWidth; btn.classList.add('am-ico-sw');
       btn.textContent = icon;
     }
+    /* V4.4.7（PR#6）：⏸ 字形的墨迹比 ▶ 低（顶栏 2.0px、沉浸模式 2.6px），换字形时重贴一次，
+       否则会一直沿用上一个字形的垂直偏移 */
+    var isImm = btn.classList.contains('am-imm-play');
+    btn.style.position = 'relative';
+    btn.style.top = (icon === '⏸' ? (isImm ? -2.6 : -2.9) : (isImm ? 0 : -0.9)) + 'px';
   }
   function refreshBadge() {
     if (!R.npBadge) return;

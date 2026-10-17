@@ -464,10 +464,6 @@
    * 再点按钮 / 点面板外 / Esc 收起；展开期间暂停「静止隐藏 chrome」，保证按钮始终可点。 */
   var _infoOn = false, _infoAt = 0, _infoRaf = 0, _infoSmooth = null, _infoMetaSeq = 0, _infoPassKey = '';
   var _infoGain = 1; // 频谱自动增益（平滑）
-  /* 待播清单分帧渲染的世代号（按容器隔离，主抽屉 / 沉浸抽屉 / 迷你互不打断） */
-  var _qGens = new WeakMap();
-  function qGenNext(box) { var g = (_qGens.get(box) || 0) + 1; _qGens.set(box, g); return g; }
-  function qGenLive(box, g) { return _qGens.get(box) === g; }
   /* 行顺序即面板里「标签 / 值」的显示顺序；值为空的行连同标签整行隐藏 */
   var IMM_INFO_ROWS = [
     ['格式', 'fmt'],

@@ -1494,3 +1494,35 @@ html[data-motion="off"] #am-root::before {
 /* 5) 右侧 A–Z 索引条不再常驻：默认隐形，鼠标移到那条窄条上才淡入（窄条本身仍可点） */
 .am-az { opacity: 0; transition: opacity .18s ease; }
 .am-az:hover, .am-az:focus-within { opacity: 1; }
+
+/* V4.4.8：顶栏进度条左侧的时间数字改为左对齐——这样它的字形起点与顶栏封面左边缘同一条线
+   （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
+#am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
+/* V4.4.8：封面 + 歌名整体再左移 5px（微调）；♥ 与音质胶囊位置不变 */
+#am-root .am-np-cover { margin-left: -5px; }
+#am-root .am-np-text { margin-right: 5px; }
+/* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
+   宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
+#am-root .am-topbar .am-np { flex: 0 1 620px; margin: 0 0 0 24px; }
+#am-root .am-topbar .am-tb-right { margin-left: auto; }
+/* V4.4.8 展开「更多」时图标会挤压中间块，让 ♥ 与音质胶囊做一下微小回弹 */
+@keyframes am-np-nudge {
+  0%   { transform: translateX(0) scale(1); }
+  45%  { transform: translateX(-6px) scale(.975); }
+  100% { transform: translateX(0) scale(1); }
+}
+/* 收起时中间块变宽：进度条与 ♥/胶囊一起向右弹一下 */
+@keyframes am-np-nudge-r {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
+#am-root.am-tb-open .am-np-row .am-fav-btn,
+#am-root.am-tb-open .am-np-row .am-badge {
+  animation: am-np-nudge .34s ease-out both;
+}
+#am-root.am-tb-close .am-np-progrow { animation: am-np-nudge-r .34s ease-out both; }
+#am-root.am-tb-close .am-np-row .am-fav-btn,
+#am-root.am-tb-close .am-np-row .am-badge {
+  animation: am-np-nudge-r .34s ease-out both;
+}

@@ -257,6 +257,21 @@
     moreGroup([btnNpShare]);
     moreGroup([R.btnLight, R.btnTheme]);
     right.appendChild(moreWrap);
+    // V4.4.8：展开/收起时给 #am-root 打 0.42s 状态标记，CSS 据此播放对应的回弹动画
+    try {
+      var _moT = 0;
+      new MutationObserver(function () {
+        var root = document.getElementById('am-root');
+        if (!root || !moreWrap.isConnected) return;
+        var open = moreWrap.classList.contains('open');
+        root.classList.toggle('am-tb-open', open);
+        root.classList.toggle('am-tb-close', !open);
+        clearTimeout(_moT);
+        _moT = setTimeout(function () {
+          root.classList.remove('am-tb-open', 'am-tb-close');
+        }, 420);
+      }).observe(moreWrap, { attributes: true, attributeFilter: ['class'] });
+    } catch (e) { }
     R.btnMore = el('button', 'am-tbtn am-tb-more-btn');
     R.btnMore.title = '展开更多';
     var moreChev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

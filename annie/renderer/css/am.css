@@ -701,8 +701,10 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-prog,
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-ctl { opacity: 0; pointer-events: none; }
 /* V4.4.7（秋野奈 PR#6）：沉浸模式「歌曲信息面板」——左上角 ↓ 唤出，自屏幕顶部下拉 */
+/* top 必须与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
+   改 .am-topbar 高度时这里和 .am-imm-closebar 要一起改（V4.4.8 曾漏改导致悬挂栏偏上） */
 .am-imm-infobar {
-  position: absolute; top: 14px; left: 16px; z-index: 5; display: flex; gap: 8px;
+  position: absolute; top: 18px; left: 16px; z-index: 5; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
   transition: opacity .32s ease, transform .32s ease;
 }
@@ -821,7 +823,9 @@ html.wp-on.wp-imm #am-root .am-imm-bg {
 }
 html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封面隐藏氛围」 */
 .am-imm-closebar {
-  position: absolute; top: 14px; right: 16px; z-index: 3; display: flex; gap: 8px;
+  /* top 与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
+     改 .am-topbar 高度时这里和 .am-imm-infobar 要一起改 */
+  position: absolute; top: 18px; right: 16px; z-index: 3; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
 }
 .am-imm-closebar .am-tbtn { color: #fff; }

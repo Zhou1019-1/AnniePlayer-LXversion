@@ -296,6 +296,13 @@
       var q = state.queue || [];
       if (!q.length) { list.appendChild(el('div', 'am-q-empty', '（无待播曲目）')); return; }
       list.appendChild(el('div', 'am-q-empty', '拖拽调整顺序，✕ 移除'));
+
+      /* 待播清单分帧渲染的世代号（切歌重建、关面板/重开、清空互不干扰）——
+         只被下面的 pumpQueueRows 用到，所以放在这里而不是信息面板块里。
+         分包时注意：这段必须跟「队列行分帧」同一个 PR，否则会 ReferenceError。 */
+      var _qGens = new WeakMap();
+      function qGenNext(box) { var g = (_qGens.get(box) || 0) + 1; _qGens.set(box, g); return g; }
+      function qGenLive(box, g) { return _qGens.get(box) === g; }
       /* V4.4.7（PR#6）：队列可能有上万首——原来一次性同步建几千行、每行还排一次封面解析，
          面板要等好几秒才弹出来。改成先建外壳 + 每帧只干 ~8ms（超预算就交还事件循环）。 */
       var qGen = qGenNext(box), qPut = Math.max(0, state.index), qStop = q.length;

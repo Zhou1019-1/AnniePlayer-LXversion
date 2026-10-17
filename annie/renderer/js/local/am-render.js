@@ -196,12 +196,32 @@
     }
 
     var qDragIdx = -1; // V3.5.15：待播清单拖拽排序（仅本地队列分支）
+    /* V4.4.7（PR#6）：封面懒解析——队列可能上千首，原来每一行都排一次 meta 解析，
+       点开面板要等好几秒。改成只有滚到列表可视区 ±400px 内才真正去解。 */
+    var qCoverObs = null, qCoverPend = new WeakMap();
+    function qCoverLazy(img, track) {
+      if (typeof IntersectionObserver !== 'function') { albumCover(track, function (u) { if (u) img.src = u; }); return; }
+      if (!qCoverObs) {
+        qCoverObs = new IntersectionObserver(function (entries) {
+          for (var i = 0; i < entries.length; i++) {
+            var en = entries[i];
+            if (!en.isIntersecting) continue;
+            qCoverObs.unobserve(en.target);
+            var tr = qCoverPend.get(en.target);
+            qCoverPend['delete'](en.target);
+            if (tr) albumCover(tr, (function (node) { return function (u) { if (u) node.src = u; }; })(en.target));
+          }
+        }, { root: list, rootMargin: '400px 0px' });
+      }
+      qCoverPend.set(img, track);
+      qCoverObs.observe(img);
+    }
     function addRow(coverUrl, track, title, sub, durText, cur, onclick, opts) {
       var row = el('div', 'am-q-row' + (cur ? ' cur' : ''));
       var img = document.createElement('img');
       img.className = 'am-q-cover'; img.alt = ''; img.draggable = false;
       if (coverUrl) img.src = coverUrl;
-      else if (track) albumCover(track, function (u) { if (u) img.src = u; });
+      else if (track) qCoverLazy(img, track);
       row.appendChild(img);
       var tx = el('div', 'am-q-tx');
       tx.appendChild(el('div', 'am-q-title', title));
@@ -276,7 +296,21 @@
       var q = state.queue || [];
       if (!q.length) { list.appendChild(el('div', 'am-q-empty', '（无待播曲目）')); return; }
       list.appendChild(el('div', 'am-q-empty', '拖拽调整顺序，✕ 移除'));
-      for (var i = Math.max(0, state.index); i < q.length; i++) {
+
+      /* 待播清单分帧渲染的世代号（切歌重建、关面板/重开、清空互不干扰）——
+         只被下面的 pumpQueueRows 用到，所以放在这里而不是信息面板块里。
+         分包时注意：这段必须跟「队列行分帧」同一个 PR，否则会 ReferenceError。 */
+      var _qGens = new WeakMap();
+      function qGenNext(box) { var g = (_qGens.get(box) || 0) + 1; _qGens.set(box, g); return g; }
+      function qGenLive(box, g) { return _qGens.get(box) === g; }
+      /* V4.4.7（PR#6）：队列可能有上万首——原来一次性同步建几千行、每行还排一次封面解析，
+         面板要等好几秒才弹出来。改成先建外壳 + 每帧只干 ~8ms（超预算就交还事件循环）。 */
+      var qGen = qGenNext(box), qPut = Math.max(0, state.index), qStop = q.length;
+      (function pumpQueueRows() {
+      if (!qGenLive(box, qGen)) return;        // 同一容器又开了一轮渲染 → 这一轮作废
+      var qT0 = performance.now();
+      while (qPut < qStop && performance.now() - qT0 < 8) {
+      var i = qPut++;
         (function (t, idx) {
           var m = trackMeta(t);
           var dm = S.meta[t.path];
@@ -286,6 +320,8 @@
             { dragIdx: idx, onRemove: function () { removeQueueRow(idx); } });
         })(q[i], i);
       }
+      if (qPut < qStop) setTimeout(pumpQueueRows, 0);
+      })();
       return;
     }
     // 历史记录：播放统计 lastPlayed 倒序（仅本地有统计）
@@ -1785,8 +1821,11 @@
     } else {
       n = Math.max(0, (state.queue || []).length - 1 - state.index);
     }
-    R.btnQBadge.textContent = n > 99 ? '99+' : String(n);
-    R.btnQBadge.style.display = n > 0 ? '' : 'none';
+    var qbMode = 'dot';
+    try { qbMode = (window.annieSettings && annieSettings.ui && annieSettings.ui.amQBadge) || 'dot'; } catch (e) { }
+    R.btnQBadge.textContent = qbMode === 'count' ? (n > 99 ? '99+' : String(n)) : '';
+    R.btnQBadge.classList.toggle('am-dot', qbMode !== 'count');
+    R.btnQBadge.style.display = (n > 0 && qbMode !== 'off') ? '' : 'none';
   }
   /* 抽屉开着时的轻刷新：切歌/队列增删后更新高亮与角标（仅 queue 页签需要，评论/历史各自有事件或手动切回） */
   function refreshQDrawerIfOpen() {
@@ -2216,6 +2255,11 @@
       btn.classList.remove('am-ico-sw'); void btn.offsetWidth; btn.classList.add('am-ico-sw');
       btn.textContent = icon;
     }
+    /* V4.4.7（PR#6）：⏸ 字形的墨迹比 ▶ 低（顶栏 2.0px、沉浸模式 2.6px），换字形时重贴一次，
+       否则会一直沿用上一个字形的垂直偏移 */
+    var isImm = btn.classList.contains('am-imm-play');
+    btn.style.position = 'relative';
+    btn.style.top = (icon === '⏸' ? (isImm ? -2.6 : -2.9) : (isImm ? 0 : -0.9)) + 'px';
   }
   function refreshBadge() {
     if (!R.npBadge) return;
@@ -2259,6 +2303,9 @@
     } else if (state.currentCue && state.currentCue.title) { title = state.currentCue.title; artist = state.currentCue.artist || ''; }
     else if (t) { var m = trackMeta(t); title = m.title; artist = m.artist; album = m.album; }
     swapNpText(title, artist + (album ? ' — ' + album : ''));
+    S._smtc = { title: title, artist: artist, album: album }; // V4.4.7：供 SMTC 伴随进程使用
+    S._smtcCover = ''; S._smtcCoverReady = false;            // 换曲先清封面，等回调里补
+    pushSmtc();
     if (streamCover) {
       // 流媒体：封面是 URL，直接用（不经 meta 解析）
       swapCover(R.npCover, streamCover);
@@ -2269,6 +2316,7 @@
                     (state.currentIso && state.currentIso.src) || (t && t.path);
       if (srcPath) (t ? albumCover : ensureCover).call(null, t || srcPath, function (url) {
         if (state.currentPath !== p) return;
+        if (url && url.indexOf('data:') === 0) smtcCoverThumb(url, function (small) { S._smtcCover = small; S._smtcCoverReady = true; pushSmtc(); }); /* V4.4.7：SMTC 封面（缩到 400px） */
         swapCover(R.npCover, url || null);
         swapAtmosphere(url || null);
         syncAuxViews();
@@ -2278,7 +2326,68 @@
     }
     loadLyrics(state.currentStream ? state.currentPath : ((state.currentCue && state.currentCue.src) || (t && t.path) || null), !!state.currentStream);
   }
+
+  /* V4.4.7（PR#6）：SMTC 封面统一缩到 400px JPEG（SMTC 缩略图不需要大图，减小 IPC 体积）。
+     原始内嵌封面动辄几百 KB～几 MB（dataURL 更大），直接塞给 PowerShell 宿主既慢又会被
+     主进程的 400KB 上限截断——截断后 base64 非法，宿主解码失败就永远没有封面。 */
+  var _smtcThumbCache = {};
+  function smtcCoverThumb(url, cb) {
+    if (!url || url.indexOf('data:') !== 0) { cb(''); return; }
+    if (_smtcThumbCache[url] !== undefined) { cb(_smtcThumbCache[url]); return; }
+    try {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var MAXS = 400;
+          var iw = img.width || MAXS, ih = img.height || MAXS;
+          var s = Math.min(iw, ih);                 // 先居中裁成正方形
+          var side = Math.max(64, Math.min(MAXS, s)); // 不放大：源图小于 400 就按源图边长走
+          var cv = document.createElement('canvas');
+          cv.width = side; cv.height = side;
+          var g = cv.getContext('2d');
+          g.imageSmoothingQuality = 'high';
+          g.drawImage(img, (iw - s) / 2, (ih - s) / 2, s, s, 0, 0, side, side);
+          var out = cv.toDataURL('image/jpeg', 0.9);
+          _smtcThumbCache[url] = out;
+          cb(out);
+        } catch (e) { _smtcThumbCache[url] = ''; cb(''); }
+      };
+      img.onerror = function () { _smtcThumbCache[url] = ''; cb(''); };
+      img.src = url;
+    } catch (e) { cb(''); }
+  }
+
+  /* V4.4.7（PR#6）：把当前曲目推给主进程 → SMTC 伴随进程（同一首/同一状态只发一次） */
+  /* V4.4.7：封面没到时先等 ~400ms，把「标题+封面」合并成一次 Update。
+     否则会先推一条无封面的元数据——壁纸/歌词挂件往往只认第一次变更，之后就一直是空封面。 */
+  function pushSmtc() {
+    if (S._smtcT) { clearTimeout(S._smtcT); S._smtcT = null; }
+    var delay = S._smtcCoverReady ? 0 : 400;
+    S._smtcT = setTimeout(function () { S._smtcT = null; pushSmtcNow(); }, delay);
+  }
+  function pushSmtcNow() {
+    try {
+      if (!window.mine || !window.mine.smtcUpdate) return;
+      // 设置里可以关掉：关掉时直接收掉那个常驻进程
+      if (localStorage.getItem('amSmtc') === 'off') {
+        if (S._smtcSig !== 'off') { S._smtcSig = 'off'; window.mine.smtcUpdate({ off: true }); }
+        return;
+      }
+      var m = S._smtc || {};
+      var cv = S._smtcCover || '';
+      var ci = cv.indexOf('base64,');
+      var cb64 = ci >= 0 ? cv.slice(ci + 7) : '';
+      var o = { title: m.title || '', artist: m.artist || '', album: m.album || '', playing: !!state.playing, cover: cb64, pos: Math.round(S.pos || 0), dur: Math.round(S.dur || 0) };
+      var sig = o.title + '|' + o.artist + '|' + o.album + '|' + (o.playing ? '1' : '0') + '|' +
+                (cb64 ? cb64.length + ':' + cb64.slice(0, 24) : '') + '|' + o.pos + '/' + o.dur;
+      if (sig === S._smtcSig) return;
+      S._smtcSig = sig;
+      window.mine.smtcUpdate(o);
+    } catch (e) { }
+  }
   function refreshTransport() {
+    pushSmtc();  /* V4.4.7: 播放/暂停状态也同步给 SMTC */
+
     if (!R.btnPlay) return;
     S.playing = !!state.playing;
     setPlayIcon(R.btnPlay);
@@ -2416,6 +2525,21 @@
   var vizSmooth = new Float32Array(32);
   var vizAccA = '', vizAccB = '', vizColorAt = 0;
   /* V4.3.17：配色模式——accent 主题强调色 / cover 封面双色 / coverMulti 封面多色 / rainbow 彩虹频段 / heat 幅度热成像 */
+  /* 媒体键 / 系统浮层按钮 → 本体的播放控制 */
+  try {
+    if (window.mine && window.mine.onSmtcButton) {
+      window.mine.onSmtcButton(function (txt) {
+        try {
+          var mm = /"button":"(\w+)"/.exec(String(txt || ''));
+          var b = mm && mm[1];
+          if (!b) return;
+          if (b === 'play' || b === 'pause') { if (R.btnPlay) R.btnPlay.click(); }
+          else if (b === 'next') { if (R.btnNext) R.btnNext.click(); }
+          else if (b === 'previous') { if (R.btnPrev) R.btnPrev.click(); }
+        } catch (e5) { }
+      });
+    }
+  } catch (e6) { }
   var vizMode = 'cover', vizCoverSrc = null, vizPal = null, vizRainbowW = 0, vizRainbowGrad = null;
   if (window.mine && window.mine.onEngineEvent) {
     window.mine.onEngineEvent(function (ev, d) {

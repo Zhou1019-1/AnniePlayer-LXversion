@@ -1289,3 +1289,11 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-mini-on .am-backtop, #am-root.am-imm-on .am-backtop { display: none; }
 /* 索引跳转/定位播放时，行顶部预留 sticky 表头 + 一行的高度，避免首行被表头遮挡（非窗口化路径由 scrollIntoView 走这里） */
 .am-table tbody .am-tr { scroll-margin-top: 100px; }
+/* 2) 待播角标：am-dot = 6px 圆点（数字不显示）；其余两种模式沿用原气泡样式 */
+.am-q-badge.am-dot {
+  right: 2px; top: 3px; min-width: 6px; width: 6px; height: 6px; padding: 0;
+  border-radius: 50%; overflow: hidden; background: var(--am-text-2); color: transparent;
+  font-size: 0; line-height: 0; box-shadow: none; opacity: .4;
+  transition: opacity .15s ease;
+}
+.am-tbtn:hover .am-q-badge.am-dot, .am-tbtn.on .am-q-badge.am-dot { opacity: .85; }

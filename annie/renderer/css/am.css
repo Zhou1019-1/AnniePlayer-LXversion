@@ -1350,14 +1350,9 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-mini-on .am-backtop, #am-root.am-imm-on .am-backtop { display: none; }
 /* 索引跳转/定位播放时，行顶部预留 sticky 表头 + 一行的高度，避免首行被表头遮挡（非窗口化路径由 scrollIntoView 走这里） */
 .am-table tbody .am-tr { scroll-margin-top: 100px; }
-/* 旧的「N 键媒体信息」整屏浮层：内容已并入沉浸信息面板，这里直接隐藏 */
-/* proUi 的旧「Now Playing 全屏」挂的是 id=#np-full（不是 class），只写 .np-full 是空的 */
-#np-full, .np-full { display: none !important; }
 .am-info-ov { position: fixed; inset: 0; z-index: 80; display: none;
   background: rgba(0, 0, 0, .26); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .am-info-ov.on { display: block; }
-/* 氛围模式（全屏频谱）整层：入口已改为信息面板，这里直接屏蔽 */
-.amb-mask { display: none !important; }
 
 /* L/R 电平条 */
 #am-root.am-lr-off .am-imm-info-lr { display: none !important; }

@@ -54,6 +54,7 @@
     accent: 'default',       // V3.5.17：强调色（default=主题原色；AM/粒子舞台生效）
     amViz: true,              // V3.5.17：AM 主题底部实时频谱条
     amVizColor: 'cover',      // V4.3.17：频谱条配色 cover|coverMulti|rainbow|heat|accent
+    amSmtc: 'on',             // V4.4.7（PR#6）：系统媒体会话（SMTC）on|off
     beatAnalysis: true        // V4.4：节拍律动分析（相机随鼓点运动；关闭省整轨解码，弱机建议关）
   };
 
@@ -736,6 +737,22 @@
     vcSel.onchange = function () { ui.amVizColor = vcSel.value; save(); };
     vcRow.appendChild(vcLab); vcRow.appendChild(vcSel);
     s5.appendChild(vcRow);
+    // —— 系统媒体会话（V4.4.7 PR#6）：壁纸 / 歌词挂件读歌名歌手封面 ——
+    var stRow = markItem(el('div', 'set-row'), '系统媒体 SMTC 媒体会话 壁纸 歌词挂件 浮层');
+    var stLab = el('div'); stLab.appendChild(el('div', '', '系统媒体会话（SMTC）'));
+    stLab.appendChild(el('div', 'set-hint', '给 Windows 媒体浮层 / 音频壁纸 / 歌词挂件提供歌名·歌手·封面；会多一个隐藏的常驻进程'));
+    var stSel = document.createElement('select');
+    [['on', '开启'], ['off', '关闭']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; stSel.appendChild(op);
+    });
+    stSel.value = ui.amSmtc === 'off' ? 'off' : 'on';
+    try { localStorage.setItem('amSmtc', stSel.value); } catch (e2) { }
+    stSel.onchange = function () {
+      ui.amSmtc = stSel.value; save();
+      try { localStorage.setItem('amSmtc', stSel.value); } catch (e2) { }
+    };
+    stRow.appendChild(stLab); stRow.appendChild(stSel);
+    s5.appendChild(stRow);
 
     // —— 氛围模式（V3.5.18：全屏频谱，任意主题可用） ——
     var ambRow = markItem(el('div', 'set-row'), '氛围模式 全屏 频谱 可视化 ambient');

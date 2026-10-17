@@ -1667,6 +1667,9 @@
     } else if (state.currentCue && state.currentCue.title) { title = state.currentCue.title; artist = state.currentCue.artist || ''; }
     else if (t) { var m = trackMeta(t); title = m.title; artist = m.artist; album = m.album; }
     swapNpText(title, artist + (album ? ' — ' + album : ''));
+    S._smtc = { title: title, artist: artist, album: album }; // V4.4.7：供 SMTC 伴随进程使用
+    S._smtcCover = ''; S._smtcCoverReady = false;            // 换曲先清封面，等回调里补
+    pushSmtc();
     if (streamCover) {
       // 流媒体：封面是 URL，直接用（不经 meta 解析）
       swapCover(R.npCover, streamCover);
@@ -1677,6 +1680,7 @@
                     (state.currentIso && state.currentIso.src) || (t && t.path);
       if (srcPath) (t ? albumCover : ensureCover).call(null, t || srcPath, function (url) {
         if (state.currentPath !== p) return;
+        if (url && url.indexOf('data:') === 0) smtcCoverThumb(url, function (small) { S._smtcCover = small; S._smtcCoverReady = true; pushSmtc(); }); /* V4.4.7：SMTC 封面（先缩到 320px） */
         swapCover(R.npCover, url || null);
         swapAtmosphere(url || null);
         syncAuxViews();
@@ -1686,7 +1690,68 @@
     }
     loadLyrics(state.currentStream ? state.currentPath : ((state.currentCue && state.currentCue.src) || (t && t.path) || null), !!state.currentStream);
   }
+
+  /* V4.4.7（PR#6）：SMTC 封面统一缩到 320px JPEG。
+     原始内嵌封面动辄几百 KB～几 MB（dataURL 更大），直接塞给 PowerShell 宿主既慢又会被
+     主进程的 400KB 上限截断——截断后 base64 非法，宿主解码失败就永远没有封面。 */
+  var _smtcThumbCache = {};
+  function smtcCoverThumb(url, cb) {
+    if (!url || url.indexOf('data:') !== 0) { cb(''); return; }
+    if (_smtcThumbCache[url] !== undefined) { cb(_smtcThumbCache[url]); return; }
+    try {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var MAXS = 1400;
+          var iw = img.width || MAXS, ih = img.height || MAXS;
+          var s = Math.min(iw, ih);                 // 先居中裁成正方形
+          var side = Math.max(64, Math.min(MAXS, s)); // 不放大：源图小于 1400 就按源图边长走
+          var cv = document.createElement('canvas');
+          cv.width = side; cv.height = side;
+          var g = cv.getContext('2d');
+          g.imageSmoothingQuality = 'high';
+          g.drawImage(img, (iw - s) / 2, (ih - s) / 2, s, s, 0, 0, side, side);
+          var out = cv.toDataURL('image/jpeg', 0.9);
+          _smtcThumbCache[url] = out;
+          cb(out);
+        } catch (e) { _smtcThumbCache[url] = ''; cb(''); }
+      };
+      img.onerror = function () { _smtcThumbCache[url] = ''; cb(''); };
+      img.src = url;
+    } catch (e) { cb(''); }
+  }
+
+  /* V4.4.7（PR#6）：把当前曲目推给主进程 → SMTC 伴随进程（同一首/同一状态只发一次） */
+  /* V4.4.7：封面没到时先等 ~400ms，把「标题+封面」合并成一次 Update。
+     否则会先推一条无封面的元数据——壁纸/歌词挂件往往只认第一次变更，之后就一直是空封面。 */
+  function pushSmtc() {
+    if (S._smtcT) { clearTimeout(S._smtcT); S._smtcT = null; }
+    var delay = S._smtcCoverReady ? 0 : 400;
+    S._smtcT = setTimeout(function () { S._smtcT = null; pushSmtcNow(); }, delay);
+  }
+  function pushSmtcNow() {
+    try {
+      if (!window.mine || !window.mine.smtcUpdate) return;
+      // 设置里可以关掉：关掉时直接收掉那个常驻进程
+      if (localStorage.getItem('amSmtc') === 'off') {
+        if (S._smtcSig !== 'off') { S._smtcSig = 'off'; window.mine.smtcUpdate({ off: true }); }
+        return;
+      }
+      var m = S._smtc || {};
+      var cv = S._smtcCover || '';
+      var ci = cv.indexOf('base64,');
+      var cb64 = ci >= 0 ? cv.slice(ci + 7) : '';
+      var o = { title: m.title || '', artist: m.artist || '', album: m.album || '', playing: !!state.playing, cover: cb64, pos: Math.round(S.pos || 0), dur: Math.round(S.dur || 0) };
+      var sig = o.title + '|' + o.artist + '|' + o.album + '|' + (o.playing ? '1' : '0') + '|' +
+                (cb64 ? cb64.length + ':' + cb64.slice(0, 24) : '') + '|' + o.pos + '/' + o.dur;
+      if (sig === S._smtcSig) return;
+      S._smtcSig = sig;
+      window.mine.smtcUpdate(o);
+    } catch (e) { }
+  }
   function refreshTransport() {
+    pushSmtc();  /* V4.4.7: 播放/暂停状态也同步给 SMTC */
+
     if (!R.btnPlay) return;
     S.playing = !!state.playing;
     setPlayIcon(R.btnPlay);
@@ -1824,6 +1889,21 @@
   var vizSmooth = new Float32Array(32);
   var vizAccA = '', vizAccB = '', vizColorAt = 0;
   /* V4.3.17：配色模式——accent 主题强调色 / cover 封面双色 / coverMulti 封面多色 / rainbow 彩虹频段 / heat 幅度热成像 */
+  /* 媒体键 / 系统浮层按钮 → 本体的播放控制 */
+  try {
+    if (window.mine && window.mine.onSmtcButton) {
+      window.mine.onSmtcButton(function (txt) {
+        try {
+          var mm = /"button":"(\w+)"/.exec(String(txt || ''));
+          var b = mm && mm[1];
+          if (!b) return;
+          if (b === 'play' || b === 'pause') { if (R.btnPlay) R.btnPlay.click(); }
+          else if (b === 'next') { if (R.btnNext) R.btnNext.click(); }
+          else if (b === 'previous') { if (R.btnPrev) R.btnPrev.click(); }
+        } catch (e5) { }
+      });
+    }
+  } catch (e6) { }
   var vizMode = 'cover', vizCoverSrc = null, vizPal = null, vizRainbowW = 0, vizRainbowGrad = null;
   if (window.mine && window.mine.onEngineEvent) {
     window.mine.onEngineEvent(function (ev, d) {

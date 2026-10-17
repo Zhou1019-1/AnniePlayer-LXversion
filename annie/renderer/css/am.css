@@ -820,7 +820,7 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 #am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.cur { color: var(--am-text); }
 /* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词）；V4.3.26：占满右半区并向中轴靠拢，与左栏对称 */
 /* V4.4.7（秋野奈 PR#5）：经典双栏歌词上下渐隐遮罩——滚动时最上/最下一行不再被硬切断（彩胶已有同款） */
-.am-imm-lyr { mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 0 8px; position: relative; }
+.am-imm-lyr { mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 40vh 8px; position: relative; }
 #am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
 /* V4.4：沉浸模式未开歌词时，封面+信息+控制栏整体居中
  *（.am-imm-main 恒为 1fr 1fr 双列，歌词隐藏后左列仍停在左半屏，右半全空） */
@@ -850,7 +850,7 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 .am-imm-vinyl .am-imm-fmt { text-align: left; }
 .am-imm-vinyl .am-imm-lyr {
   display: block; width: 100%; max-width: none; justify-self: stretch;
-  flex: 1; min-height: 0; margin-top: 16px; padding: 24px 8px;
+  flex: 1; min-height: 0; margin-top: 16px; padding: 40vh 8px;
   mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
 }
@@ -1026,7 +1026,7 @@ html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封
 .am-mini-play { width: 34px; height: 34px; font-size: 16px; }
 .am-mini-right { display: flex; gap: 2px; }
 /* 迷你歌词/队列面板（展开时窗口拉高，二者互斥） */
-.am-mini-lyr { display: none; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 6px 14px; border-top: 1px solid var(--am-sep); }
+.am-mini-lyr { display: none; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 40vh 14px; border-top: 1px solid var(--am-sep); }
 #am-root.am-mini-lyr-on .am-mini-lyr { display: block; }
 .am-mini-lyr .am-lyr-line { font-size: calc(16px * var(--am-lyr-scale, 1)); font-weight: 600; padding: 8px 0; }
 .am-mini-queue { display: none; flex: 1; min-height: 0; flex-direction: column; border-top: 1px solid var(--am-sep); }

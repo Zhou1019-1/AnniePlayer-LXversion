@@ -3,7 +3,7 @@
  * 48×48 缩样 → 12 色相桶统计 → 主色/强调色/多色板。
  * 本地封面是 dataURL（canvas 安全）；在线封面走 crossOrigin=anonymous，
  * CDN 不回 CORS 头时 getImageData 抛错 → 返回 null，调用方回落强调色。
- * 黑白/低彩封面（彩色像素占比 < 6%）返回 null，避免灰糊糊的频谱条。
+ * 黑白/低彩封面（彩色像素占比 < 6%）返回中性灰阶（偏亮，深色条上依然清晰）；无图像才返回 null。
  * ============================================================ */
 (function () {
   'use strict';
@@ -43,7 +43,7 @@
       var wgt = hsl.s * (1 - Math.abs(hsl.l - 0.5)); // 饱和度×中间亮度权重：鲜艳不刺眼的色优先
       b.r += data[i] * wgt; b.g += data[i + 1] * wgt; b.b += data[i + 2] * wgt; b.w += wgt;
     }
-    if (!total || colorful / total < 0.06) return null; // 黑白封面
+    if (!total) return null; if (colorful / total < 0.06) return { primary: 'rgb(228,228,228)', accent: 'rgb(158,158,158)', stops: ['rgb(240,240,240)', 'rgb(196,196,196)', 'rgb(140,140,140)'], mono: true }; // 黑白封面→中性灰；无图像才回落主题色
     var list = buckets.filter(function (b) { return b.w > 0; })
       .map(function (b) { return { r: b.r / b.w, g: b.g / b.w, b: b.b / b.w, w: b.w, h: b.h }; })
       .sort(function (a, b) { return b.w - a.w; });

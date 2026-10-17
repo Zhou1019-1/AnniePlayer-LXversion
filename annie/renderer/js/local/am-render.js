@@ -2261,7 +2261,12 @@
     btn.style.position = 'relative';
     btn.style.top = (icon === '⏸' ? (isImm ? -2.6 : -2.9) : (isImm ? 0 : -0.9)) + 'px';
   }
+  /* V4.4.7（PR#6）：记住最后一次拿到的音质文本。引擎的 format 事件是「格式变化才发」，
+     一旦 S.fmt 被清空，同格式的下一首不会再发事件，徽标就一直不回来（只能重启）。 */
+  var _fmtClearT = 0, _lastFmt = '';
   function refreshBadge() {
+    clearTimeout(_fmtClearT);
+    if (S.fmt) _lastFmt = S.fmt;
     if (!R.npBadge) return;
     R.npBadge.textContent = S.fmt;
     R.npBadge.style.display = S.fmt ? '' : 'none';
@@ -2466,10 +2471,12 @@
     document.addEventListener('annie-chain-state', function (e) {
       var phase = e.detail && e.detail.phase;
       if (phase !== 'stopped' && phase !== 'engine-dead') return;
-      S.fmt = '';
+      // V4.4.7（PR#6）：不再清空音质徽标。引擎 format 事件边沿触发，清空后同格式的
+      // 下一首不会补发 → 徽标消失且要重启才回来。这里只回填上一次已知格式。
+      if (!S.fmt) S.fmt = _lastFmt;
       refreshBadge();
-      if (R.miniFmt) R.miniFmt.textContent = '';
-      if (R.immFmt) R.immFmt.textContent = '';
+      if (R.miniFmt && S.fmt) R.miniFmt.textContent = S.fmt;
+      if (R.immFmt && S.fmt) R.immFmt.textContent = S.fmt;
     });
     // state.currentPath 变化（playAt 触发后无专用事件）——轮询兜底 + 主题切换时刷新
     var lastPath = null, lastPlaying = null;

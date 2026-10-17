@@ -1524,26 +1524,29 @@ html[data-motion="off"] #am-root::before {
 #am-root .am-np-cover { margin-left: -5px; }
 #am-root .am-np-text { margin-right: 5px; }
 /* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
-   宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
-#am-root .am-topbar .am-np { flex: 0 1 620px; margin: 0 0 0 24px; }
+   宽度 500px，右侧按钮组展开时自动收窄，不会重叠 */
+#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 24px; }
 #am-root .am-topbar .am-tb-right { margin-left: auto; }
-/* V4.4.8 展开「更多」时图标会挤压中间块，让 ♥ 与音质胶囊做一下微小回弹 */
+/* V4.4.8 展开「更多」时图标挤压中间块：右侧剩余时长与 ♥/胶囊 向左压一下 */
 @keyframes am-np-nudge {
   0%   { transform: translateX(0) scale(1); }
   45%  { transform: translateX(-6px) scale(.975); }
   100% { transform: translateX(0) scale(1); }
 }
-/* 收起时中间块变宽：进度条与 ♥/胶囊一起向右弹一下 */
+/* 收起时中间块变宽：右侧剩余时长与 ♥/胶囊 向右弹一下
+ 
+   进度条轨道与左侧已播时间数字动不起来 */
 @keyframes am-np-nudge-r {
   0%   { transform: translateX(0); }
   45%  { transform: translateX(5px); }
   100% { transform: translateX(0); }
 }
+#am-root.am-tb-open .am-np-progrow > .am-np-time:last-child,
 #am-root.am-tb-open .am-np-row .am-fav-btn,
 #am-root.am-tb-open .am-np-row .am-badge {
   animation: am-np-nudge .34s ease-out both;
 }
-#am-root.am-tb-close .am-np-progrow { animation: am-np-nudge-r .34s ease-out both; }
+#am-root.am-tb-close .am-np-progrow > .am-np-time:last-child,
 #am-root.am-tb-close .am-np-row .am-fav-btn,
 #am-root.am-tb-close .am-np-row .am-badge {
   animation: am-np-nudge-r .34s ease-out both;

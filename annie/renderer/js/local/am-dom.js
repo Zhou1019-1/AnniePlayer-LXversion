@@ -1273,24 +1273,52 @@
     // 拖到某一行上 = 插入该行之前（落点行 outline 高亮），拖到空白处 = 追加到底部
     if (!c._plDropBound) {
       c._plDropBound = true;
-      function plDropRowOf(e) { return (e.target && e.target.closest) ? e.target.closest('tr.am-tr') : null; }
-      function plDropRowClear() { if (c._plDropRow) { c._plDropRow.classList.remove('drag-over'); c._plDropRow = null; } }
+      function plDropRowOf(e) {
+        var tr = (e.target && e.target.closest) ? e.target.closest('tr.am-tr') : null;
+        return (tr && tr.dataset.path) ? tr : null;   // 窗口化垫片行没有 data-path
+      }
+      /* V4.4.7（PR#6）：落点提示改成「有方向的插入线」——上半屏插到本行之前、
+         下半屏插到本行之后，和行内拖拽排序用同一套 .drop-before / .drop-after 视觉 */
+      function plDropClear() {
+        if (!c._plDropRow) return;
+        c._plDropRow.classList.remove('drop-before', 'drop-after');
+        c._plDropRow = null;
+        c._plDropAfter = false;
+      }
+      function plDropMark(tr, e) {
+        var after = false;
+        if (tr) {
+          var r = tr.getBoundingClientRect();
+          after = (e.clientY - r.top) > r.height / 2;
+        }
+        if (c._plDropRow === tr && c._plDropAfter === after) return;
+        plDropClear();
+        if (!tr) return;
+        tr.classList.add(after ? 'drop-after' : 'drop-before');
+        c._plDropRow = tr;
+        c._plDropAfter = after;
+      }
+      function plDropNextPath(tr) {
+        var nx = tr ? tr.nextElementSibling : null;
+        while (nx && !(nx.dataset && nx.dataset.path)) nx = nx.nextElementSibling;
+        return nx ? nx.dataset.path : null;
+      }
       c.addEventListener('dragover', function (e) {
         if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
         e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch (er) { }
-        var tr = plDropRowOf(e);
-        if (c._plDropRow !== tr) { plDropRowClear(); c._plDropRow = tr; if (tr) tr.classList.add('drag-over'); }
+        plDropMark(plDropRowOf(e), e);
       });
       c.addEventListener('dragleave', function (e) {
-        if (!e.relatedTarget || !c.contains(e.relatedTarget)) plDropRowClear();
+        if (!e.relatedTarget || !c.contains(e.relatedTarget)) plDropClear();
       });
       c.addEventListener('drop', async function (e) {
         if (S.view.indexOf('pl:') !== 0 || !plDropHasFiles(e)) return;
         e.preventDefault();
-        var tr = plDropRowOf(e);
-        plDropRowClear();
+        var tr = c._plDropRow, after = c._plDropAfter;
+        var beforePath = tr ? (after ? plDropNextPath(tr) : tr.dataset.path) : null;
+        plDropClear();
         var paths = await plExpandDropped(e);
-        addDroppedToPlaylist(S.view.slice(3), paths, tr ? tr.dataset.path : null);
+        addDroppedToPlaylist(S.view.slice(3), paths, beforePath);
       });
     }
     // V4.4：框选多选——空白处按下拖出选框，命中行入 selection（Ctrl 追加、否则替换）；

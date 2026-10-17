@@ -700,6 +700,67 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 #am-root.am-imm-chrome-off .am-imm-vbar { opacity: 0; pointer-events: none; transform: translateY(16px); }
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-prog,
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-ctl { opacity: 0; pointer-events: none; }
+/* V4.4.7（秋野奈 PR#6）：沉浸模式「歌曲信息面板」——左上角 ↓ 唤出，自屏幕顶部下拉 */
+.am-imm-infobar {
+  position: absolute; top: 14px; left: 16px; z-index: 5; display: flex; gap: 8px;
+  -webkit-app-region: no-drag;
+  transition: opacity .32s ease, transform .32s ease;
+}
+#am-root.am-imm-chrome-off .am-imm-infobar { opacity: 0; pointer-events: none; transform: translateY(-8px); }
+.am-imm-infobar .am-tbtn { color: #fff; }
+.am-imm-infobar .am-tbtn:hover { background: rgba(255,255,255,.16); color: #fff; }
+.am-imm-info {
+  position: absolute; inset: 0; z-index: 2; color: #fff;
+  display: flex; flex-direction: column;
+  background: rgba(0,0,0,.55);
+  -webkit-backdrop-filter: blur(26px) saturate(1.35); backdrop-filter: blur(26px) saturate(1.35);
+  border-bottom: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 22px 60px rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none; transform: translateY(-100%);
+  transition: transform .46s cubic-bezier(.25,.8,.3,1), opacity .3s ease;
+  will-change: transform;
+}
+.am-imm-info.on { opacity: 1; pointer-events: auto; transform: translateY(0); }
+/* 全屏面板：文字块仍贴顶部（66px 起），频谱单独沉到屏幕底部、左右只留 24px —— 比原来更长 */
+.am-imm-info-inner {
+  padding: 66px min(6vw, 84px) 0;
+  display: flex; flex-direction: column; gap: 16px;
+  height: 100%; box-sizing: border-box;
+}
+.am-imm-info-head { display: flex; align-items: baseline; gap: 18px; min-width: 0; }
+.am-imm-info-title {
+  font-size: clamp(22px, 2.1vw, 34px); font-weight: 600; letter-spacing: .01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.am-imm-info-sub {
+  font-size: clamp(13px, 1.02vw, 16px); color: rgba(255,255,255,.7);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.am-imm-info-grid {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 26px; row-gap: 9px; max-width: 1240px;
+  font-size: clamp(12px, .95vw, 14px); line-height: 1.45;
+}
+.am-imm-info-k { color: rgba(255,255,255,.55); letter-spacing: .04em; }
+.am-imm-info-v { color: rgba(255,255,255,.92); min-width: 0; word-break: break-all; }
+.am-imm-info-path {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .94em; color: rgba(255,255,255,.78);
+}
+.am-imm-info-viz {
+  /* canvas 是替换元素：只给 height 时 width:auto 会按内部缓冲区比例自己算宽度（实测只算出 76px），
+     所以这里必须显式给宽度，而不是靠 left/right 拉伸 */
+  position: absolute; left: 16px; width: calc(100% - 32px); bottom: clamp(16px, 2.6vh, 34px);
+  display: block; height: clamp(56px, 7.2vh, 96px);
+  opacity: .92; pointer-events: none;
+}
+/* 左上角 trigger 的图标：SVG 画的钝角 V（chevron）——左右两条臂严格对称，展开时翻 180° */
+.am-imm-chev {
+  display: block; width: 13px; height: 8px; flex: none;
+  transform-origin: 50% 50%;
+  transition: transform .3s cubic-bezier(.25,.8,.3,1);
+}
+.am-imm-infobar .am-tbtn.on .am-imm-chev { transform: rotate(180deg); }
 /* 底部热区：透明且 pointer-events:none（不挡歌词），dock 本体才接收事件 */
 .am-imm-dockzone {
   position: absolute; left: 0; right: 0; bottom: 0; height: 104px; z-index: 6;
@@ -1289,6 +1350,28 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-mini-on .am-backtop, #am-root.am-imm-on .am-backtop { display: none; }
 /* 索引跳转/定位播放时，行顶部预留 sticky 表头 + 一行的高度，避免首行被表头遮挡（非窗口化路径由 scrollIntoView 走这里） */
 .am-table tbody .am-tr { scroll-margin-top: 100px; }
+.am-info-ov { position: fixed; inset: 0; z-index: 80; display: none;
+  background: rgba(0, 0, 0, .26); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.am-info-ov.on { display: block; }
+
+/* L/R 电平条 */
+#am-root.am-lr-off .am-imm-info-lr { display: none !important; }
+.am-imm-info-lr { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 6px; }
+.am-imm-info-lr-row { display: flex; align-items: center; gap: 8px; }
+.am-imm-info-lr-lab { width: 12px; font-size: 11px; opacity: .55; letter-spacing: .5px; }
+.am-imm-info-lr-track { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--am-text) 12%, transparent); overflow: hidden; }
+.am-imm-info-lr-fill { display: block; height: 100%; width: 0%; border-radius: 2px; background: linear-gradient(90deg, var(--am-accent), color-mix(in srgb, var(--am-accent) 45%, #fff)); transition: width .08s linear; }
+
+
+/* 顶栏整体是 -webkit-app-region: drag（可拖动窗口），里面的元素默认也被算进拖拽区，
+   真实鼠标点击会被系统吞掉——CDP 注入事件绕过这层，所以调试能点、手点没反应。
+   格式胶囊要能点，必须显式 no-drag。 */
+.am-badge, .am-fmt, .am-np-row .am-badge { -webkit-app-region: no-drag; }
+/* 9) 主界面歌词面板：上下渐隐遮罩（和沉浸模式 .am-imm-lyr 同一套写法） */
+.am-lyr-scroll {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+}
 /* 2) 待播角标：am-dot = 6px 圆点（数字不显示）；其余两种模式沿用原气泡样式 */
 .am-q-badge.am-dot {
   right: 2px; top: 3px; min-width: 6px; width: 6px; height: 6px; padding: 0;

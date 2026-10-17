@@ -493,6 +493,596 @@
     var burst = dir * Math.min(540, 120 + Math.abs(to - from) * 8); // 跳得越远甩得越多，上限一圈半
     _vinylSeek = { t0: performance.now(), base: _crownOffset, delta: burst };
   }
+  /* ================= V4.4.7（秋野奈 PR#6）：沉浸模式「歌曲信息面板」 =================
+   * 左上角 ↓ 唤出：面板自屏幕顶部下拉，半透明黑 + 毛玻璃背景；
+   * 内容：标题 / 歌手 / 专辑 / 格式 / 位深 · 采样率 / 码率 / 声道 / 时长 / 文件大小 / 文件路径；
+   * 面板底部一条实时频谱——与主界面频谱条同一数据源（引擎 10Hz 推 32 频段）、同一套配色；
+   * 再点按钮 / 点面板外 / Esc 收起；展开期间暂停「静止隐藏 chrome」，保证按钮始终可点。 */
+  var _infoOn = false, _infoAt = 0, _infoRaf = 0, _infoSmooth = null, _infoMetaSeq = 0, _infoPassKey = '';
+  var _infoGain = 1; // 频谱自动增益（平滑）
+  /* 行顺序即面板里「标签 / 值」的显示顺序；值为空的行连同标签整行隐藏 */
+  var IMM_INFO_ROWS = [
+    ['格式', 'fmt'],
+    ['位深 · 采样率', 'depth'],
+    ['码率', 'bitrate'],
+    ['声道', 'ch'],
+    ['输出状态', 'out'],
+    ['后端', 'dac'],
+    ['响度', 'loud'],
+    ['统计', 'plays'],
+    ['播放进度', 'pos'],
+    ['时长', 'dur'],
+    ['文件大小', 'size'],
+    ['文件路径', 'path']
+  ];
+  function infoFmtSize(n) {
+    n = +n || 0;
+    if (n <= 0) return '';
+    var u = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(n >= 100 ? 0 : 1) : n) + ' ' + u[i];
+  }
+  function infoSet(key, text) {
+    var v = R.infoVal && R.infoVal[key];
+    if (!v) return;
+    var on = !!text;
+    v.textContent = on ? text : '';
+    v.style.display = on ? '' : 'none';
+    if (v._k) v._k.style.display = on ? '' : 'none';
+  }
+  function infoKeyNow() { return (state.currentPath || '') + '|' + (S.fmt || '') + '|' + (S.dur > 0 ? '1' : '0'); }
+  function refreshImmInfo() {
+    if (!R.immInfo) return;
+    _infoPassKey = infoKeyNow();
+    var p = state.currentPath;
+    var st = state.currentStream || null;
+    var t = p ? allTracks().find(function (x) { return x.path === p; }) : null;
+    var title = '', artist = '', album = '';
+    if (p) {
+      if (st) { title = st.title || p; artist = st.artist || ''; album = st.album || ''; }
+      else if (state.currentCue && state.currentCue.title) {
+        title = state.currentCue.title; artist = state.currentCue.artist || ''; album = state.currentCue.album || '';
+      } else if (t) { var m = trackMeta(t); title = m.title; artist = m.artist; album = m.album; }
+      if (!title) title = (t && t.name) || p;
+    }
+    R.infoTitle.textContent = title || '未在播放';
+    R.infoSub.textContent = p ? [artist, album].filter(Boolean).join(' — ') : '';
+    R.infoSub.style.display = R.infoSub.textContent ? '' : 'none';
+    /* S.fmt 形如「FLAC · 24bit · 96kHz」（引擎实际输出）：拆成「格式」与「位深 · 采样率」两行，
+       否则同一条信息会在面板里出现两遍 */
+    var fparts = (S.fmt || '').split(' · ');
+    infoSet('fmt', fparts[0] || '');
+    infoSet('depth', fparts.slice(1).join(' · '));
+    infoSet('bitrate', '');
+    infoSet('ch', '');
+    infoSet('dur', S.dur > 0 ? fmtTime(S.dur) : '');
+    infoSet('size', t && t.size ? infoFmtSize(t.size) : '');
+    infoSet('path', !p ? '' : (st ? '在线流媒体' + (st.source ? ' · ' + st.source : '') : p));
+    refreshImmInfoExtra((state.currentCue && state.currentCue.src) || (state.currentIso && state.currentIso.src) || (t && t.path) || p);
+    /* 位深/采样率/码率/声道/精确字节数只有主进程解析得到（metaCache 命中时纯内存返回，不读盘） */
+    var src = (state.currentCue && state.currentCue.src) ||
+              (state.currentIso && state.currentIso.src) || (t && t.path) || null;
+    if (st || !src || !window.mine || !window.mine.meta) return;
+    var seq = ++_infoMetaSeq;
+    window.mine.meta(src).then(function (mm) {
+      if (seq !== _infoMetaSeq || !_infoOn || !mm || !mm.ok) return; // 期间切歌/收面板：丢弃过期结果
+      var bits = mm.bitsPerSample ? mm.bitsPerSample + 'bit' : '';
+      var rate = mm.sampleRate ? (Math.round(mm.sampleRate / 100) / 10) + 'kHz' : '';
+      if (mm.codec) infoSet('fmt', String(mm.codec).toUpperCase()); // 文件真实编码优先于引擎输出串
+      if (bits || rate) infoSet('depth', [bits, rate].filter(Boolean).join(' · '));
+      if (mm.bitrate) infoSet('bitrate', Math.round(mm.bitrate / 1000) + ' kbps');
+      if (mm.channels) infoSet('ch', mm.channels === 1 ? '单声道' : (mm.channels === 2 ? '立体声' : mm.channels + ' 声道'));
+      if (mm.fileSize) infoSet('size', infoFmtSize(mm.fileSize));
+    }).catch(function () { });
+  }
+  /* V4.4.7（PR#6）：把旧「N 键媒体信息浮层」的内容并进来——输出状态 / 后端 / 响度 / 统计 / 进度 */
+  var _infoExtraSeq = 0, _infoPosAt = 0;
+  var _lrPeak = null;
+  function refreshImmInfoExtra(srcPath) {
+    var seq = ++_infoExtraSeq;
+    infoSet('pos', S.dur > 0 ? fmtTime(S.pos || 0) + ' / ' + fmtTime(S.dur) : '');
+    if (!window.mine) return;
+    if (window.mine.engine) {
+      window.mine.engine('stats').then(function (st) {
+        if (seq !== _infoExtraSeq || !_infoOn || !st || st.ok === false) return;
+        var reqRate = st.requestedRate ? (Math.round(st.requestedRate / 100) / 10) + 'kHz' : '';
+        var outRate = st.outputRate ? (Math.round(st.outputRate / 100) / 10) + 'kHz' : '';
+        var bits = st.bitsPerSample ? st.bitsPerSample + 'bit' : '';
+        var mode = st.exclusive ? '独占' : '共享';
+        var tail = '（' + mode + (st.resampled ? '，系统重采样' : '') + '）';
+        infoSet('out', (reqRate && outRate && st.requestedRate !== st.outputRate)
+          ? (reqRate + '/' + (bits || '?') + ' → ' + outRate + '/' + (bits || '?') + tail)
+          : ([outRate, bits].filter(Boolean).join('/') + tail));
+        infoSet('dac', (st.backendKind ? String(st.backendKind).toUpperCase() : '') + ' ' + mode + (st.deviceName ? ' · ' + st.deviceName : ''));
+        if (typeof st.loudGain === 'number' && st.loudGain > 0) {
+          var db = 20 * Math.log10(Math.max(1e-6, st.loudGain));
+          infoSet('loud', (db >= 0 ? '+' : '') + db.toFixed(1) + ' dB');
+        } else { infoSet('loud', ''); }
+      }).catch(function () { });
+    }
+    if (window.mine.statsGet && srcPath) {
+      window.mine.statsGet(srcPath).then(function (map) {
+        if (seq !== _infoExtraSeq || !_infoOn) return;
+        var r = map && map[srcPath];
+        if (!r || (!r.count && !r.totalSec)) { infoSet('plays', ''); return; }
+        infoSet('plays', '播放 ' + (r.count || 0) + ' 次 · 累计 ' + Math.round((r.totalSec || 0) / 60) + ' 分钟');
+      }).catch(function () { });
+    }
+  }
+  /* V4.4.7（PR#6）：两个入口——N 键、点顶栏那个「FLAC · 16bit · 44.1kHz」胶囊。
+     旧的 np-full 浮层已由 CSS 隐藏（它是另一套渲染，这里直接不给它出场机会）。 */
+  var _infoAutoImm = false, _infoToggleAt = 0;
+  /* V4.4.7：把面板从沉浸层搬到 #am-root 下的独立遮罩里（A 形态，不切沉浸） */
+  function bindPanelBlankClose(ov, panel) {
+    if (!panel || panel._amSb) return;
+    panel._amSb = true;
+    panel.addEventListener('click', function (e11) {
+      var tg = e11.target;
+      if (tg === panel || (tg.classList && tg.classList.contains('am-imm-info-inner')) ||
+          (tg.classList && tg.classList.contains('am-imm-info-grid'))) {
+        ov.classList.remove('on');
+        setImmInfo(false);
+        e11.stopPropagation();
+      }
+    }, true);
+  }
+  function ensureStandalonePanel() {
+    if (R.infoOv) {
+      /* 面板可能被搬回沉浸层（那一层是 display:none），也可能在沉浸层重建后换了节点：
+         每次打开都确认它真的挂在遮罩里，并清掉遮罩里残留的旧面板节点 */
+      try {
+        if (R.immInfo && R.immInfo.parentElement !== R.infoOv) {
+          var olds = R.infoOv.querySelectorAll('.am-imm-info');
+          for (var oi = 0; oi < olds.length; oi++) olds[oi].parentNode.removeChild(olds[oi]);
+          R.infoOv.appendChild(R.immInfo);
+        }
+        bindPanelBlankClose(R.infoOv, R.immInfo);
+      } catch (e6b) { }
+      return R.infoOv;
+    }
+    try {
+      var ov = el('div', 'am-info-ov');
+      if (!R.immInfo) {
+        /* 沉浸层还没建过：直接在遮罩里建一套面板。
+           不要用 toggleImmersive(true)+toggleImmersive(false) 去「借」沉浸层那套——
+           那对一进一出在动画/状态守卫下会卡在沉浸模式里出不来（设置里点「进入氛围模式」就中招）。 */
+        buildImmInfo(ov);
+        R.immOv = null;                       // 这套面板不属于沉浸层
+        if (R.immInfoBar) R.immInfoBar.style.display = 'none';   // 独立浮层不要左上角 ↓
+      }
+      if (!R.immInfo) return null;
+      /* 点遮罩空白处 = 收起（整屏遮罩，点哪儿都算面板外） */
+      ov.addEventListener('click', function (e10) {
+        if (e10.target !== ov) return;
+        ov.classList.remove('on');
+        setImmInfo(false);
+        e10.stopPropagation();
+      }, true);
+      bindPanelBlankClose(ov, R.immInfo);
+      if (R.immInfo.parentElement !== ov) ov.appendChild(R.immInfo);
+      document.getElementById('am-root').appendChild(ov);
+      R.infoOv = ov;
+      return ov;
+    } catch (e7) { return null; }
+  }
+  function openImmInfoFromAnywhere() {
+    if (Date.now() - _infoToggleAt < 400) return;
+    if (Date.now() - (window.__amBadgeDragAt || 0) < 600) return;
+    _infoToggleAt = Date.now();
+    /* 氛围模式是全屏层：旧的「Now Playing 全屏」和歌词外观弹层都收掉，别叠在一起 */
+    try {
+      if (document.querySelector('#np-full.show') && window.annieProUi && window.annieProUi.toggleNpf) {
+        window.annieProUi.toggleNpf(false);
+      }
+      if (R.lyrSetPop && R.lyrSetPop.classList.contains('on')) R.lyrSetPop.classList.remove('on');
+    } catch (e16) { }
+    try {
+      /* 已经在沉浸模式里：沿用沉浸层自己的面板（那里有 ↓ 按钮和遮罩，不要抢过来） */
+      if (S.imm) {
+        if (R.infoOv && R.immInfo && R.immOv && R.immOv !== R.infoOv && R.infoOv.contains(R.immInfo)) {
+          R.immOv.appendChild(R.immInfo);       // 搬回沉浸层
+          R.infoOv.classList.remove('on');
+          _infoOn = false;
+          R.immInfo.classList.remove('on');
+        }
+        setImmInfo(!_infoOn);
+        return;
+      }
+      if (_infoOn) { var ovc = ensureStandalonePanel(); setImmInfo(false); if (ovc) ovc.classList.remove('on'); return; }
+      (function retry(n) {
+        setTimeout(function () {
+          var ov2 = ensureStandalonePanel();
+          if (ov2) { ov2.classList.add('on'); setImmInfo(true); return; }
+          if (n > 0) retry(n - 1);
+        }, n === 12 ? 0 : 180);
+      })(12);
+    } catch (e) { }
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if ((e.key || '').toLowerCase() !== 'n') return;
+    var ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    /* 先拦下来：proUi 在 window 上还绑了一个 N（打开 #np-full 那套旧全屏 Now Playing），
+       不拦的话按一次 N 会两个一起弹（输入框里除外，上面已经放行） */
+    e.preventDefault(); e.stopPropagation();
+    if (document.querySelector('.set-panel.on, #settings-panel.open')) return;
+    /* 真的有菜单/弹层开着才让路：只看「有尺寸」的，且歌词外观弹层放行
+       （它会在氛围面板上叠一层，N 应该把它收掉再开面板） */
+    var pops = document.querySelectorAll('#am-root .am-pop.on');
+    for (var pi = 0; pi < pops.length; pi++) {
+      if (pops[pi].classList.contains('am-lyrset-pop')) continue;
+      if (pops[pi].getBoundingClientRect().width > 0) return;
+    }
+    openImmInfoFromAnywhere();
+  }, true);
+  /* 直接给格式胶囊绑 onclick：有些布局下事件被别的处理器吃掉，光靠委托不保险 */
+  function bindFmtBadge() {
+    var list = document.querySelectorAll('#am-root .am-badge, #am-root .am-fmt');
+    for (var i = 0; i < list.length; i++) {
+      var b = list[i];
+      if (b._amInfoBound) continue;
+      if (!/(kHz|bit|FLAC|MP3|WAV|DSD|M4A)/i.test(b.textContent || '')) continue;
+      b._amInfoBound = true;
+      b.style.cursor = 'pointer';
+      b.title = '歌曲信息（N）';
+      b.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        openImmInfoFromAnywhere();
+      }, true);
+    }
+  }
+  /* 兜底：按坐标命中（不依赖事件 target，也不依赖 click 是否被别处吃掉） */
+  document.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    var n = document.elementFromPoint(e.clientX, e.clientY), i = 0;
+    while (n && n !== document.body && i++ < 6) {
+      var c = (typeof n.className === 'string') ? n.className : '';
+      var txt = (n.textContent || '').trim();
+      if (/(badge|fmt)/i.test(c) && /(kHz|bit|FLAC|MP3|WAV|DSD|M4A)/i.test(txt) && txt.length < 40) {
+        // 只拦住拖动区行为，开面板交给 mouseup（否则一按下就开，拖动也会开）
+        e.preventDefault();
+        return;
+      }
+      n = n.parentElement;
+    }
+  }, true);
+  /* 点底部频谱条 = 打开信息面板 */
+  setTimeout(function () {
+    try {
+      var vb = document.querySelector('.am-vizbar') || document.getElementById('viz-bar') || document.querySelector('.viz-bar');
+      if (vb && !vb._amInfoBound) {
+        vb._amInfoBound = true;
+        vb.style.cursor = 'pointer';
+        vb.title = '歌曲信息（N）';
+        vb.addEventListener('click', function (e8) { e8.stopImmediatePropagation(); e8.preventDefault(); openImmInfoFromAnywhere(); }, true);
+      }
+    } catch (e9) { }
+  }, 1500);
+
+  try {
+    if (localStorage.getItem('amLRBar') === 'off') {
+      var rootEl = document.getElementById('am-root');
+      if (rootEl) rootEl.classList.add('am-lr-off');
+    }
+  } catch (e4) { }
+
+  setInterval(function () {
+    if (R.infoOv) R.infoOv.classList.toggle('on', !!_infoOn && !S.imm);
+    /* 设置中心打开时不再顺手收掉氛围模式：点 ⚙ 只是打开设置，面板原样留在后面
+       （设置是 z-index 200 的整层遮罩，会盖住面板；关掉设置后面板还在） */
+    /* 沉浸层的 ↓ 按钮：buildImmInfo 每次重建都会重置它的 onclick，
+       这里统一改绑到 openImmInfoFromAnywhere（它会先把面板搬回沉浸层再开） */
+    /* 设置里「氛围模式（全屏频谱）」那块：改成信息面板的说明 + 入口 */
+    (function () {
+      try {
+        if (window.__amAmbPatched) return;
+        var btn = null, nodes = document.querySelectorAll('.set-row');
+        for (var i = 0; i < nodes.length; i++) {
+          if ((nodes[i].textContent || '').indexOf('氛围模式') >= 0) { btn = nodes[i]; break; }
+        }
+        if (!btn) return;
+        window.__amAmbPatched = true;
+        var tEl = btn.querySelector('div > div');
+        if (tEl) tEl.textContent = '氛围模式';
+        var hint = btn.querySelector('.set-hint');
+        if (hint) hint.textContent = '全屏实时频谱 + 当前曲目完整信息（格式 / 位深 / 输出状态 / 后端 / 统计 / 进度），颜色跟随封面；可从顶栏格式胶囊、底部频谱条进入，快捷键 N';
+        var b = btn.querySelector('button');
+        if (b) b.textContent = '进入氛围模式';
+        btn.addEventListener('click', function (ev) {
+          if (ev.target && ev.target.tagName === 'BUTTON') {
+            ev.preventDefault(); ev.stopPropagation();
+            /* 先收起设置中心，再开面板，否则面板会被设置遮罩盖住 */
+            try {
+              if (window.annieSettings && window.annieSettings.togglePanel) window.annieSettings.togglePanel();
+              var closeBtn = document.querySelector('.set-close, .set-panel .set-x, .set-panel [title="关闭"]');
+              if (closeBtn) closeBtn.click();
+            } catch (e12) { }
+            setTimeout(function () { openImmInfoFromAnywhere(); }, 280);
+          }
+        }, true);
+      } catch (e10) { }
+    })();
+
+    /* 设置中心：给「信息面板」补说明文字，并把它排到「信息面板电平条」上面 */
+    (function () {
+      try {
+        if (window.__amStFix) return;
+        var rows = [].slice.call(document.querySelectorAll('.set-row'));
+        if (!rows.length) return;
+        var infoRow = null, lrRow = null;
+        for (var ri = 0; ri < rows.length; ri++) {
+          var row = rows[ri];
+          if (!row.querySelector('button, select')) continue;   // 只要带控件的设置行，别碰说明页的纯文字块
+          var txt = (row.textContent || '').replace(/\s+/g, '');
+          if (txt.indexOf('电平条') >= 0 && txt.indexOf('L/R') >= 0) { lrRow = row; continue; }
+          if (txt.indexOf('氛围模式') >= 0) infoRow = row;
+        }
+        if (infoRow) {
+          var lab = infoRow.querySelector('div');
+          var hint = infoRow.querySelector('.set-hint');
+          if (!hint && lab) {
+            hint = document.createElement('div');
+            hint.className = 'set-hint';
+            lab.appendChild(hint);
+          }
+          if (hint) hint.textContent = '全屏实时频谱 + 当前曲目完整信息（格式 / 位深 / 输出状态 / 后端 / 统计 / 进度），颜色跟随封面；可从顶栏格式胶囊、底部频谱条进入，快捷键 N';
+        }
+        if (lrRow) {
+          var lrLab0 = lrRow.querySelector('div > div');
+          if (lrLab0) lrLab0.textContent = '氛围模式电平条';
+          var lrHint = lrRow.querySelector('.set-hint');
+          if (lrHint) lrHint.textContent = '氛围模式里那两条 L / R 电平指示，颜色跟随封面';
+        }
+        if (infoRow && lrRow && infoRow.parentNode === lrRow.parentNode) {
+          lrRow.parentNode.insertBefore(infoRow, lrRow);          // 氛围模式 先
+          lrRow.parentNode.insertBefore(lrRow, infoRow.nextSibling); // 电平条紧随其后
+        }
+        window.__amStFix = true;
+      } catch (e11) { }
+    })();
+
+    /* 使用说明页：把旧的氛围模式文案换成现在的实际行为（名字仍叫氛围模式）。
+       标题「氛围模式」和描述是两个节点，所以这里只按描述原文匹配；
+       设置页是懒建的、切页时还可能重建，所以只要面板开着且还含旧串就再写一遍。 */
+    (function () {
+      try {
+        var sp = document.querySelector('#settings-panel');
+        if (!sp || !sp.classList.contains('open')) return;
+        if ((sp.textContent || '').indexOf('Ctrl+Shift+V') < 0) return;
+        var OLD_DESC = '全屏实时频谱 + 当前曲目信息（跟随强调色）；AM 点底部频谱条 / Ctrl+Shift+V / 设置中心进入；ESC 或单击退出';
+        var NEW_DESC = '全屏实时频谱 + 当前曲目完整信息（格式 / 位深 / 输出状态 / 后端 / 统计 / 进度，颜色跟随封面）；顶栏格式胶囊 / 底部频谱条 / 快捷键 N / 设置中心进入；ESC 或单击空白处退出';
+        var KNOWN = [
+          [OLD_DESC, NEW_DESC],
+          ['Ctrl+Shift+V 氛围模式 / ', ''],
+          ['/ Ctrl+Shift+V 氛围模式', ''],
+          ['氛围模式入口', '氛围模式（信息面板）']
+        ];
+        var walker = document.createTreeWalker(sp, NodeFilter.SHOW_TEXT, null);
+        var n;
+        while ((n = walker.nextNode())) {
+          var v = n.nodeValue;
+          if (!v || (v.indexOf('氛围模式') < 0 && v.indexOf('Ctrl+Shift+V') < 0)) continue;
+          var out = v;
+          for (var ki = 0; ki < KNOWN.length; ki++) {
+            if (out.indexOf(KNOWN[ki][0]) >= 0) out = out.split(KNOWN[ki][0]).join(KNOWN[ki][1]);
+          }
+          if (out !== v) n.nodeValue = out;
+        }
+      } catch (e12b) { }
+    })();
+
+    if (R.immBtnInfo && !R.immBtnInfo._amInfoRebind) {
+      R.immBtnInfo._amInfoRebind = true;
+      R.immBtnInfo.onclick = function (e) { e.stopPropagation(); openImmInfoFromAnywhere(); };
+    }
+  }, 250);
+
+  setInterval(bindFmtBadge, 1200);
+  if (document.readyState !== 'loading') setTimeout(bindFmtBadge, 300);
+
+  document.addEventListener('click', function (e) {
+    var n = e.target;
+    for (var i = 0; n && n !== document.body && i < 6; i++, n = n.parentElement) {
+      var c = (typeof n.className === 'string') ? n.className : '';
+      var txt = (n.textContent || '').trim();
+      if (/(fmt|badge)/i.test(c) && /(kHz|bit|FLAC|MP3|WAV|DSD|M4A)/i.test(txt) && txt.length < 40) {
+        e.preventDefault(); e.stopPropagation();   // 别让胶囊自己的点击逻辑把面板又关掉
+        openImmInfoFromAnywhere();
+        return;
+      }
+    }
+  }, true);
+
+  function infoVizFrame() {
+    if (!_infoOn || !R.infoViz) { _infoRaf = 0; return; }
+    _infoRaf = requestAnimationFrame(infoVizFrame);
+    if (R.infoLR) {
+      if (!_lrPeak) { _lrPeak = new Float32Array(32); for (var p0 = 0; p0 < 32; p0++) _lrPeak[p0] = 0.02; }
+      var ls = 0, rs = 0, q0;
+      for (q0 = 0; q0 < 32; q0++) {
+        var bv = vizBands[q0] || 0;
+        if (bv > _lrPeak[q0]) _lrPeak[q0] = bv; else _lrPeak[q0] *= 0.9985; // 缓慢回落
+        var nv = Math.min(1, bv / Math.max(0.02, _lrPeak[q0]));
+        if (q0 < 16) ls += nv; else rs += nv;
+      }
+      /* 颜色跟封面调色板（与频谱同源） */
+      var palNow = (typeof vizPal !== 'undefined' && vizPal) || null;
+      var cA = (palNow && palNow.primary) || (typeof vizAccA !== 'undefined' && vizAccA) || '';
+      var cB = (palNow && palNow.accent) || (typeof vizAccB !== 'undefined' && vizAccB) || '';
+      if (cA) {
+        var grad2 = 'linear-gradient(90deg, ' + cA + ', ' + (cB || cA) + ')';
+        if (R.infoLR.grad !== grad2) {
+          R.infoLR.grad = grad2;
+          R.infoLR.l.style.background = grad2;
+          R.infoLR.r.style.background = grad2;
+        }
+      }
+      R.infoLR.l.style.width = Math.round((ls / 16) * 100) + '%';
+      R.infoLR.r.style.width = Math.round((rs / 16) * 100) + '%';
+    }
+    if (_infoPassKey !== infoKeyNow()) refreshImmInfo(); // 切歌/格式到达即时换内容
+    var cv = R.infoViz, w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    if (cv.width !== w * 2) { cv.width = w * 2; cv.height = h * 2; } // 2x 高清，与主频谱条一致
+    if (!_infoSmooth) _infoSmooth = new Float32Array(32);
+    var ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    var heat = vizMode === 'heat';
+    if (!heat) { // 配色与主界面 vizLoop 同源（accent / cover / coverMulti / rainbow）
+      var grad = ctx.createLinearGradient(0, 0, cv.width, 0), pal = vizPal, i0;
+      if (vizMode === 'rainbow') {
+        var hues = [265, 230, 200, 160, 110, 55, 15];
+        for (i0 = 0; i0 < hues.length; i0++) grad.addColorStop(i0 / (hues.length - 1), 'hsl(' + hues[i0] + ',85%,58%)');
+      } else if (vizMode === 'coverMulti' && pal && pal.stops && pal.stops.length >= 2) {
+        for (i0 = 0; i0 < pal.stops.length; i0++) grad.addColorStop(i0 / (pal.stops.length - 1), pal.stops[i0]);
+      } else if (pal && pal.primary) {
+        grad.addColorStop(0, pal.primary); grad.addColorStop(1, pal.accent);
+      } else {
+        grad.addColorStop(0, vizAccA || '#fa2d55'); grad.addColorStop(1, vizAccB || '#ff5c7a');
+      }
+      ctx.fillStyle = grad;
+    }
+    var n = 32, bw = cv.width / n;
+    /* 轻微自动增益：低频永远最强，直接按原始幅度画的话右半屏几乎看不见，
+       整条频谱会显得「只有左边一段」。按每帧最大值平滑归一化，让整条都活起来。 */
+    var qmax = 0;
+    for (var b0 = 0; b0 < n; b0++) if (_infoSmooth[b0] > qmax) qmax = _infoSmooth[b0];
+    var gTarget = qmax > 0.08 ? Math.min(3.2, 0.85 / qmax) : 1;
+    _infoGain += (gTarget - _infoGain) * 0.12;
+    for (var i = 0; i < n; i++) {
+      var v = _infoSmooth[i] += ((vizBands[i] || 0) - _infoSmooth[i]) * 0.28; // 帧间插值
+      var vs = Math.min(1, v * _infoGain);
+      var bh = Math.max(2, vs * (cv.height - 6));
+      if (heat) ctx.fillStyle = vizHeatColor(vs);
+      ctx.globalAlpha = 0.4 + vs * 0.6;
+      ctx.fillRect(i * bw + 1, cv.height - bh, bw - 2, bh);
+    }
+    ctx.globalAlpha = 1;
+  }
+  function immInfoOutside(e) {
+    if (!_infoOn || Date.now() - _infoAt < 60) return; // 忽略「打开面板的那一次点击」
+    var t = e.target;
+    if ((R.immInfo && R.immInfo.contains(t)) || (R.immInfoBar && R.immInfoBar.contains(t))) return;
+    /* 沉浸层右上角那排按钮浮在面板之上：真全屏 / 最小化 / 退出沉浸 不关面板，
+       歌词外观（⚙）要关面板（它会在面板上叠一层设置弹层） */
+    var cbBtn = (t && t.closest) ? t.closest('.am-imm-closebar .am-tbtn') : null;
+    if (cbBtn && !/歌词外观/.test(cbBtn.title || '')) return;
+    setImmInfo(false);
+  }
+  function immInfoKey(e) {
+    if (!_infoOn || e.key !== 'Escape') return;
+    /* 设置中心开着时 Esc 归它（关最上层）；设置关掉后氛围面板还在 */
+    if (document.querySelector('#settings-panel.open')) return;
+    e.stopPropagation();
+    setImmInfo(false);
+  }
+  function setImmInfo(on) {
+    on = !!on;
+    if (on === _infoOn) return;
+    _infoOn = on;
+    _infoAt = Date.now();
+    if (R.immInfo) R.immInfo.classList.toggle('on', on);
+    if (R.immBtnInfo) {
+      R.immBtnInfo.classList.toggle('on', on); // chevron 翻向由 CSS 负责（.on 时转 180°）
+      R.immBtnInfo.title = on ? '收起歌曲信息' : '歌曲信息（下拉面板）';
+    }
+    cancelAnimationFrame(_infoRaf); _infoRaf = 0;
+    document.removeEventListener('mousedown', immInfoOutside, true);
+    document.removeEventListener('keydown', immInfoKey, true);
+    if (on) {
+      refreshImmInfo();
+      document.addEventListener('mousedown', immInfoOutside, true);
+      document.addEventListener('keydown', immInfoKey, true);
+      infoVizFrame();
+    } else if (_infoSmooth) _infoSmooth.fill(0);
+    immShowChrome(); // 展开/收起都退出「静止隐藏」态，左上角按钮始终可见
+  }
+  function buildImmInfo(ov) {
+    /* 左上角「⌄」：与右上角 ⛶ 全屏 / − 最小化 同排同风格。
+       图标用 SVG 画（不用字形、也不用 CSS 边框旋转）——这样两条臂严格等长，
+       且顶点是真正的钝角；展开时整枚图标转 180°。 */
+    var bar = el('div', 'am-imm-infobar');
+    R.immBtnInfo = el('button', 'am-tbtn', '');
+    var chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('class', 'am-imm-chev');
+    chev.setAttribute('viewBox', '0 0 16 10');
+    chev.setAttribute('width', '13');
+    chev.setAttribute('height', '8');
+    chev.setAttribute('aria-hidden', 'true');
+    var chevP = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    chevP.setAttribute('d', 'M2 2 L8 8 L14 2');
+    chevP.setAttribute('fill', 'none');
+    chevP.setAttribute('stroke', 'currentColor');
+    chevP.setAttribute('stroke-width', '1.7');
+    chevP.setAttribute('stroke-linecap', 'round');
+    chevP.setAttribute('stroke-linejoin', 'round');
+    chev.appendChild(chevP);
+    R.immBtnInfo.appendChild(chev);
+    R.immBtnInfo.title = '歌曲信息（下拉面板）';
+    R.immBtnInfo.onclick = function (e) { e.stopPropagation(); setImmInfo(!_infoOn); };
+    bar.appendChild(R.immBtnInfo);
+    ov.appendChild(bar);
+    R.immInfoBar = bar;
+    var panel = el('div', 'am-imm-info');
+    var inner = el('div', 'am-imm-info-inner');
+    var head = el('div', 'am-imm-info-head');
+    R.infoTitle = el('div', 'am-imm-info-title', '未在播放');
+    R.infoSub = el('div', 'am-imm-info-sub', '');
+    head.appendChild(R.infoTitle); head.appendChild(R.infoSub);
+    inner.appendChild(head);
+    var grid = el('div', 'am-imm-info-grid');
+    R.infoVal = {};
+    for (var i = 0; i < IMM_INFO_ROWS.length; i++) {
+      var key = IMM_INFO_ROWS[i][1];
+      var k = el('span', 'am-imm-info-k', IMM_INFO_ROWS[i][0]);
+      var v = el('span', 'am-imm-info-v', '');
+      v._k = k;
+      if (key === 'path') v.classList.add('am-imm-info-path');
+      k.style.display = 'none'; v.style.display = 'none';
+      grid.appendChild(k); grid.appendChild(v);
+      R.infoVal[key] = v;
+    }
+    inner.appendChild(grid);
+    /* V4.4.7：L/R 电平条（挂在频谱上方）。没有真正的左右声道数据，
+       所以对每个频段做「各自的历史峰值归一化」再取前后半段平均——
+       这样低频不会永久压死右边，两条会跟着音乐一起跳。 */
+    var lrWrap = el('div', 'am-imm-info-lr');
+    function lrRow(label) {
+      var row = el('div', 'am-imm-info-lr-row');
+      var lab = el('span', 'am-imm-info-lr-lab', label);
+      var track = el('div', 'am-imm-info-lr-track');
+      var fill = el('i', 'am-imm-info-lr-fill');
+      track.appendChild(fill);
+      row.appendChild(lab); row.appendChild(track);
+      lrWrap.appendChild(row);
+      return fill;
+    }
+    R.infoLR = { l: lrRow('L'), r: lrRow('R') };
+    inner.appendChild(lrWrap);
+    R.infoViz = document.createElement('canvas');
+    R.infoViz.className = 'am-imm-info-viz';
+    inner.appendChild(R.infoViz);
+    panel.appendChild(inner);
+    ov.appendChild(panel);
+    R.immInfo = panel;
+    R.immOv = ov;   /* 记住沉浸层容器，面板被搬到独立遮罩后能搬回来 */
+    /* 沉浸层重建时，独立遮罩里可能还留着上一套面板节点：清掉，只保留当前这套 */
+    try {
+      if (R.infoOv) {
+        var stale = R.infoOv.querySelectorAll('.am-imm-info');
+        for (var si = 0; si < stale.length; si++) {
+          if (stale[si] !== R.immInfo) stale[si].parentNode.removeChild(stale[si]);
+        }
+      }
+    } catch (e19) { }
+    /* 重建（切换经典/彩胶样式）时把状态与监听一并归零，避免残留展开态 */
+    document.removeEventListener('mousedown', immInfoOutside, true);
+    document.removeEventListener('keydown', immInfoKey, true);
+    cancelAnimationFrame(_infoRaf); _infoRaf = 0;
+    _infoOn = false; _infoPassKey = '';
+    panel.classList.remove('on');
+  }
   function buildImmersive() {
     if (R.imm) return;
     var vinyl = immMode() === 'vinyl';
@@ -550,6 +1140,7 @@
     R.immBtnMin.onclick = function (e) { e.stopPropagation(); try { window.mine.winMin(); } catch (x) { } };
     cb.insertBefore(R.immBtnMin, bExit);
     ov.appendChild(cb);
+    buildImmInfo(ov);            // V4.4.7：左上角 ↓ + 歌曲信息面板
 
     R.immCover = document.createElement('img');
     R.immCover.alt = ''; R.immCover.draggable = false;
@@ -1036,7 +1627,7 @@
   }
   function immPopOpen() {
     // 弹层/右键菜单开着时不藏 chrome（💿 彩胶外观、歌词外观等正在交互）
-    return !!document.querySelector('#am-root .am-pop.on');
+    return !!document.querySelector('#am-root .am-pop.on') || _infoOn; // 信息面板展开时不藏 chrome
   }
   function immGoIdle() {
     var root = immRoot();
@@ -1173,6 +1764,7 @@
     if (!want && R.imm) saveImmLayout(); // V4.4：退出沉浸前保存当前样式的布局
     buildImmersive();
     S.imm = want;
+    if (!want) setImmInfo(false); // 退出沉浸收起信息面板
     if (want) immStartCursorWatch(); else immStopCursorWatch(); // 静止自动隐藏鼠标随沉浸进出
     if (want && R.immVinyl) vinylStartSpin(); // 复用旧沉浸层（buildImmersive 早退）时重启盘体 rAF；退出后循环靠 S.imm 自停
     // V4.4：沉浸模式真全屏（设置 → AM 界面 开关；退出沉浸无条件复位，非全屏时为无害空操作）
@@ -1964,9 +2556,9 @@
     if (window.annieTheme && annieTheme.current !== 'am') return;
     if (window.annieSettings && annieSettings.ui.amViz === false) { if (cv.style.display !== 'none') cv.style.display = 'none'; return; }
     if (cv.style.display === 'none') cv.style.display = '';
-    var w = cv.clientWidth, h = cv.clientHeight;
-    if (!w || !h) return;
-    if (cv.width !== w * 2) { cv.width = w * 2; cv.height = h * 2; } // 2x 高清
+    /* V4.4.7：取色/模式轮询必须排在「频谱条有没有尺寸」之前——沉浸模式里 .am-vizbar 是
+       display:none（宽高 0），原来在这儿就 return 了，氛围模式面板的配色会永远停在
+       进沉浸前那一首（表现：沉浸里切歌，面板频谱色不变） */
     var now = Date.now();
     if (now - vizColorAt > 1000) { // 强调色/模式/封面 1s 轮询（支持自定义强调色与切歌实时切换）
       vizColorAt = now;
@@ -1982,6 +2574,9 @@
         }
       }
     }
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    if (cv.width !== w * 2) { cv.width = w * 2; cv.height = h * 2; } // 2x 高清
     var ctx = cv.getContext('2d');
     ctx.clearRect(0, 0, cv.width, cv.height);
     var grad = null;

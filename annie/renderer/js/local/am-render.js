@@ -1196,6 +1196,9 @@
     ov.appendChild(R.immOsd);
     root.appendChild(ov);
     R.imm = ov;
+  // V4.4.8：R.imm 就位后再应用一次彩胶外观——首次构建时上面的 applyVinylStyle()
+  // 里 R.imm 还是 null，位置/轴心孔等 class 会漏掉（表现为重启后设置是悬挂、实际居中）
+  if (vinyl) applyVinylStyle();
   }
   /* ---------- V4.4：底部悬浮 dock（视频式：静止隐藏全部 chrome，鼠标探入屏幕底部热区唤出） ---------- */
   function buildImmDock(ov) {

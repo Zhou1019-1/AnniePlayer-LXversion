@@ -1444,6 +1444,28 @@ html[data-motion="off"] #am-root::before {
 }
 .am-tb-more.open { max-width: 520px; opacity: 1; pointer-events: auto; margin-right: 0; }
 .am-tb-more.no-anim { transition: none; } /* 恢复上次展开状态时不要播一遍动画 */
+
+/* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
+#am-root .am-lyr-scroll { padding: 0 26px 40vh; }
+#am-root .am-imm-lyr { padding-top: 0; padding-bottom: 40vh; }
+#am-root .am-imm-vinyl .am-imm-lyr { padding: 0 8px 40vh 0; }
+/* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
+   = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
+#am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
+#am-root .am-imm-vinyl .am-imm-vleft { padding-left: 0; }
+/* V4.4.8：右上悬挂 = 圆心到上边、到右边距离相等（落在右上角对角线）
+   偏移与盘体宽度同公式，调大小时跟手 */
+#am-root .am-imm-vinyl.am-pos-corner .am-imm-vright { position: static; }
+#am-root .am-imm-vinyl.am-pos-corner .am-vinyl {
+  position: absolute; margin: 0;
+  right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+  top:   calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+}
+/* V4.4.8：彩胶长标题不再撑破布局——最多两行、超出省略 */
+#am-root .am-imm-vinyl .am-imm-title {
+  white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .am-tb-more > * { flex: none; }
 /* 窗口三键原来的 margin-left:4px 会让展开按钮右侧多出 4px，清零 */
 .am-winbtns { margin-left: 0; gap: 4px; }

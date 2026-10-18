@@ -55,7 +55,7 @@
     amViz: true,              // V3.5.17：AM 主题底部实时频谱条
     amVizColor: 'cover',      // V4.3.17：频谱条配色 cover|coverMulti|rainbow|heat|accent
     amLRBar: 'on',            // V4.4.7（PR#6）：信息面板电平条 on|off
-    amSmtc: 'on',             // V4.4.7（PR#6）：系统媒体会话（SMTC）on|off
+    amSmtc: 'off',             // V4.4.7（PR#6）：系统媒体会话（SMTC）on|off
     amQBadge: 'dot',          // V4.4.7（PR#6）：待播清单角标 off=隐藏 | dot=小圆点 | count=歌曲数量
     beatAnalysis: true        // V4.4：节拍律动分析（相机随鼓点运动；关闭省整轨解码，弱机建议关）
   };

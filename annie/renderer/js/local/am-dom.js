@@ -15,7 +15,7 @@
       mini: '<rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="M7 15h6"/>',
       mic: '<rect x="9" y="2.6" width="6" height="11" rx="3"/><path d="M5.6 11a6.4 6.4 0 0 0 12.8 0M12 17.4V21"/>',
       gear: '<g transform="translate(12 12) scale(0.9) translate(-12 -12)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></g>',
-      msg: '<g transform="translate(0 0.6)"><path d="M4.6 5h14.8a1.6 1.6 0 0 1 1.6 1.6v8.4a1.6 1.6 0 0 1-1.6 1.6h-8l-4.2 2.8v-2.8H4.6A1.6 1.6 0 0 1 3 14.8V6.6A1.6 1.6 0 0 1 4.6 5z"/></g>',
+      msg: '<g transform="translate(12 12.6) scale(1,1.12) translate(-12 -12)"><path d="M4.6 5h14.8a1.6 1.6 0 0 1 1.6 1.6v8.4a1.6 1.6 0 0 1-1.6 1.6h-8l-4.2 2.8v-2.8H4.6A1.6 1.6 0 0 1 3 14.8V6.6A1.6 1.6 0 0 1 4.6 5z"/></g>',
       moon: '<path d="M21 12.8A8.6 8.6 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
       sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>',
       palette: '<rect x="3.6" y="3.6" width="7" height="7" rx="1.8"/><rect x="13.4" y="3.6" width="7" height="7" rx="1.8"/><rect x="3.6" y="13.4" width="7" height="7" rx="1.8"/><circle cx="16.9" cy="16.9" r="3.7"/>',
@@ -150,12 +150,23 @@
       var npNow = np.getBoundingClientRect().left;
       var m0 = parseFloat(np.style.marginLeft) || 0;
       var extra = npNow - t2.right - m0;
-      var want = Math.max(t2.right + 8, sb.right + 5);
+      var _gap = Math.max(8, t2.left);   /* 控制栏到左边框的距离，作为最小间距 */
+      var want = Math.max(t2.right + _gap + 5, sb.right);   /* +5 抵消封面 -5px 偏左 */
       var ml = Math.max(0, want - t2.right - extra);
       np.style.marginLeft = ml + 'px';
       /* 自检：np 左缘与目标偏差 >1px 时立刻补一次（不越过控制键） */
       var d = want - np.getBoundingClientRect().left;
       if (Math.abs(d) > 1) np.style.marginLeft = (ml + d) + 'px';
+      /* 拖动时即时触发胶囊收缩动画（不夹宽度，胶囊靠动画自己收窄） */
+      try {
+        var _swNow = Math.round(sb.width);
+        if (_swNow !== window.__amLastSw) {
+          window.__amLastSw = _swNow;
+          window.__amNoBlur = true;
+          try { var _AM = window.__annieAMInternal; if (_AM && _AM.refreshBadge) _AM.refreshBadge(); } catch (e) { }
+          window.__amNoBlur = false;
+        }
+      } catch (e) { }
     }
     window.__amCoalesce = function () {
       if (_rafSync) return;
@@ -168,8 +179,36 @@
     document.addEventListener('mouseup', function () { setTimeout(syncRail, 60); }, true);
     window.__amSyncNpT = syncNpTight;
     window.__amSyncTransport = syncTransport;
+    /* 记录/恢复上次停留的视图（歌曲/专辑/文件夹/播放列表…），重启回到原位置 */
+    try {
+      var _lvLast = '';
+      setInterval(function () {
+        var A = window.__annieAMInternal; if (!A || !A.S) return;
+        var st = JSON.stringify({ v: A.S.view, a: A.S.albumKey || null, f: A.S.folderPath || null });
+        if (st !== _lvLast) { _lvLast = st; try { localStorage.setItem('annieplayer.am.lastView', st); } catch (e) { } }
+      }, 800);
+      var _lvTries = 0;
+      var _lvT = setInterval(function () {
+        _lvTries++;
+        var A = window.__annieAMInternal; if (!A || !A.S) { if (_lvTries > 100) clearInterval(_lvT); return; }
+        var st2 = null; try { st2 = JSON.parse(localStorage.getItem('annieplayer.am.lastView') || 'null'); } catch (e) { }
+        if (!st2 || !st2.v) { clearInterval(_lvT); return; }
+        var _vT = st2.v, _aT = st2.a || null, _fT = st2.f || null;
+        /* 播放列表还没加载完就再等一会儿（避免恢复到一个暂时不存在的歌单） */
+        if ((_vT.indexOf('pl:') === 0 || _vT.indexOf('spl:') === 0) && _lvTries < 40) {
+          var _id = _vT.split(':')[1];
+          var _arr = _vT.indexOf('spl:') === 0 ? (A.S.streamPlaylists || []) : (A.S.playlists || []);
+          if (!_arr.some(function (p) { return String(p.id) === String(_id); })) return;
+        }
+        if (A.S.view !== _vT || (A.S.albumKey || null) !== _aT || (A.S.folderPath || null) !== _fT) {
+          A.S.view = _vT; A.S.albumKey = _aT; A.S.folderPath = _fT;
+          try { if (A.renderSidebar) A.renderSidebar(); if (A.renderView) A.renderView(); } catch (e) { }
+        }
+        clearInterval(_lvT);
+      }, 300);
+    } catch (e) { }
     /* 兜底：每 400ms 检查一次对齐，有偏差才重算（防元素重建导致观察器失效） */
-    setInterval(function () {
+    setTimeout(function () { setInterval(function () {   /* 延后启动，首屏更快 */
       try {
         var r = document.getElementById('am-root'); if (!r) return;
         var s = r.querySelector('.am-side'); var c = r.querySelector('.am-np-cover');
@@ -177,7 +216,7 @@
         var d = s.getBoundingClientRect().right - c.getBoundingClientRect().left;
         if (Math.abs(d) > 1) syncTransport();
       } catch (e) { }
-    }, 400);
+    }, 400); }, 1500);
     /* 侧栏宽度一变（恢复存档、拖动、窗口缩放）就重新对齐顶栏 */
     try {
       var _sideEl = document.querySelector('#am-root .am-side');
@@ -501,7 +540,11 @@
         }
         function _fire() {
           if (window.__amSyncNpT) window.__amSyncNpT();
-          if (!_squeezed()) { root.classList.remove('am-tb-open', 'am-tb-close'); return; }
+          var _sq = _squeezed();
+          /* 展开/收起都只在真的推动了中间块时才回弹（没碰到进度条就不动） */
+          var _moved = (window.__amSqueezeNext !== false);
+          window.__amSqueezeNext = undefined;
+          if (open ? !_moved : !_sq) { root.classList.remove('am-tb-open', 'am-tb-close'); return; }
           root.classList.remove('am-tb-open', 'am-tb-close');
           void root.offsetWidth;
           root.classList.add(open ? 'am-tb-open' : 'am-tb-close');
@@ -510,9 +553,11 @@
             root.classList.remove('am-tb-open', 'am-tb-close');
           }, 420);
         }
-        setTimeout(_fire, open ? 200 : 40);   /* 展开：等图标展开后再回弹；收起：立刻回弹 */
+        clearTimeout(window.__amFireT);
+        window.__amFireT = setTimeout(_fire, open ? 0 : 40);   /* 展开与布局同时开始，合为一次回弹 */
       }).observe(moreWrap, { attributes: true, attributeFilter: ['class'] });
     } catch (e) { }
+
     R.btnMore = el('button', 'am-tbtn am-tb-more-btn');
     R.btnMore.title = '展开更多';
     var moreChev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -548,36 +593,41 @@
       var _np = document.querySelector('#am-root .am-np');
       var _collide = false;
       if (_np) {
-        var _tr1 = moreWrap.style.transition;
-        moreWrap.style.transition = 'none'; moreWrap.classList.add('open'); void moreWrap.offsetWidth;
-        _collide = _np.getBoundingClientRect().width < 300;
-        moreWrap.classList.remove('open'); void moreWrap.offsetWidth; moreWrap.style.transition = _tr1;
+        /* 真实测量：临时用内联 maxWidth 展开 moreWrap（不改 class，不会触发回弹观察器），读完立刻还原 */
+        window.__amMeasuring = true;
+        var _mmPrev = moreWrap.style.maxWidth;
+        var _trPrev = moreWrap.style.transition;
+        moreWrap.style.transition = 'none';
+        var _npBefore = _np.getBoundingClientRect().width;
+        moreWrap.style.maxWidth = 'none';   /* 真实展开宽度，避免低估导致胶囊晚收 */
+        var _npAfter = _np.getBoundingClientRect().width;
+        _collide = _npAfter < 290;
+        window.__amSqueezeNext = (_npAfter < _npBefore - 1);   /* 没推动就不要回弹 */
+        moreWrap.style.maxWidth = _mmPrev;
+        moreWrap.style.transition = _trPrev;
+        window.__amMeasuring = false;
+        void moreWrap.offsetWidth;
       }
       if (!_collide) { setMore(true); return; }
-      setTimeout(function () {
+      setMore(true);   /* 展开图标与收胶囊同时进行 */
+      (function () { var _rt = document.getElementById('am-root'); if (!_rt) return;
+        _rt.classList.add('am-badge-shift');
+        clearTimeout(window.__amShiftT);
+        window.__amShiftT = setTimeout(function () { _rt.classList.remove('am-badge-shift'); }, 1100); })();
       var _A = window.__annieAMInternal, _b = document.querySelector('#am-root .am-badge');
       if (_A && _A.S && _b) {
         var _t = String(_A.S.fmt || '').split('·')[0].trim();
         if (_t && _b.textContent !== _t) {
-          var _shrink2 = true;   /* 展开方向的预测收起：只会变短 */
-          var _ow2 = _b.getBoundingClientRect().width;
-          var _clone2 = _b.cloneNode(false);
-          _clone2.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;width:auto;';
-          _clone2.textContent = _t;
-          _b.appendChild(_clone2);
-          var _nw2 = _clone2.getBoundingClientRect().width;
-          _clone2.remove();
-          _b.style.transition = 'width .16s ease';
-          _b.style.width = _ow2 + 'px';
+          /* 直接换文案、不做宽度动画：避免「宽空胶囊」压到标题上 */
+          _b.style.transition = 'none';
+          _b.style.width = '';
           _b.textContent = _t;
           void _b.offsetWidth;
           _b.classList.remove('am-badge-blur'); void _b.offsetWidth; _b.classList.add('am-badge-blur');
-          _b.style.width = _nw2 + 'px';
-          setTimeout(function () { _b.style.width = ''; _b.style.transition = ''; }, 200);
+          setTimeout(function () { _b.style.transition = ''; }, 60);
+          setTimeout(function () { _b.classList.remove('am-badge-blur'); }, 620);
         }
       }
-      }, 40);   /* 展开刚开始就收胶囊，收得更快 */
-      setMore(true);   /* 先展开图标 */
     };
     right.appendChild(R.btnMore);
     // 恢复上次的展开/收起状态（重启后不再默认收起）；直接落定，不播一遍展开动画

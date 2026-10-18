@@ -99,29 +99,7 @@
     var pg = base.g + (255 - base.g) * lift;
     var pb = base.b + (255 - base.b) * lift;
     return {
-      vizUi: (function () {
-        var _h = rgbToHsl(pr, pg, pb);
-        /* 主色偏浅且饱和度一般 → 说明是浅底封面，改取「最暖的一条色板」
-           （通常是人物发色/肤色），避免搜索框整块发蓝 */
-        if (stops && stops.length) {
-          var best = null, bs = -1e9;
-          stops.forEach(function (s2) {
-            var m2 = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(s2);
-            if (!m2) return;
-            var rr = +m2[1], gg = +m2[2], bb = +m2[3];
-            var warm = (rr - bb) * 0.9 + (rr - gg) * 0.4;
-            if (warm > bs) { bs = warm; best = s2; }
-          });
-          if (best && bs > 12) {
-            var _b2 = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(best);
-            if (_b2) {
-              var _bl = rgbToHsl(+_b2[1], +_b2[2], +_b2[3]).l;
-              if (_bl > 0.30) return best;   // 太暗的“最暖色”不用
-            }
-          }
-        }
-        return _h.l > 0.72 ? css(acc.r, acc.g, acc.b) : css(pr, pg, pb);
-      })(),
+      vizUi: css(pr, pg, pb),   /* 只用主色：暖色挑选会让 Chromium 反复重建大图层，内存暴涨 */
       primary: css(pr, pg, pb),
       accent: css(acc.r, acc.g, acc.b),
       stops: stops

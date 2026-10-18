@@ -2015,7 +2015,27 @@ function amModeSvg(id) {
       if (pp && pp.path === meta.path) pos = Math.max(0, pp.pos || 0);
     } catch (e) { }
     // V4.4.2：不再静默续播——弹确认框由用户决定（无论上次退出是播放还是暂停）
-    showResumePrompt(meta, pos);
+    /* V4.4.9：已能恢复上次界面，默认不弹；代码保留，需要时置 window.__amResumePrompt = true */
+    if (window.__amResumePrompt) { showResumePrompt(meta, pos); }
+    else {
+      /* V4.4.9：默认静默恢复队列并强制暂停；等曲库索引就绪再执行（否则会静默失败） */
+      var _rr = 0;
+      (function _tryRestore() {
+        var ready = false;
+        try { ready = !!(state.libIndex && state.libIndex.size); } catch (e2) { }
+        if (!ready) { if (_rr++ < 40) setTimeout(_tryRestore, 250); return; }
+        try {
+          meta.playing = false;
+          /* 静音 → 恢复（不 seek）→ 暂停 → 还原音量，压掉起播瞬间的沙沙声 */
+          var _vg = (state.library && state.library.volume) || 0.6;
+          try { window.mine.engine('volume.set', { gain: 0 }).catch(function () { }); } catch (e10) { }
+          doRestore(meta, 0);
+          setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e8) { } }, 80);
+          setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e9) { } }, 600);
+          setTimeout(function () { try { window.mine.engine('volume.set', { gain: _vg }).catch(function () { }); } catch (e11) { } }, 900);
+        } catch (e3) { }
+      })();
+    }
   }
   /* 续播确认弹窗：显示上次曲目/进度/状态；「续播」执行恢复，其余（不续播/关窗/Esc）清除恢复点 */
   function showResumePrompt(meta, pos) {
@@ -2459,25 +2479,58 @@ function amModeSvg(id) {
     /* V4.4.8：按 np 实际可用宽度决定胶囊文案（短/长） */
     var _rootEl = document.getElementById('am-root');
     var _npEl = _rootEl && _rootEl.querySelector('.am-np');
-    var _tightBadge = !!_npEl && _npEl.clientWidth > 0 && _npEl.clientWidth < 300;
+    if (window.__amMeasuring) return;   /* 展开预测测量期间不要动胶囊 */
+    /* 迟滞：低于 290 才收，高于 330 才展开，中间区间保持现状（防止阈值附近来回抖） */
+    var _npw = _npEl ? _npEl.clientWidth : 0;
+    if (_npw < 290) window.__amTightOn = true; else if (_npw > 330) window.__amTightOn = false;
+    var _tightBadge = !!window.__amTightOn;   /* np 被压到 0 也算紧凑 */
     var _txt = _tightBadge ? String(S.fmt || '').split('·')[0].trim() : S.fmt;
     if (R.npBadge.textContent !== _txt) {
       var _b = R.npBadge;
+      if (window.__amBadgeAnim) return;   /* 动画进行中，避免拖拽/观测器反复重启 */
       var _shrink = _txt.length < _b.textContent.length;
-      var _ow = _b.getBoundingClientRect().width;
-      var _clone = _b.cloneNode(false);
-      _clone.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;width:auto;';
-      _clone.textContent = _txt;
-      _b.appendChild(_clone);
-      var _nw = _clone.getBoundingClientRect().width;
-      _clone.remove();
-      _b.style.transition = _shrink ? 'width .16s ease' : 'width .28s cubic-bezier(.25,.1,.25,1)';
-      _b.style.width = _ow + 'px';
-      _b.textContent = _txt;
-      void _b.offsetWidth;
-      if (_shrink) { _b.classList.remove('am-badge-blur'); void _b.offsetWidth; _b.classList.add('am-badge-blur'); }
-      _b.style.width = _nw + 'px';
-      setTimeout(function () { _b.style.width = ''; _b.style.transition = ''; }, _shrink ? 200 : 340);
+      if (window.__amNoBlur) {
+        /* 拖动路径：先动宽度（文字暂不换，靠 ellipsis 逐字裁），收完再落文案；无模糊 */
+        _b.classList.remove('am-badge-blur');
+        var _ow = _b.getBoundingClientRect().width;
+        var _clone = _b.cloneNode(false);
+        _clone.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;width:auto;';
+        _clone.textContent = _txt;
+        _b.appendChild(_clone);
+        var _nw = _clone.getBoundingClientRect().width;
+        _clone.remove();
+        window.__amBadgeAnim = true;
+        _b.style.transition = 'width .16s ease';
+        _b.style.width = _ow + 'px';
+        if (_shrink) {
+          void _b.offsetWidth;
+          _b.style.width = _nw + 'px';
+          setTimeout(function () { _b.textContent = _txt; _b.style.width = ''; _b.style.transition = ''; window.__amBadgeAnim = false; }, 180);
+        } else {
+          _b.textContent = _txt;
+          void _b.offsetWidth;
+          _b.style.width = _nw + 'px';
+          setTimeout(function () { _b.style.width = ''; _b.style.transition = ''; window.__amBadgeAnim = false; }, 180);
+        }
+      } else {
+        var _ow2 = _b.getBoundingClientRect().width;
+        var _clone2 = _b.cloneNode(false);
+        _clone2.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;width:auto;';
+        _clone2.textContent = _txt;
+        _b.appendChild(_clone2);
+        var _nw2 = _clone2.getBoundingClientRect().width;
+        _clone2.remove();
+        window.__amBadgeAnim = true;
+        _b.style.transition = _shrink ? 'width .11s ease' : 'width .28s cubic-bezier(.25,.1,.25,1)';
+        _b.style.width = _ow2 + 'px';
+        _b.textContent = _txt;
+        void _b.offsetWidth;
+        if (_shrink) { _b.classList.remove('am-badge-blur'); void _b.offsetWidth; _b.classList.add('am-badge-blur'); }
+        else { _b.classList.remove('am-badge-blur'); }
+        _b.style.width = _nw2 + 'px';
+        setTimeout(function () { _b.style.transition = 'none'; _b.style.width = ''; void _b.offsetWidth; _b.style.transition = ''; window.__amBadgeAnim = false; }, _shrink ? 160 : 340);
+        setTimeout(function () { _b.classList.remove('am-badge-blur'); }, 620);
+      }
     }
     R.npBadge.style.display = S.fmt ? '' : 'none';
   }

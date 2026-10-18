@@ -701,8 +701,10 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-prog,
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-ctl { opacity: 0; pointer-events: none; }
 /* V4.4.7（秋野奈 PR#6）：沉浸模式「歌曲信息面板」——左上角 ↓ 唤出，自屏幕顶部下拉 */
+/* top 必须与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
+   改 .am-topbar 高度时这里和 .am-imm-closebar 要一起改（V4.4.8 曾漏改导致悬挂栏偏上） */
 .am-imm-infobar {
-  position: absolute; top: 14px; left: 16px; z-index: 5; display: flex; gap: 8px;
+  position: absolute; top: 18px; left: 16px; z-index: 5; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
   transition: opacity .32s ease, transform .32s ease;
 }
@@ -821,7 +823,9 @@ html.wp-on.wp-imm #am-root .am-imm-bg {
 }
 html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封面隐藏氛围」 */
 .am-imm-closebar {
-  position: absolute; top: 14px; right: 16px; z-index: 3; display: flex; gap: 8px;
+  /* top 与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
+     改 .am-topbar 高度时这里和 .am-imm-infobar 要一起改 */
+  position: absolute; top: 18px; right: 16px; z-index: 3; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
 }
 .am-imm-closebar .am-tbtn { color: #fff; }
@@ -1440,6 +1444,28 @@ html[data-motion="off"] #am-root::before {
 }
 .am-tb-more.open { max-width: 520px; opacity: 1; pointer-events: auto; margin-right: 0; }
 .am-tb-more.no-anim { transition: none; } /* 恢复上次展开状态时不要播一遍动画 */
+
+/* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
+#am-root .am-lyr-scroll { padding: 0 26px 40vh; }
+#am-root .am-imm-lyr { padding-top: 0; padding-bottom: 40vh; }
+#am-root .am-imm-vinyl .am-imm-lyr { padding: 0 8px 40vh 0; }
+/* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
+   = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
+#am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
+#am-root .am-imm-vinyl .am-imm-vleft { padding-left: 0; }
+/* V4.4.8：右上悬挂 = 圆心到上边、到右边距离相等（落在右上角对角线）
+   偏移与盘体宽度同公式，调大小时跟手 */
+#am-root .am-imm-vinyl.am-pos-corner .am-imm-vright { position: static; }
+#am-root .am-imm-vinyl.am-pos-corner .am-vinyl {
+  position: absolute; margin: 0;
+  right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+  top:   calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+}
+/* V4.4.8：彩胶长标题不再撑破布局——最多两行、超出省略 */
+#am-root .am-imm-vinyl .am-imm-title {
+  white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .am-tb-more > * { flex: none; }
 /* 窗口三键原来的 margin-left:4px 会让展开按钮右侧多出 4px，清零 */
 .am-winbtns { margin-left: 0; gap: 4px; }
@@ -1491,6 +1517,41 @@ html[data-motion="off"] #am-root::before {
 .am-az { opacity: 0; transition: opacity .18s ease; }
 .am-az:hover, .am-az:focus-within { opacity: 1; }
 
+/* V4.4.8：顶栏进度条左侧的时间数字改为左对齐——这样它的字形起点与顶栏封面左边缘同一条线
+   （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
+#am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
+/* V4.4.8：封面 + 歌名整体再左移 5px（微调）；♥ 与音质胶囊位置不变 */
+#am-root .am-np-cover { margin-left: -5px; }
+#am-root .am-np-text { margin-right: 5px; }
+/* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
+   宽度 500px，右侧按钮组展开时自动收窄，不会重叠 */
+#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 24px; }
+#am-root .am-topbar .am-tb-right { margin-left: auto; }
+/* V4.4.8 展开「更多」时图标挤压中间块：右侧剩余时长与 ♥/胶囊 向左压一下 */
+@keyframes am-np-nudge {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(-6px); }
+  100% { transform: translateX(0); }
+}
+/* 收起时中间块变宽：右侧剩余时长与 ♥/胶囊 向右弹一下
+ 
+   进度条轨道与左侧已播时间数字动不起来 */
+@keyframes am-np-nudge-r {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
+#am-root.am-tb-open .am-np-progrow > .am-np-time:last-child,
+#am-root.am-tb-open .am-np-row .am-fav-btn,
+#am-root.am-tb-open .am-np-row .am-badge {
+  animation: am-np-nudge .34s ease-out both;
+}
+#am-root.am-tb-close .am-np-progrow > .am-np-time:last-child,
+#am-root.am-tb-close .am-np-row .am-fav-btn,
+#am-root.am-tb-close .am-np-row .am-badge {
+  animation: am-np-nudge-r .34s ease-out both;
+}
+
 #np-full, .np-full { display: none !important; }
 .amb-mask { display: none !important; }
 /* V4.4.8：顶栏「收藏 + 音质胶囊」整体位置微调 */
@@ -1513,6 +1574,7 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-narrow .am-pl-actions .am-btn-shuffle { padding-left: 10px; padding-right: 10px; }
 /* 歌单头部：封面固定顶部、信息组贴底——按钮换行时封面不再被抬高 */
 #am-root .am-pl-head { align-items: stretch; }
+#am-root .am-pl-name { width: fit-content; max-width: 100%; }   /* 改名框贴合文字，不再铺满整行 */
 #am-root .am-pl-cover, #am-root .am-pl-cover-ph { align-self: flex-start; }
 #am-root .am-pl-head .am-pl-info { align-self: flex-end; }
 /* 歌曲页头部：内容窄时搜索框可收缩/换行，避免和标题重叠 */
@@ -1571,9 +1633,10 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-side-rail .am-side > .am-search > span { font-size: 14px; }
 /* 左上角控制键尺寸固定：不参与伸缩，键间距恒定 */
 #am-root .am-topbar .am-transport { flex: none; justify-content: space-between; }
-/* 顶栏内容块裁剪：内容再多也不会盖到右侧图标 */
-#am-root .am-np { overflow: hidden; }
+/* 顶栏内容块不裁剪：封面阴影/圆角、胶囊尾巴都不切（胶囊靠即时收缩避免压到图标） */
+#am-root .am-np { overflow: visible; clip-path: inset(-28px 0 -28px -28px); }   /* 仅右缘裁剪：极限拖动时胶囊不会盖到图标 */
 #am-root .am-np-row .am-badge { min-width: 0; transition: width .22s ease, opacity .16s ease; }
+/* 拖动分栏时：胶囊参与挤压，文字逐字被裁（而不是整段换字） */
 /* 顶栏空间不足时隐藏音质胶囊（由 JS 按 np 宽度切 am-np-tight） */
 #am-root .am-np-row .am-badge { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 只有带 A–Z 索引条的视图（歌曲页）才需要避让；歌单/专辑页保持贴右对齐 */
@@ -1640,7 +1703,6 @@ html[data-motion="off"] #am-root::before {
    （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
 #am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
 /* V4.4.8：封面 + 歌名整体再左移 4px（微调）；♥ 与音质胶囊位置不变 */
-#am-root .am-np-cover { margin-left: -5px; }
 #am-root .am-np-text { margin-right: 5px; }
 /* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
    宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
@@ -1653,11 +1715,25 @@ html[data-motion="off"] #am-root::before {
   0% { filter: blur(3px); }
   100% { filter: blur(0px); }
 }
-#am-root .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .22s ease-out; }
+#am-root .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s ease-out; }
+/* 带模糊时也要把回弹一起播（否则模糊的 animation 会盖掉回弹） */
+#am-root.am-tb-open .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s ease-out, am-badge-nudge .30s ease-out both; }
+#am-root.am-badge-shift.am-tb-open .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s ease-out, am-badge-nudge .46s ease-out both; }
+#am-root.am-tb-close .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s ease-out, am-badge-nudge-r .34s ease-out both; }
+@keyframes am-badge-nudge {
+  0% { transform: translateX(0); }
+  45% { transform: translateX(-6px); }
+  100% { transform: translateX(0); }
+}
+@keyframes am-badge-nudge-r {
+  0% { transform: translateX(0); }
+  45% { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
 @keyframes am-np-nudge {
-  0%   { transform: translateX(0) scale(1); }
-  45%  { transform: translateX(-6px) scale(.975); }
-  100% { transform: translateX(0) scale(1); }
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(-6px); }
+  100% { transform: translateX(0); }
 }
 @keyframes am-np-nudge-r {
   0%   { transform: translateX(0); }
@@ -1667,12 +1743,26 @@ html[data-motion="off"] #am-root::before {
 /* 展开：右侧剩余时长与 ♥ 一起向左压一下（胶囊不参与，避免宽度动画叠加） */
 #am-root.am-tb-open .am-np-progrow > .am-np-time:last-child,
 #am-root.am-tb-open .am-np-row .am-fav-btn {
-  animation: am-np-nudge .34s ease-out both;
+  animation: am-np-nudge .30s ease-out both;
+}
+#am-root.am-tb-open .am-np-row .am-badge {
+  animation: am-badge-nudge .30s ease-out both;
+}
+/* 胶囊需要收回时整组回弹放慢 */
+#am-root.am-badge-shift.am-tb-open .am-np-progrow > .am-np-time:last-child,
+#am-root.am-badge-shift.am-tb-open .am-np-row .am-fav-btn {
+  animation: am-np-nudge .46s ease-out both;
+}
+#am-root.am-badge-shift.am-tb-open .am-np-row .am-badge {
+  animation: am-badge-nudge .46s ease-out both;
 }
 /* 收起：右侧剩余时长与 ♥ 向右弹 */
 #am-root.am-tb-close .am-np-progrow > .am-np-time:last-child,
 #am-root.am-tb-close .am-np-row .am-fav-btn {
   animation: am-np-nudge-r .34s ease-out both;
+}
+#am-root.am-tb-close .am-np-row .am-badge {
+  animation: am-badge-nudge-r .34s ease-out both;
 }
 }
 /* V4.4.8：沉浸「歌曲信息」面板字号随视口缩放——取消过低的上限，

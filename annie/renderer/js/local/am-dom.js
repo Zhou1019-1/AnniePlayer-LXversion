@@ -15,7 +15,7 @@
       mini: '<rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="M7 15h6"/>',
       mic: '<rect x="9" y="2.6" width="6" height="11" rx="3"/><path d="M5.6 11a6.4 6.4 0 0 0 12.8 0M12 17.4V21"/>',
       gear: '<g transform="translate(12 12) scale(0.9) translate(-12 -12)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></g>',
-      msg: '<g transform="translate(12 12.6) scale(1,1.12) translate(-12 -12)"><path d="M4.6 5h14.8a1.6 1.6 0 0 1 1.6 1.6v8.4a1.6 1.6 0 0 1-1.6 1.6h-8l-4.2 2.8v-2.8H4.6A1.6 1.6 0 0 1 3 14.8V6.6A1.6 1.6 0 0 1 4.6 5z"/></g>',
+      msg: '<path d="M4.6 4.2h14.8a1.6 1.6 0 0 1 1.6 1.6v9.6a1.6 1.6 0 0 1-1.6 1.6h-8l-4.2 2.8v-2.8H4.6A1.6 1.6 0 0 1 3 15.4V5.8A1.6 1.6 0 0 1 4.6 4.2z"/>',
       moon: '<path d="M21 12.8A8.6 8.6 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
       sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>',
       palette: '<rect x="3.6" y="3.6" width="7" height="7" rx="1.8"/><rect x="13.4" y="3.6" width="7" height="7" rx="1.8"/><rect x="3.6" y="13.4" width="7" height="7" rx="1.8"/><circle cx="16.9" cy="16.9" r="3.7"/>',
@@ -1410,7 +1410,11 @@
 
     // 本地搜索（AM 语义：全库搜索；输入即切回歌曲视图并深加载全库标签）
     var sch = el('div', 'am-search');
-    sch.appendChild(el('span', null, '⌕'));
+    sch.appendChild((function () {
+      var sp = document.createElement('span'); sp.className = 'am-search-ico';
+      sp.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 L14 14"/></svg>';
+      return sp;
+    })());
     var inp = document.createElement('input');
     inp.placeholder = '搜索歌曲、艺人、专辑'; inp.value = S.search;
     // V4.3.24：IME 组词期间不切视图/不重绘（renderSidebar 会重建本框，同样打断中文输入）

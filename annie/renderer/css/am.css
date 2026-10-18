@@ -1616,7 +1616,7 @@ html[data-motion="off"] #am-root::before {
 /* 侧栏行健壮性：图标固定宽度、名称省略、删除键贴右，窄宽度下不散架 */
 #am-root .am-side .am-nav { min-width: 0; }
 #am-root .am-side .am-nav-ico { flex: none; width: 20px; text-align: center; }
-#am-root .am-side .am-nav-name { min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+#am-root .am-side .am-nav-name { min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }   /* 侧栏收窄时硬裁切（与改动前一致） */
 /* 轨道模式：分组标题用一条横线代替。
    不改盒模型（只是把文字变透明），避免整列向下漂移 1~2px */
 #am-root.am-hdr-line .am-side .am-side-h { position: relative; color: transparent; white-space: nowrap; overflow: hidden; }
@@ -1646,8 +1646,9 @@ html[data-motion="off"] #am-root::before {
   display: flex; align-items: center; justify-content: center;
 }
 #am-root.am-side-rail .am-side > .am-search > input { display: none; }
-#am-root.am-side-rail .am-side > .am-search > span { font-size: 14px; }
-/* 左上角控制键尺寸固定：不参与伸缩，键间距恒定 */
+#am-root.am-side-rail .am-side > .am-search > span { display: flex; align-items: center; justify-content: center; }
+#am-root .am-side > .am-search > span.am-search-ico { display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; }
+#am-root .am-side > .am-search > span.am-search-ico svg { display: block; }
 #am-root .am-topbar .am-transport { flex: none; justify-content: space-between; }
 /* 顶栏内容块不裁剪：封面阴影/圆角、胶囊尾巴都不切（胶囊靠即时收缩避免压到图标） */
 #am-root .am-np { overflow: visible; clip-path: inset(-28px -8px -28px -28px); }   /* 仅右缘裁剪：极限拖动时胶囊不会盖到图标 */
@@ -1672,7 +1673,9 @@ html[data-motion="off"] #am-root::before {
 #am-root.am-resizing .am-lyrics, #am-root.am-resizing .am-lyr-fold { transition: none !important; }
 /* V4.4.8：侧栏搜索框常驻底部 + 胶囊形（列表再长也滚不走） */
 /* 搜索框后面补占位，滚到底时它仍贴在底部（否则会跟着内容一起上移） */
-#am-root .am-side { padding-bottom: 10px; overflow-x: hidden; }
+#am-root .am-side { padding-bottom: 10px; overflow-x: hidden; padding-right: 0; }
+/* 主界面歌词面板：右侧滚动条槽位 8px 会让右边留白比左边宽 → 从内边距里扣掉，并稳定槽位 */
+#am-root .am-lyr-scroll { padding-right: 18px !important; scrollbar-gutter: stable; }
 #am-root .am-side > .am-search {
   position: sticky; bottom: 0; z-index: 6;
   /* 侧栏有 9px 滚动条占位，右侧不留 margin 才能让左右视觉对称（实测 16 / 17） */
@@ -1801,6 +1804,7 @@ html[data-motion="off"] #am-root::before {
 #am-root .am-imm-ctl .am-imm-btn svg { display: block; }
 /* 气泡尾巴不占视觉重心，下移 0.5px 让它看起来居中 */
 #am-root .am-imm-ctl .am-imm-btn svg { translate: 0 0.5px; }
+#am-root .am-imm-ctl .am-imm-btn svg path { stroke-width: 1.0; }   /* 统一描边：原 1.5 在 24px 下等效 2.25px，明显比邻键粗 */
 #am-root .am-imm-ctl .am-imm-btn,
 #am-root .am-imm-ctl .am-imm-btn.on { color: #fff; }
 /* V4.4.8：沉浸待播清单覆盖右上角按钮条（面板在上） */

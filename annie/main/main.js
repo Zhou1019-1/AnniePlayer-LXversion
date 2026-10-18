@@ -159,7 +159,7 @@ async function probeIsos(isos) {
           virtuals.push({
             path: f.path + '#iso' + tr.no,
             name: (tr.title || ('Track ' + String(tr.no).padStart(2, '0'))) + '.dsf',
-            dir: f.dir, size: f.size, mtime: f.mtime,
+            dir: f.dir, size: f.size, mtime: f.mtime, ctime: f.ctime,
             iso: { src: f.path, no: tr.no, dur: tr.dur || 0 },
             cueMeta: { title: tr.title || ('Track ' + String(tr.no).padStart(2, '0')), artist: tr.performer || info.albumArtist || '', album: albumName }
           });
@@ -1571,7 +1571,7 @@ function registerIpc() {
         return;
       }
       if (AUDIO.has(path.extname(p).toLowerCase()))
-        out.push({ path: p, name: path.basename(p), dir: path.dirname(p), size: st.size, mtime: st.mtimeMs });
+        out.push({ path: p, name: path.basename(p), dir: path.dirname(p), size: st.size, mtime: st.mtimeMs, ctime: (st.birthtimeMs || st.ctimeMs || st.mtimeMs) });
     };
     for (const p of (paths || [])) walk(p, 0);
     out.sort((a, b) => a.path.localeCompare(b.path, 'zh-Hans-CN-u-co-pinyin'));

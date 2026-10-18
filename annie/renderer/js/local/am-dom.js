@@ -4,6 +4,214 @@
  * 来源：am.js 原稿行 388-871 + 1248-1295 + 1499-1540（原样切片，零行为变更）
  * 共享变量经 window.__annieAMInternal 桥接；前向引用为转发桩，运行时解析。 */
 (function () {
+  /* V4.4.8：顶栏图标统一 SVG（emoji 字形在不同字体下大小/基线各不相同） */
+  function amIcoTop(name, size) {
+    var P = {
+      vol: '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/><path d="M16.6 8.6a4.8 4.8 0 0 1 0 6.8"/>',
+      mute: '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/><path d="M16.4 9.2l4.6 5.6M21 9.2l-4.6 5.6"/>',
+      queue: '<path d="M4 7h10M4 12h10M4 17h6"/><circle cx="18.4" cy="16.6" r="2.3"/><path d="M20.7 16.6V7.8l2.2-.6"/>',
+      timer: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7.2v5l3.4 2"/>',
+      expand: '<path d="M14.6 4.6H19.4V9.4"/><path d="M19.4 4.6L13.2 10.8"/><path d="M9.4 19.4H4.6V14.6"/><path d="M4.6 19.4L10.8 13.2"/>',
+      mini: '<rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="M7 15h6"/>',
+      mic: '<rect x="9" y="2.6" width="6" height="11" rx="3"/><path d="M5.6 11a6.4 6.4 0 0 0 12.8 0M12 17.4V21"/>',
+      gear: '<g transform="translate(12 12) scale(0.9) translate(-12 -12)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></g>',
+      msg: '<g transform="translate(0 0.6)"><path d="M4.6 5h14.8a1.6 1.6 0 0 1 1.6 1.6v8.4a1.6 1.6 0 0 1-1.6 1.6h-8l-4.2 2.8v-2.8H4.6A1.6 1.6 0 0 1 3 14.8V6.6A1.6 1.6 0 0 1 4.6 5z"/></g>',
+      moon: '<path d="M21 12.8A8.6 8.6 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+      sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>',
+      palette: '<rect x="3.6" y="3.6" width="7" height="7" rx="1.8"/><rect x="13.4" y="3.6" width="7" height="7" rx="1.8"/><rect x="3.6" y="13.4" width="7" height="7" rx="1.8"/><circle cx="16.9" cy="16.9" r="3.7"/>',
+      lock: '<rect x="5" y="10.6" width="14" height="9.8" rx="2"/><path d="M8.6 10.6V7.4a3.4 3.4 0 0 1 6.8 0v3.2"/>',
+      unlock: '<rect x="5" y="10.6" width="14" height="9.8" rx="2"/><path d="M8.6 10.6V7.4a3.4 3.4 0 0 1 6.4-1.7"/>',
+      link: '<path d="M10.6 13.4a4 4 0 0 0 5.6 0l2.8-2.8a4 4 0 1 0-5.6-5.6l-1.4 1.4"/><path d="M13.4 10.6a4 4 0 0 0-5.6 0l-2.8 2.8a4 4 0 1 0 5.6 5.6l1.4-1.4"/>',
+      back: '<path d="M14.6 6.2 9.4 12l5.2 5.8"/>',
+    };
+    return '<svg viewBox="0 0 24 24" width="' + (size || 16) + '" height="' + (size || 16) + '" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || '') + '</svg>';
+  }
+  /* ===== V4.4.8：可拖动分栏（侧栏 / 歌词面板） ===== */
+  (function () {
+    var KS = 'annieplayer.am.sidew', KL = 'annieplayer.am.lyrw';
+    function num(v, d) { var n = parseInt(v, 10); return isFinite(n) ? n : d; }
+    function boot() {
+      var root = document.getElementById('am-root');
+      var body = root && root.querySelector('.am-body');
+      if (!body) { setTimeout(boot, 300); return; }
+      if (body.querySelector('.am-resize-l')) return;
+      var sw = num(localStorage.getItem(KS), 0);
+      if (sw >= 56 && sw <= 800) root.style.setProperty('--am-side-w', sw + 'px');
+      var lw = num(localStorage.getItem(KL), 0);
+      if (lw >= 260 && lw <= 640) root.style.setProperty('--am-lyr-w', lw + 'px');
+      function make(cls, get, set, save, sign) {
+        var h = document.createElement('div');
+        h.className = 'am-resize ' + cls;
+        body.appendChild(h);
+        h.addEventListener('dblclick', function () {
+          root.style.removeProperty(sign < 0 ? '--am-lyr-w' : '--am-side-w');
+          try { localStorage.removeItem(sign < 0 ? KL : KS); } catch (e) { }
+        });
+        h.addEventListener('mousedown', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          var x0 = e.clientX, v0 = get(), last = v0;
+          root.classList.add('am-resizing'); h.classList.add('dragging');
+          function mv(ev) { last = set(v0 + (ev.clientX - x0) * sign) || last; if (window.__amCoalesce) window.__amCoalesce(); }
+          function up() {
+            document.removeEventListener('mousemove', mv, true);
+            document.removeEventListener('mouseup', up, true);
+            root.classList.remove('am-resizing'); h.classList.remove('dragging');
+            try { localStorage.setItem(sign < 0 ? KL : KS, String(Math.round(last))); } catch (e) { }
+            syncNarrow();
+          }
+          document.addEventListener('mousemove', mv, true);
+          document.addEventListener('mouseup', up, true);
+        });
+      }
+      // 左：侧栏（向左拖变窄 → sign = +1 时向右拖变宽）
+      make('am-resize-l',
+        function () { var s = root.querySelector('.am-side'); return s ? Math.round(s.getBoundingClientRect().width) : 240; },
+        function (w) { w = Math.max(56, Math.min(Math.round(innerWidth * 0.33), w)); root.__sideWant = w; root.__sideWant = w; root.style.setProperty('--am-side-w', w + 'px'); return w; },
+        null, 1);
+      // 右：歌词面板（手柄在面板左缘，向左拖变宽 → sign = -1）
+      /* 切换视图会重建内容区，重建后要重新判断一次 */
+      try {
+        var _c0 = root.querySelector('.am-content');
+        if (_c0) new MutationObserver(function () { setTimeout(syncNarrow, 30); }).observe(_c0, { childList: true });
+      } catch (e) { }
+      syncNarrow();
+      syncNpTight();
+      syncRail();
+      syncTransport();
+      make('am-resize-r',
+        function () { var l = root.querySelector('.am-lyrics'); return l ? Math.round(l.getBoundingClientRect().width) : 360; },
+        function (w) { w = Math.max(260, Math.min(640, w)); root.style.setProperty('--am-lyr-w', w + 'px'); return w; },
+        null, -1);
+    }
+    /* 内容区窄时切紧凑模式（按钮变小，避免三行换行） */
+    function syncNarrow() {
+      var r = document.getElementById('am-root'); if (!r) return;
+      var c = r.querySelector('.am-content'); if (!c) return;
+      /* 按「整排按钮所需宽度」判断：放得下保持原样，放不下才紧凑 */
+      var info = r.querySelector('.am-pl-info');
+      if (!info) { r.classList.remove('am-narrow'); return; }
+      var acts = info.querySelector('.am-pl-actions');
+      if (!acts || !acts.children.length) { r.classList.remove('am-narrow'); return; }
+      /* 先按完整样式量一次「三个按钮 + 间距」的真实宽度 */
+      var had = r.classList.contains('am-narrow');
+      r.classList.remove('am-narrow');
+      var _sum = 0, _kids = acts.children;
+      for (var _k = 0; _k < _kids.length; _k++) _sum += _kids[_k].getBoundingClientRect().width;
+      var _gap = parseFloat(getComputedStyle(acts).columnGap) || 8;
+      var need = _sum + _gap * Math.max(0, _kids.length - 1);
+      if (had) r.classList.add('am-narrow');
+      r.classList.toggle('am-narrow', info.getBoundingClientRect().width < need);
+    }
+    /* 顶栏太挤时隐藏音质胶囊，避免插进右侧图标 */
+    function syncNpTight() {
+      var r = document.getElementById('am-root'); if (!r) return;
+      var np = r.querySelector('.am-np'); if (!np) return;
+      var w = np.getBoundingClientRect().width;
+      var tight = r.classList.contains('am-np-tight');
+      if (!tight && w < 340) r.classList.add('am-np-tight');
+      else if (tight && w > 380) r.classList.remove('am-np-tight');
+      /* 胶囊展开/收起等动画结束（约 280ms）再换文案，避免边动边变 */
+      clearTimeout(window.__amBadgeT);
+      window.__amBadgeT = setTimeout(function () {
+        var w2 = np.getBoundingClientRect().width;
+        var tg = r.classList.contains('am-np-tight');
+        if (!tg && w2 < 340) r.classList.add('am-np-tight');
+        else if (tg && w2 > 380) r.classList.remove('am-np-tight');
+        try { if (window.__annieAMInternal && __annieAMInternal.refreshBadge) __annieAMInternal.refreshBadge(); } catch (e3) { }
+      }, 300);
+    }
+    /* 侧栏窄到只剩图标（≈120px 以下）时切「轨道」模式 */
+    function syncRail() {
+      var r = document.getElementById('am-root'); if (!r) return;
+      var s = r.querySelector('.am-side'); if (!s) return;
+      var w = s.getBoundingClientRect().width;
+      var rail = r.classList.contains('am-side-rail');
+      var next = rail ? (w > 100 ? false : true) : (w <= 96 ? true : false);
+      if (next !== rail) r.classList.toggle('am-side-rail', next);
+      var hdr = r.querySelector('.am-side .am-side-h');
+      var line = next || (!!hdr && (hdr.scrollWidth > hdr.clientWidth + 1));
+      if (line !== r.classList.contains('am-hdr-line')) r.classList.toggle('am-hdr-line', line);
+    }
+    /* 拖拽时把三种同步合并到一帧，避免每个 mousemove 都强制重排 */
+    var _rafSync = 0;
+    /* 顶栏左侧控制键：随侧栏宽度保持居中；右侧正在播放块始终贴齐侧栏右缘 */
+    function syncTransport() {
+      var r = document.getElementById('am-root'); if (!r) return;
+      var tr = r.querySelector('.am-transport');
+      var np = r.querySelector('.am-np');
+      var side = r.querySelector('.am-side');
+      if (!tr || !np || !side) return;
+      var sb = side.getBoundingClientRect();
+      var sw = sb.width, pad = 14;
+      var twant = Math.max(116, Math.min(sw - 28, 116 + (sw - 120) * 0.20));
+      tr.style.width = twant + 'px';
+      tr.style.marginLeft = Math.max(0, sw / 2 - pad - twant / 2) + 'px';
+      var t2 = tr.getBoundingClientRect();
+      var npNow = np.getBoundingClientRect().left;
+      var m0 = parseFloat(np.style.marginLeft) || 0;
+      var extra = npNow - t2.right - m0;
+      var want = Math.max(t2.right + 8, sb.right + 5);
+      var ml = Math.max(0, want - t2.right - extra);
+      np.style.marginLeft = ml + 'px';
+      /* 自检：np 左缘与目标偏差 >1px 时立刻补一次（不越过控制键） */
+      var d = want - np.getBoundingClientRect().left;
+      if (Math.abs(d) > 1) np.style.marginLeft = (ml + d) + 'px';
+    }
+    window.__amCoalesce = function () {
+      if (_rafSync) return;
+      _rafSync = requestAnimationFrame(function () {
+        _rafSync = 0; syncNarrow(); syncRail(); syncNpTight(); syncTransport();
+      });
+    };
+    window.__amSyncRail = syncRail;
+    window.addEventListener('resize', syncRail);
+    document.addEventListener('mouseup', function () { setTimeout(syncRail, 60); }, true);
+    window.__amSyncNpT = syncNpTight;
+    window.__amSyncTransport = syncTransport;
+    /* 兜底：每 400ms 检查一次对齐，有偏差才重算（防元素重建导致观察器失效） */
+    setInterval(function () {
+      try {
+        var r = document.getElementById('am-root'); if (!r) return;
+        var s = r.querySelector('.am-side'); var c = r.querySelector('.am-np-cover');
+        if (!s || !c) return;
+        var d = s.getBoundingClientRect().right - c.getBoundingClientRect().left;
+        if (Math.abs(d) > 1) syncTransport();
+      } catch (e) { }
+    }, 400);
+    /* 侧栏宽度一变（恢复存档、拖动、窗口缩放）就重新对齐顶栏 */
+    try {
+      var _sideEl = document.querySelector('#am-root .am-side');
+      if (_sideEl) {
+        var _sideRO = new ResizeObserver(function () {
+          clearTimeout(window.__amSideT);
+          window.__amSideT = setTimeout(syncTransport, 60);
+        });
+        _sideRO.observe(_sideEl);
+      }
+    } catch (e) { }
+    /* 启动瞬间侧栏宽度可能还没恢复：补几次 */
+    [0, 120, 400, 1000].forEach(function (d) { setTimeout(function () { try { syncTransport(); } catch (e) { } }, d); });
+    /* np 宽度变化时实时校正胶囊长短，避免状态残留 */
+    try {
+      var _npRO = new ResizeObserver(function () {
+        clearTimeout(window.__amNpROT);
+        window.__amNpROT = setTimeout(function () {
+          if (window.__amSyncNpT) window.__amSyncNpT();
+          try { if (window.__annieAMInternal && __annieAMInternal.refreshBadge) __annieAMInternal.refreshBadge(); } catch (e) { }
+        }, 180);
+      });
+      var _npEl0 = document.querySelector('#am-root .am-np');
+      if (_npEl0) _npRO.observe(_npEl0);
+    } catch (e) { }
+    window.addEventListener('resize', syncTransport);
+    document.addEventListener('mouseup', function () { setTimeout(syncTransport, 60); }, true);
+    window.addEventListener('resize', syncNpTight);
+    document.addEventListener('mouseup', function () { setTimeout(syncNpTight, 60); }, true);
+    window.addEventListener('resize', syncNarrow);
+    setTimeout(syncNarrow, 400);
+    document.addEventListener('mouseup', function () { setTimeout(syncNarrow, 60); }, true);
+    boot();
+  })();
   var AM = window.__annieAMInternal || (window.__annieAMInternal = {}); // AM 主题内部模块桥（跨分片共享闭包变量）
   // 从桥取用先加载分片导出的引用（此时前片已执行完，引用有效）
   var S = AM.S;
@@ -83,16 +291,31 @@
     top.appendChild(np);
 
     var right = el('div', 'am-tb-right');
+    // V4.4.8：按钮组宽度逐帧写进 CSS 变量，中间块右缘与它保持恒定间距（展开/收起同速）
+    try {
+      var _tbLast = -1, _tbRaf = 0, _tbRoot = document.getElementById('am-root');
+      var _tbRO = new ResizeObserver(function () {
+        if (_tbRaf) return;
+        _tbRaf = requestAnimationFrame(function () {
+          _tbRaf = 0;
+          var w = Math.round(right.getBoundingClientRect().width);
+          if (w === _tbLast) return;
+          _tbLast = w;
+          if (_tbRoot) _tbRoot.style.setProperty('--am-tb-right-w', w + 'px');
+        });
+      });
+      _tbRO.observe(right);
+    } catch (e) { }
     var vol = el('div', 'am-vol');
     // V4.1：🔊 图标可点击（静音/取消静音），悬停展开音量条
-    var volIco = el('button', 'am-tbtn am-vol-ico', '🔊');
+    var volIco = el('button', 'am-tbtn am-vol-ico', ''); volIco.innerHTML = amIcoTop('vol', 18);
     volIco.title = '点击静音/取消静音；悬停展开音量条';
     volIco.onclick = function () {
       var cur = +R.vol.value;
       if (cur > 0) { S._muteVol = cur; R.vol.value = 0; }
       else { R.vol.value = S._muteVol || 80; }
       R.vol.oninput();
-      volIco.textContent = +R.vol.value > 0 ? '🔊' : '🔇';
+      volIco.innerHTML = amIcoTop(+R.vol.value > 0 ? 'vol' : 'mute', 18);
     };
     vol.appendChild(volIco);
     R.vol = document.createElement('input');
@@ -125,20 +348,20 @@
       if (volFromPtr) { volFromPtr = false; R.vol.blur(); }
     });
     right.appendChild(vol);
-    R.btnExcl = el('button', 'am-tbtn', (window.annieIsExclusive ? window.annieIsExclusive() : true) ? '🔒' : '🔓');
+    R.btnExcl = el('button', 'am-tbtn', ''); R.btnExcl.innerHTML = amIcoTop((window.annieIsExclusive ? window.annieIsExclusive() : true) ? 'lock' : 'unlock', 16);
     R.btnExcl.title = 'WASAPI 独占/共享输出（独占 = bit-perfect）';
     R.btnExcl.onclick = async function () {
       if (!window.annieExclusiveToggle) return;
       var on = await window.annieExclusiveToggle();
-      R.btnExcl.textContent = on ? '🔒' : '🔓';
+      R.btnExcl.innerHTML = amIcoTop(on ? 'lock' : 'unlock', 16);
     };
     document.addEventListener('annie-exclusive-changed', function (e) {
-      if (R.btnExcl) R.btnExcl.textContent = (e.detail && e.detail.exclusive) ? '🔒' : '🔓';
+      if (R.btnExcl) R.btnExcl.innerHTML = amIcoTop((e.detail && e.detail.exclusive) ? 'lock' : 'unlock', 16);
     });
 
     // V4.4.6：顶栏精简——低频按钮不再直接入栏（对象照建，同步逻辑不受影响），收进「⋯」菜单
     // V4.4：主界面待播清单抽屉（此前仅沉浸/迷你能看队列）
-    R.btnQ = el('button', 'am-tbtn', '☰'); R.btnQ.title = '待播清单 / 历史记录';
+    R.btnQ = el('button', 'am-tbtn', ''); R.btnQ.innerHTML = amIcoTop('queue', 16); R.btnQ.title = '待播清单 / 历史记录';
     R.btnQ.style.position = 'relative';
     R.btnQ.onclick = function () { if (AM.toggleMainQueue) AM.toggleMainQueue(); };
     R.btnQBadge = el('span', 'am-q-badge', '');
@@ -156,17 +379,18 @@
     document.addEventListener('annie-playmode-changed', syncModeBtn);
     right.appendChild(R.btnMode);
     // 播放定时（仅本地播放生效）
-    R.btnTimer = el('button', 'am-tbtn', '⏲');
+    R.btnTimer = el('button', 'am-tbtn', ''); R.btnTimer.innerHTML = amIcoTop('timer', 16);
     R.btnTimer.onclick = function (e) { e.stopPropagation(); toggleTimerPop(); };
     document.addEventListener('annie-sleeptimer-changed', syncTimerBtn);
     // 沉浸式播放界面 / 迷你模式
-    R.btnImm = el('button', 'am-tbtn', '⤢'); R.btnImm.title = '沉浸式播放界面';
+    R.btnImm = el('button', 'am-tbtn', ''); R.btnImm.innerHTML = amIcoTop('expand', 16); R.btnImm.title = '沉浸式播放界面';
     R.btnImm.onclick = function () { toggleImmersive(); };
     right.appendChild(R.btnImm);
-    R.btnMiniM = el('button', 'am-tbtn', '🗕'); R.btnMiniM.title = '迷你模式';
+    R.btnMiniM = el('button', 'am-tbtn', ''); R.btnMiniM.innerHTML = amIcoTop('mini', 16); R.btnMiniM.title = '迷你模式';
     R.btnMiniM.onclick = function () { enterMini(); };
     // 桌面歌词快捷入口（Alt+L；状态跟随 annie-dlyrics-changed）
-    var btnDlyr = el('button', 'am-tbtn' + ((window.annieDlyricsOn && window.annieDlyricsOn()) ? ' on' : ''), '🎤');
+    var btnDlyr = el('button', 'am-tbtn' + ((window.annieDlyricsOn && window.annieDlyricsOn()) ? ' on' : ''), '');
+    btnDlyr.innerHTML = amIcoTop('mic', 16);
     btnDlyr.title = '桌面歌词（Alt+L）';
     btnDlyr.onclick = function () { if (window.annieDlyricsToggle) window.annieDlyricsToggle(); };
     document.addEventListener('annie-dlyrics-changed', function (e) { btnDlyr.classList.toggle('on', !!(e.detail && e.detail.on)); });
@@ -217,28 +441,28 @@
     syncNpFav();
     setInterval(syncNpFav, 800); // 切歌/别处收藏后跟上状态（只是 Set.has，开销可忽略）
     // V4.3.16：复制播放中在线歌的平台分享链接
-    var btnNpShare = el('button', 'am-tbtn', '🔗');
+    var btnNpShare = el('button', 'am-tbtn', ''); btnNpShare.innerHTML = amIcoTop('link', 16);
     btnNpShare.title = '复制正在播放的在线歌曲的分享链接';
     btnNpShare.onclick = function () { if (AM.copyCurrentStreamLink) AM.copyCurrentStreamLink(); };
     // 设置中心入口（与粒子舞台顶栏 ⚙ 同一个面板）
-    var btnSet = el('button', 'am-tbtn', '⚙'); btnSet.title = '设置中心（Ctrl+,）';
+    var btnSet = el('button', 'am-tbtn', ''); btnSet.innerHTML = amIcoTop('gear', 16); btnSet.title = '设置中心（Ctrl+,）';
     btnSet.onclick = function () { if (window.annieSettings) window.annieSettings.togglePanel(); };
     right.appendChild(btnSet);
-    R.btnLyr = el('button', 'am-tbtn' + (S.lyricsOn ? ' on' : ''), '💬'); R.btnLyr.title = '歌词面板';
+    R.btnLyr = el('button', 'am-tbtn' + (S.lyricsOn ? ' on' : ''), ''); R.btnLyr.innerHTML = amIcoTop('msg', 16); R.btnLyr.title = '歌词面板';
     R.btnLyr.onclick = function () {
       S.lyricsOn = !S.lyricsOn;
       root.classList.toggle('am-lyr-on', S.lyricsOn);
       R.btnLyr.classList.toggle('on', S.lyricsOn);
       syncLyrFold(); // 与面板左缘折叠小标签同步图标/方向
     };
-    R.btnLight = el('button', 'am-tbtn', isLight() ? '🌙' : '☀'); R.btnLight.title = '亮色/暗色';
+    R.btnLight = el('button', 'am-tbtn', ''); R.btnLight.innerHTML = amIcoTop(isLight() ? 'moon' : 'sun', 16); R.btnLight.title = '亮色/暗色';
     R.btnLight.onclick = function () {
       var l = !isLight();
       try { localStorage.setItem(LIGHT_KEY, l ? '1' : '0'); } catch (e) { }
       root.classList.toggle('am-light', l);
-      R.btnLight.textContent = l ? '🌙' : '☀';
+      R.btnLight.innerHTML = amIcoTop(l ? 'moon' : 'sun', 16);
     };
-    R.btnTheme = el('button', 'am-tbtn', '🎨'); R.btnTheme.title = '切换主题（粒子舞台 → FB2K → Apple Music）';
+    R.btnTheme = el('button', 'am-tbtn', ''); R.btnTheme.innerHTML = amIcoTop('palette', 16); R.btnTheme.title = '切换主题（粒子舞台 → FB2K → Apple Music）';
     R.btnTheme.onclick = function () {
       var order = ['legacy', 'fb2k', 'am'];
       window.annieTheme.switch(order[(order.indexOf(annieTheme.current) + 1) % order.length]);
@@ -257,19 +481,36 @@
     moreGroup([btnNpShare]);
     moreGroup([R.btnLight, R.btnTheme]);
     right.appendChild(moreWrap);
-    // V4.4.8：展开/收起时给 #am-root 打 0.42s 状态标记，CSS 据此播放对应的回弹动画
+    // V4.4.8：只有展开/收起真的挤到顶栏进度条那一块时才回弹，否则不动
     try {
-      var _moT = 0;
+      var _moT = 0, _w0 = -1;
+      function _npWidth() { var n = document.querySelector('#am-root .am-np'); return n ? n.getBoundingClientRect().width : -1; }
+      document.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t && t.closest && t.closest('.am-tb-more-btn')) _w0 = _npWidth();
+      }, true);
       new MutationObserver(function () {
         var root = document.getElementById('am-root');
         if (!root || !moreWrap.isConnected) return;
         var open = moreWrap.classList.contains('open');
-        root.classList.toggle('am-tb-open', open);
-        root.classList.toggle('am-tb-close', !open);
-        clearTimeout(_moT);
-        _moT = setTimeout(function () {
+        function _squeezed() {
+          var w1 = _npWidth();
+          var changed = (_w0 > 0 && w1 > 0 && Math.abs(w1 - _w0) > 2);
+          _w0 = -1;
+          return changed;
+        }
+        function _fire() {
+          if (window.__amSyncNpT) window.__amSyncNpT();
+          if (!_squeezed()) { root.classList.remove('am-tb-open', 'am-tb-close'); return; }
           root.classList.remove('am-tb-open', 'am-tb-close');
-        }, 420);
+          void root.offsetWidth;
+          root.classList.add(open ? 'am-tb-open' : 'am-tb-close');
+          clearTimeout(_moT);
+          _moT = setTimeout(function () {
+            root.classList.remove('am-tb-open', 'am-tb-close');
+          }, 420);
+        }
+        setTimeout(_fire, open ? 200 : 40);   /* 展开：等图标展开后再回弹；收起：立刻回弹 */
       }).observe(moreWrap, { attributes: true, attributeFilter: ['class'] });
     } catch (e) { }
     R.btnMore = el('button', 'am-tbtn am-tb-more-btn');
@@ -302,7 +543,41 @@
     }
     R.btnMore.onclick = function (e) {
       e.stopPropagation();
-      setMore(!moreWrap.classList.contains('open'));
+      var _opening = !moreWrap.classList.contains('open');
+      if (!_opening) { setMore(false); return; }
+      var _np = document.querySelector('#am-root .am-np');
+      var _collide = false;
+      if (_np) {
+        var _tr1 = moreWrap.style.transition;
+        moreWrap.style.transition = 'none'; moreWrap.classList.add('open'); void moreWrap.offsetWidth;
+        _collide = _np.getBoundingClientRect().width < 300;
+        moreWrap.classList.remove('open'); void moreWrap.offsetWidth; moreWrap.style.transition = _tr1;
+      }
+      if (!_collide) { setMore(true); return; }
+      setTimeout(function () {
+      var _A = window.__annieAMInternal, _b = document.querySelector('#am-root .am-badge');
+      if (_A && _A.S && _b) {
+        var _t = String(_A.S.fmt || '').split('·')[0].trim();
+        if (_t && _b.textContent !== _t) {
+          var _shrink2 = true;   /* 展开方向的预测收起：只会变短 */
+          var _ow2 = _b.getBoundingClientRect().width;
+          var _clone2 = _b.cloneNode(false);
+          _clone2.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;width:auto;';
+          _clone2.textContent = _t;
+          _b.appendChild(_clone2);
+          var _nw2 = _clone2.getBoundingClientRect().width;
+          _clone2.remove();
+          _b.style.transition = 'width .16s ease';
+          _b.style.width = _ow2 + 'px';
+          _b.textContent = _t;
+          void _b.offsetWidth;
+          _b.classList.remove('am-badge-blur'); void _b.offsetWidth; _b.classList.add('am-badge-blur');
+          _b.style.width = _nw2 + 'px';
+          setTimeout(function () { _b.style.width = ''; _b.style.transition = ''; }, 200);
+        }
+      }
+      }, 40);   /* 展开刚开始就收胶囊，收得更快 */
+      setMore(true);   /* 先展开图标 */
     };
     right.appendChild(R.btnMore);
     // 恢复上次的展开/收起状态（重启后不再默认收起）；直接落定，不播一遍展开动画
@@ -1107,7 +1382,8 @@
    * 搜索框匹配字段跟随当前排序方式（标题排序搜标题、演唱者排序搜演唱者……），
    * 查询串存 S.viewQuery[view]（会话级），输入 150ms 防抖重绘。 */
   var SONG_SORT_OPTS = [['az', '首字母 A–Z（标题）'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'],
-    ['mtimeDesc', '修改时间 · 新→旧'], ['mtimeAsc', '修改时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']];
+    ['mtimeDesc', '修改时间 · 新→旧'], ['mtimeAsc', '修改时间 · 旧→新'],
+    ['ctimeDesc', '创建时间 · 新→旧'], ['ctimeAsc', '创建时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']];
   var ALBUM_SORT_OPTS = [['az', '名称 A–Z'], ['azArtist', '艺人 A–Z'], ['countDesc', '曲目数 · 多→少'], ['countAsc', '曲目数 · 少→多']];
   // V4.4.3：专辑详情页（进入某张专辑后）曲目排序——默认按发布顺序（碟号+曲目号标签）
   var ALBUM_DETAIL_SORT_OPTS = [['release', '按专辑发布顺序'], ['az', '标题 A–Z'], ['azArtist', '演唱者 A–Z'], ['name', '文件名'], ['durDesc', '时长 · 长→短'], ['durAsc', '时长 · 短→长']];
@@ -1276,6 +1552,7 @@
     lab.textContent = labelOf(cur);
     return wrap;
   }
+  AM.sortDropdown = sortDropdown;   // V4.4.8：在线歌单复用同一个排序胶囊
   function songSearchPh(mode) {
     var f = AM.songSearchField(mode);
     return f === 'artist' ? '搜索演唱者' : f === 'name' ? '搜索文件名' : '搜索标题';
@@ -1448,7 +1725,8 @@
     var folderKids = null;
     if (S.view === 'folders' && S.folderPath) {
       // V4.3.20：逐级浏览——返回上级 + 当前目录名 + 直接子文件夹行
-      var fback = el('button', 'am-btn', '‹ 返回上级');
+      var fback = el('button', 'am-btn am-btn-back', '');
+      fback.innerHTML = amIcoTop('back', 14) + '<span class="am-btn-label">返回上级</span>';
       fback.onclick = function () {
         var p = normP(S.folderPath).replace(/\\+$/, '');
         var isRoot = (S.libFolders || []).some(function (f) { return normP(f).replace(/\\+$/, '').toLowerCase() === p.toLowerCase(); });
@@ -1635,7 +1913,18 @@
     var acts = el('div', 'am-pl-actions');
     var bPlay = el('button', 'am-btn am-btn-accent', '▶ 播放');
     bPlay.onclick = function () { if (tracks.length) playList(tracks, 0); };
-    var bShuffle = el('button', 'am-btn', '🔀 随机播放');
+    var bShuffle = el('button', 'am-btn am-btn-shuffle', '');
+    bShuffle.appendChild((function () {
+      var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      s.setAttribute('viewBox', '0 0 16 16');
+      s.setAttribute('width', '14'); s.setAttribute('height', '14');
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', 'M2.6 5.2 H5.1 C6.1 5.2 6.9 5.6 7.5 6.3 L10.3 9.5 C10.9 10.2 11.7 10.6 12.7 10.6 H13.2 M12 8.7 L13.9 10.6 L12 12.5 M2.6 10.6 H5.1 C6.1 10.6 6.9 10.2 7.5 9.5 L10.3 6.3 C10.9 5.6 11.7 5.2 12.7 5.2 H13.2 M12 3.3 L13.9 5.2 L12 7.1');
+      p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.5'); p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round');
+      s.appendChild(p); return s;
+    })());
+    bShuffle.appendChild(el('span', 'am-btn-label', '随机播放'));
     bShuffle.onclick = function () {
       if (!tracks.length) return;
       playList(tracks, Math.floor(Math.random() * tracks.length));
@@ -1707,9 +1996,9 @@
         if (S.view === 'favorites') renderView();
       });
     };
-    var bAdd = el('button', 'am-mini-btn');
-    miniIco(bAdd, 'M8 5.3 V10.7 M5.3 8 H10.7', 14, 5.3);
-    bAdd.title = '添加到播放列表';
+    var bAdd = el('button', 'am-mini-btn am-row-more');
+    miniIco(bAdd, 'M4.3 8 H4.31 M8 8 H8.01 M11.7 8 H11.71', 14);
+    bAdd.title = '歌曲操作';
     bAdd.onclick = function (e) { e.stopPropagation(); openAddMenu(e.clientX, e.clientY, t.path); };
     acts.appendChild(bFav); acts.appendChild(bAdd);
     /* V4.4.7（PR#6）：行内「从播放列表移除」的 ✕ 去掉了——太容易误触删歌；
@@ -2219,7 +2508,7 @@
     pop.innerHTML = '';
     // V4.4：多选感知——右键/⊕ 的目标行在快速选择集合内时，歌单/删除/标签操作作用于整组选中（与 fb2k forEachSel 对齐）
     var selPaths = (S.msSel && S.msSel.size > 1 && S.msSel.has(trackPath)) ? Array.from(S.msSel) : [trackPath];
-    pop.appendChild(el('div', 'am-pop-head', selPaths.length > 1 ? '已选 ' + selPaths.length + ' 首' : '添加到播放列表')); // V4.4：改不可点分组标题（原 .am-pop-item 可点样式无功能，误导点击）
+    pop.appendChild(el('div', 'am-pop-head', selPaths.length > 1 ? '已选 ' + selPaths.length + ' 首' : '歌曲操作')); // V4.4：改不可点分组标题（原 .am-pop-item 可点样式无功能，误导点击）
     pop.appendChild(el('div', 'am-pop-sep'));
     var mte = el('button', 'am-pop-item', '✏️ 编辑标签…');
     mte.onclick = function () {

@@ -158,11 +158,15 @@
     // 旧逻辑会把「作曲」挂成「作词」的译文、「编曲」直接消失。
     // 判据：中文短标签（1–6 字）+ 可选空格 + 全/半角冒号，或英文 "xxx by:"。
     // 一行最多一个译文（!prev.tly 防止第三行覆盖第二行）。
-    var metaLineRe = /^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i;
+    var metaLineRe = /^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|(?:作词|作詞|作曲|编曲|編曲|演唱|歌手|制作人|监制|混音|母带)\s*[:\uff1a]?\s*\S|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i;
     var merged = [];
     out.forEach(function (l) {
       var prev = merged[merged.length - 1];
-      if (prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text && !prev.tly && !metaLineRe.test(l.text)) prev.tly = l.text;
+      /* V4.4.8：连续元信息行去重（同一信息在 LRC 里常有全角/半角两份） */
+      if (prev && metaLineRe.test(prev.text) && metaLineRe.test(l.text)) {
+        if (l.text.replace(/[\s:：]/g, '') === prev.text.replace(/[\s:：]/g, '')) return;
+      }
+      if (prev && Math.abs(prev.t - l.t) < 0.4 && prev.text && l.text && !prev.tly && !metaLineRe.test(l.text) && !metaLineRe.test(prev.text)) prev.tly = l.text;
       else if (l.text) merged.push({ t: l.t, text: l.text, tly: '', words: l.words || null });
     });
     return merged;
@@ -170,7 +174,7 @@
   /* 流媒体译文轨合并：tlyric 是独立 LRC 文本，按时间戳就近挂到主歌词行（±0.8s） */
   function mergeTly(lines, tlyText) {
     if (!tlyText || !lines.length) return lines;
-    var metaLineRe = /^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i;
+    var metaLineRe = /^(?:[\u4e00-\u9fff]{1,6}\s*[:\uff1a]|(?:作词|作詞|作曲|编曲|編曲|演唱|歌手|制作人|监制|混音|母带)\s*[:\uff1a]?\s*\S|[A-Za-z][A-Za-z ]{0,14}by\s*[:\uff1a])/i;
     var tl = parseLrc(tlyText);
     tl.forEach(function (x) {
       var best = -1, bd = 0.8;
@@ -179,7 +183,7 @@
         if (d < bd) { bd = d; best = i; }
       }
       // V4.4.7（秋野奈 PR#6）：元信息行不挂译文；译文与原文相同跳过
-      if (best >= 0 && !lines[best].tly && x.text !== lines[best].text && !metaLineRe.test(x.text || '')) lines[best].tly = x.text;
+      if (best >= 0 && !lines[best].tly && x.text !== lines[best].text && !metaLineRe.test(x.text || '') && !metaLineRe.test(lines[best].text || '')) lines[best].tly = x.text;
     });
     return lines;
   }

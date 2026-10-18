@@ -1778,6 +1778,39 @@
     };
     imRow.appendChild(imLab); imRow.appendChild(imSel);
     sAmI.appendChild(imRow);
+    // —— V4.4.8：封面取色权重（影响频谱 / 侧栏搜索框 / A–Z 索引条的颜色） ——
+    var vwRow = markItem(el('div', 'set-row'), '封面取色 权重 偏冷 偏暖 按面积 pick color weight cool warm area');
+    var vwLab = el('div'); vwLab.appendChild(el('div', '', '封面取色权重'));
+    vwLab.appendChild(el('div', 'set-hint', '偏冷：青蓝优先；偏暖：红橙优先；按面积：像素多的颜色优先（不看冷暖）'));
+    var vwSel = document.createElement('select');
+    [['area', '按面积（默认）'], ['cool', '偏冷'], ['warm', '偏暖']].forEach(function (kv) {
+      var op = document.createElement('option'); op.value = kv[0]; op.textContent = kv[1];
+      vwSel.appendChild(op);
+    });
+    vwSel.value = (window.amVizColor && window.amVizColor.weight) ? window.amVizColor.weight() : (localStorage.getItem('annieplayer.am.vizweight2') || 'area');
+    vwSel.onchange = function () {
+      if (window.amVizColor && window.amVizColor.setWeight) window.amVizColor.setWeight(vwSel.value);
+      else { try { localStorage.setItem('annieplayer.am.vizweight2', vwSel.value); } catch (e) { } }
+      try { if (window.__annieAMInternal && __annieAMInternal.refreshVizColor) __annieAMInternal.refreshVizColor(); } catch (e) { }
+    };
+    vwRow.appendChild(vwLab); vwRow.appendChild(vwSel);
+    sAmI.appendChild(vwRow);
+    // —— V4.4.8：侧栏搜索框 / A–Z 索引条的底色来源 ——
+    var stRow = markItem(el('div', 'set-row'), '搜索框底色 取色 来源 跟随封面 主色 不着色 search tone');
+    var stLab = el('div'); stLab.appendChild(el('div', '', '搜索框 / A–Z 底色'));
+    stLab.appendChild(el('div', 'set-hint', '跟随封面：取封面里偏暖的那条色（当前默认）；跟随主色：与频谱同一个颜色；不着色：只留毛玻璃'));
+    var stSel = document.createElement('select');
+    [['cover', '跟随封面（默认）'], ['prime', '跟随频谱主色'], ['plain', '不着色']].forEach(function (kv) {
+      var op = document.createElement('option'); op.value = kv[0]; op.textContent = kv[1];
+      stSel.appendChild(op);
+    });
+    stSel.value = ui.amSearchTone || 'cover';
+    stSel.onchange = function () {
+      ui.amSearchTone = stSel.value; save();
+      try { if (window.__annieAMInternal && __annieAMInternal.refreshVizColor) __annieAMInternal.refreshVizColor(); } catch (e) { }
+    };
+    stRow.appendChild(stLab); stRow.appendChild(stSel);
+    sAmI.appendChild(stRow);
     // —— AM 歌词样式（自「歌词」页迁入本页，V4.4） ——
     var sAmLyr = section(pgUiAm, '歌词样式');
     lsSliderRow(sAmLyr, 'AM 歌词字号', 'annieplayer.am.lyrscale', 0.7, 1.6, 0.05, 1, fmt2, function () {

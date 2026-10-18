@@ -314,6 +314,8 @@
     if (mode === 'name') arr.sort(function (a, b) { return azCollator().compare(a.name, b.name); });
     else if (mode === 'mtimeDesc') arr.sort(function (a, b) { return (b.mtime || 0) - (a.mtime || 0); });
     else if (mode === 'mtimeAsc') arr.sort(function (a, b) { return (a.mtime || 0) - (b.mtime || 0); });
+    else if (mode === 'ctimeDesc') arr.sort(function (a, b) { return (b.ctime || 0) - (a.ctime || 0); });
+    else if (mode === 'ctimeAsc') arr.sort(function (a, b) { return (a.ctime || 0) - (b.ctime || 0); });
     else if (mode === 'sizeDesc') arr.sort(function (a, b) { return (b.size || 0) - (a.size || 0); });
     else if (mode === 'sizeAsc') arr.sort(function (a, b) { return (a.size || 0) - (b.size || 0); });
     return arr;

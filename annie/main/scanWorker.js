@@ -58,15 +58,15 @@ async function scan(jobId, folders) {
           fplFiles.push({ path: full, mtime: fm }); continue;
         }
         if (ext === '.iso') { // SVLX 1.2.0：SACD ISO 分轨（主线程探测后生成虚拟分轨）
-          let size = 0, mtime = 0;
-          try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; } catch { }
-          isoFiles.push({ path: full, name: e.name, dir, size, mtime });
+          let size = 0, mtime = 0, ctime = 0;
+          try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; ctime = (st.birthtimeMs || st.ctimeMs || st.mtimeMs); } catch { }
+          isoFiles.push({ path: full, name: e.name, dir, size, mtime, ctime, ctime });
           continue;
         }
         if (!AUDIO_EXTS.has(ext)) continue;
-        let size = 0, mtime = 0;
-        try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; } catch { }
-        batch.push({ path: full, name: e.name, dir, size, mtime });
+        let size = 0, mtime = 0, ctime = 0;
+        try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; ctime = (st.birthtimeMs || st.ctimeMs || st.mtimeMs); } catch { }
+        batch.push({ path: full, name: e.name, dir, size, mtime, ctime });
         found++;
         if (batch.length >= 100) flush();
       } catch { /* 单文件异常跳过（特殊字符/权限/超长路径） */ }
@@ -90,8 +90,8 @@ async function scan(jobId, folders) {
           const dir = path.dirname(cuePath);
           // FILE 行可能是相对/绝对路径，大小写不敏感匹配同目录音频
           const audioFull = path.isAbsolute(cue.file) ? cue.file : path.join(dir, cue.file);
-          let size = 0, mtime = 0;
-          try { const st = fs.statSync(audioFull); size = st.size; mtime = st.mtimeMs; } catch { continue; }
+          let size = 0, mtime = 0, ctime = 0;
+          try { const st = fs.statSync(audioFull); size = st.size; mtime = st.mtimeMs; ctime = (st.birthtimeMs || st.ctimeMs || st.mtimeMs); } catch { continue; }
           hidden.push(audioFull);
           for (const t of cue.tracks) {
             virtuals.push({

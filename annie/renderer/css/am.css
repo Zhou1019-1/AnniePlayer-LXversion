@@ -701,10 +701,8 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-prog,
 #am-root.am-imm-chrome-off .am-imm-left .am-imm-ctl { opacity: 0; pointer-events: none; }
 /* V4.4.7（秋野奈 PR#6）：沉浸模式「歌曲信息面板」——左上角 ↓ 唤出，自屏幕顶部下拉 */
-/* top 必须与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
-   改 .am-topbar 高度时这里和 .am-imm-closebar 要一起改（V4.4.8 曾漏改导致悬挂栏偏上） */
 .am-imm-infobar {
-  position: absolute; top: 18px; left: 16px; z-index: 5; display: flex; gap: 8px;
+  position: absolute; top: 14px; left: 16px; z-index: 5; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
   transition: opacity .32s ease, transform .32s ease;
 }
@@ -823,9 +821,7 @@ html.wp-on.wp-imm #am-root .am-imm-bg {
 }
 html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封面隐藏氛围」 */
 .am-imm-closebar {
-  /* top 与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
-     改 .am-topbar 高度时这里和 .am-imm-infobar 要一起改 */
-  position: absolute; top: 18px; right: 16px; z-index: 3; display: flex; gap: 8px;
+  position: absolute; top: 14px; right: 16px; z-index: 3; display: flex; gap: 8px;
   -webkit-app-region: no-drag;
 }
 .am-imm-closebar .am-tbtn { color: #fff; }
@@ -1444,28 +1440,6 @@ html[data-motion="off"] #am-root::before {
 }
 .am-tb-more.open { max-width: 520px; opacity: 1; pointer-events: auto; margin-right: 0; }
 .am-tb-more.no-anim { transition: none; } /* 恢复上次展开状态时不要播一遍动画 */
-
-/* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
-#am-root .am-lyr-scroll { padding: 0 26px 40vh; }
-#am-root .am-imm-lyr { padding-top: 0; padding-bottom: 40vh; }
-#am-root .am-imm-vinyl .am-imm-lyr { padding: 0 8px 40vh 0; }
-/* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
-   = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
-#am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
-#am-root .am-imm-vinyl .am-imm-vleft { padding-left: 0; }
-/* V4.4.8：右上悬挂 = 圆心到上边、到右边距离相等（落在右上角对角线）
-   偏移与盘体宽度同公式，调大小时跟手 */
-#am-root .am-imm-vinyl.am-pos-corner .am-imm-vright { position: static; }
-#am-root .am-imm-vinyl.am-pos-corner .am-vinyl {
-  position: absolute; margin: 0;
-  right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
-  top:   calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
-}
-/* V4.4.8：彩胶长标题不再撑破布局——最多两行、超出省略 */
-#am-root .am-imm-vinyl .am-imm-title {
-  white-space: normal; overflow-wrap: anywhere; max-width: 100%;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
 .am-tb-more > * { flex: none; }
 /* 窗口三键原来的 margin-left:4px 会让展开按钮右侧多出 4px，清零 */
 .am-winbtns { margin-left: 0; gap: 4px; }
@@ -1517,37 +1491,229 @@ html[data-motion="off"] #am-root::before {
 .am-az { opacity: 0; transition: opacity .18s ease; }
 .am-az:hover, .am-az:focus-within { opacity: 1; }
 
+#np-full, .np-full { display: none !important; }
+.amb-mask { display: none !important; }
+/* V4.4.8：顶栏「收藏 + 音质胶囊」整体位置微调 */
+#am-root .am-np-row { padding-right: 5px; }
+/* V4.4.8：排序胶囊与「播放 / 随机播放」同高同内边距 —— 两边文字在同一套行盒里，
+   基线才会真正齐平（之前靠 flex 居中，行盒高度 17.7 vs 18.6，永远差半像素） */
+#am-root .am-sort-btn { height: auto; padding: 8px 12px 8px 14px; }
+#am-root .am-pl-actions { gap: 8px; }
+/* 内容区 < 560px：按钮紧凑，避免换到第三行把标题顶上去 */
+#am-root.am-narrow .am-pl-actions { gap: 6px; }
+#am-root.am-narrow .am-pl-actions .am-btn { padding: 7px 12px; font-size: 12px; }
+#am-root .am-pl-actions .am-btn > svg { display: block; flex: none; }
+/* 行内三点按钮：点更实一点 */
+#am-root .am-row-more svg { stroke-width: 2.2; }
+/* ▶ 与「播放」之间留一点字距（原来挤在一起） */
+#am-root .am-pl-actions .am-btn-accent { word-spacing: 5px; }
+#am-root .am-tbtn > svg { display: block; flex: none; }
+/* 窄内容：中间的随机播放收成纯图标按钮 */
+#am-root.am-narrow .am-pl-actions .am-btn-shuffle .am-btn-label { display: none; }
+#am-root.am-narrow .am-pl-actions .am-btn-shuffle { padding-left: 10px; padding-right: 10px; }
+/* 歌单头部：封面固定顶部、信息组贴底——按钮换行时封面不再被抬高 */
+#am-root .am-pl-head { align-items: stretch; }
+#am-root .am-pl-cover, #am-root .am-pl-cover-ph { align-self: flex-start; }
+#am-root .am-pl-head .am-pl-info { align-self: flex-end; }
+/* 歌曲页头部：内容窄时搜索框可收缩/换行，避免和标题重叠 */
+/* 单行排列：空间不足时优先让搜索框收缩，而不是换行 */
+#am-root .am-view-head { flex-wrap: nowrap; }
+#am-root .am-view-search { flex: 1 1 200px; width: 200px; max-width: 200px; min-width: 72px; }
+#am-root .am-view-head .am-sort-sel, #am-root .am-view-head .am-sort-dd { flex: 0 0 auto; }
+#am-root .am-view-head .am-view-h { flex: 0 0 auto; }
+/* 内容区上边距与左边距一致（左=28 内边距 + 8 滚动条槽 = 36），封面不再贴上边 */
+/* 视觉对齐：左侧看起来是 28（8px 滚动条槽与内容同底色），所以上边也用 28 */
+#am-root .am-content { padding-top: 28px; }
+/* 滚动条两侧对称占位：表头/行左右留白一致（否则右侧多出滚动条宽度） */
+#am-root .am-content { scrollbar-gutter: stable both-edges; }
+/* ===== 可拖动分栏：侧栏 / 歌词面板宽度 ===== */
+#am-root { --am-side-w: 240px; --am-lyr-w: 360px; }
+#am-root .am-side { width: var(--am-side-w); }
+#am-root.am-lyr-on .am-lyrics { width: var(--am-lyr-w); }
+#am-root.am-lyr-on .am-lyr-fold { right: var(--am-lyr-w); }
+/* 折叠键宽 26：A–Z 再往左让开，避免叠在一起 */
+/* 展开「更多」时，在设置右边加一条竖线，与展开出来的低频按钮区分 */
+#am-root .am-tb-more::before { content: ""; display: block; width: 1px; height: 18px; flex: none; background: var(--am-sep); margin: 0; }
+/* A–Z 竖条压在最右列上：把行内收藏/三点整体左移，避免重叠 */
+/* 侧栏行健壮性：图标固定宽度、名称省略、删除键贴右，窄宽度下不散架 */
+#am-root .am-side .am-nav { min-width: 0; }
+#am-root .am-side .am-nav-ico { flex: none; width: 20px; text-align: center; }
+#am-root .am-side .am-nav-name { min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+/* 轨道模式：分组标题用一条横线代替。
+   不改盒模型（只是把文字变透明），避免整列向下漂移 1~2px */
+#am-root.am-hdr-line .am-side .am-side-h { position: relative; color: transparent; white-space: nowrap; overflow: hidden; }
+#am-root.am-hdr-line .am-side .am-side-h::before {
+  content: ""; position: absolute; left: 13px; top: 50%; width: 14px; height: 1px;
+  background: var(--am-sep); transform: translateY(-50%);
+}
+/* 胶囊收起期间先冻结图标组，避免同时位移 */
+/* ===== 侧栏「轨道模式」：窄到只留图标 ===== */
+#am-root.am-side-rail .am-side .am-nav-name,
+#am-root.am-side-rail .am-side .am-nav-badge { display: none !important; }
+/* 轨道模式固定 56px：左边距 18 + 图标 20 + 右边距 18，左右相等 */
+/* 选中态恢复成正方形：行宽 = 图标列宽 32，水平居中 */
+#am-root.am-side-rail .am-side { padding-right: 0; }   /* 抵消 9px 滚动条 */
+/* 轨道模式：行本身保持原尺寸（行高/内边距不变），只把选中背景画成 32×32 的方块 */
+#am-root.am-side-rail .am-side .am-nav { position: relative; background: transparent !important; }
+#am-root.am-side-rail .am-side .am-nav::before {
+  content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+  width: 32px; height: 32px; border-radius: 8px; background: transparent; z-index: -1;
+}
+#am-root.am-side-rail .am-side .am-nav:hover::before,
+#am-root.am-side-rail .am-side .am-nav.cur::before { background: var(--am-hover); }
+#am-root.am-side-rail .am-side .am-nav-ico { width: 20px; }
+#am-root.am-side-rail .am-side .am-nav-del { display: none; }
+#am-root.am-side-rail .am-side > .am-search {
+  width: 34px; height: 34px; padding: 0; margin: 8px auto 10px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+#am-root.am-side-rail .am-side > .am-search > input { display: none; }
+#am-root.am-side-rail .am-side > .am-search > span { font-size: 14px; }
+/* 左上角控制键尺寸固定：不参与伸缩，键间距恒定 */
+#am-root .am-topbar .am-transport { flex: none; justify-content: space-between; }
+/* 顶栏内容块裁剪：内容再多也不会盖到右侧图标 */
+#am-root .am-np { overflow: hidden; }
+#am-root .am-np-row .am-badge { min-width: 0; transition: width .22s ease, opacity .16s ease; }
+/* 顶栏空间不足时隐藏音质胶囊（由 JS 按 np 宽度切 am-np-tight） */
+#am-root .am-np-row .am-badge { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 只有带 A–Z 索引条的视图（歌曲页）才需要避让；歌单/专辑页保持贴右对齐 */
+#am-root:has(.am-az) .am-table .am-c-acts { padding-right: 30px; }
+/* A–Z 右缘与表格/表头右缘对齐（内容区右内边距 28 + 滚动条槽 8 = 36） */
+#am-root .am-az { right: 36px; }
+#am-root.am-lyr-on .am-az { right: calc(var(--am-lyr-w) + 36px); }
+#am-root.am-lyr-on .am-backtop { right: calc(var(--am-lyr-w) + 22px); }
+/* 拖拽手柄：贴在两条分界线上，6px 命中区 */
+#am-root .am-resize { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 30; cursor: col-resize; }
+#am-root .am-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background .15s; }
+#am-root .am-resize:hover::after, #am-root .am-resizing .am-resize.dragging::after { background: color-mix(in srgb, var(--am-accent) 60%, transparent); }
+#am-root .am-resize-l { left: var(--am-side-w); transform: translateX(-3px); }
+#am-root .am-resize-r { right: var(--am-lyr-w); transform: translateX(3px); display: none; }
+#am-root.am-lyr-on .am-resize-r { display: block; }
+/* 拖拽时关闭宽度过渡，避免跟手延迟 */
+#am-root.am-resizing .am-lyrics, #am-root.am-resizing .am-lyr-fold { transition: none !important; }
+/* V4.4.8：侧栏搜索框常驻底部 + 胶囊形（列表再长也滚不走） */
+/* 搜索框后面补占位，滚到底时它仍贴在底部（否则会跟着内容一起上移） */
+#am-root .am-side { padding-bottom: 10px; overflow-x: hidden; }
+#am-root .am-side > .am-search {
+  position: sticky; bottom: 0; z-index: 6;
+  /* 侧栏有 9px 滚动条占位，右侧不留 margin 才能让左右视觉对称（实测 16 / 17） */
+  margin: 8px 0 0 8px; width: calc(100% - 7px); box-sizing: border-box; border-radius: 999px;
+  /* 左右与侧栏列表对齐（原来右边贴边、左边留白，不对称） */
+  border: 1px solid var(--am-sep);
+  /* V4.4.8：底色改为「封面取色」半透明（无封面时回落中性灰） */
+  background: color-mix(in srgb, var(--am-cover-c1, transparent) var(--am-cover-tint, 22%), var(--am-glass-2));
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: 0 4px 16px -8px rgba(0, 0, 0, .28);
+}
+/* 频谱隐藏/显示时搜索框都贴底 8px；用容器 padding 撑住 sticky，不再单独抬高 */
+/* V4.4.8：A–Z 索引条底色同样用封面取色半透明 */
+#am-root .am-az {
+  /* V4.4.8：材质对齐左下角搜索框（同比例封面取色 + 同毛玻璃 + 同边框/阴影） */
+  /* 对齐搜索框颜色：封面色降到 8%，叠一层白，并把背景降饱和 → 不再被列表行的土黄带偏 */
+  background: color-mix(in srgb, var(--am-cover-c1, transparent) var(--am-cover-tint, 22%), var(--am-glass-2));
+  border: 1px solid var(--am-sep);
+  backdrop-filter: var(--am-blur) brightness(1.06);
+  -webkit-backdrop-filter: var(--am-blur) brightness(1.06);
+  box-shadow: 0 2px 10px -4px rgba(0, 0, 0, .18);
+}
+/* V4.4.8：音量条方向还原——上面 100%、下面 0%（原 rotate(90deg) 是 0 在上） */
+#am-root .am-vol input[type="range"] {
+  transform: translateX(-50%) translateY(41px) rotate(-90deg);
+}
+/* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
+#am-root .am-lyr-scroll { padding: 0 26px 40vh; }
+#am-root .am-imm-lyr { padding-top: 0; padding-bottom: 40vh; }
+#am-root .am-imm-vinyl .am-imm-lyr { padding: 0 8px 40vh 0; }
+/* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
+   = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
+#am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
+#am-root .am-imm-vinyl .am-imm-vleft { padding-left: 0; }
+/* V4.4.8：右上悬挂 = 圆心到上边、到右边距离相等（落在右上角对角线）
+   偏移与盘体宽度同公式，调大小时跟手 */
+#am-root .am-imm-vinyl.am-pos-corner .am-imm-vright { position: static; }
+#am-root .am-imm-vinyl.am-pos-corner .am-vinyl {
+  position: absolute; margin: 0;
+  right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+  top:   calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+}
 /* V4.4.8：顶栏进度条左侧的时间数字改为左对齐——这样它的字形起点与顶栏封面左边缘同一条线
    （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
 #am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
-/* V4.4.8：封面 + 歌名整体再左移 5px（微调）；♥ 与音质胶囊位置不变 */
+/* V4.4.8：封面 + 歌名整体再左移 4px（微调）；♥ 与音质胶囊位置不变 */
 #am-root .am-np-cover { margin-left: -5px; }
 #am-root .am-np-text { margin-right: 5px; }
 /* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
-   宽度 500px，右侧按钮组展开时自动收窄，不会重叠 */
-#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 24px; }
+   宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
+/* 顶栏「封面/进度条/收藏/音质」整块左缘对齐侧栏分界线（封面有 -5px 微调，这里 +5 抵消） */
+#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 max(8px, calc(var(--am-side-w, 240px) - 136.9px)) min-width: 0; }
 #am-root .am-topbar .am-tb-right { margin-left: auto; }
-/* V4.4.8 展开「更多」时图标挤压中间块：右侧剩余时长与 ♥/胶囊 向左压一下 */
+/* V4.4.8 展开「更多」时图标会挤压中间块，让 ♥ 与音质胶囊做一下微小回弹 */
+/* 胶囊换文案时的运动模糊（filter 用 animation，比 transition 更可靠可见） */
+@keyframes amBadgeBlur {
+  0% { filter: blur(3px); }
+  100% { filter: blur(0px); }
+}
+#am-root .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .22s ease-out; }
 @keyframes am-np-nudge {
   0%   { transform: translateX(0) scale(1); }
   45%  { transform: translateX(-6px) scale(.975); }
   100% { transform: translateX(0) scale(1); }
 }
-/* 收起时中间块变宽：右侧剩余时长与 ♥/胶囊 向右弹一下
- 
-   进度条轨道与左侧已播时间数字动不起来 */
 @keyframes am-np-nudge-r {
   0%   { transform: translateX(0); }
   45%  { transform: translateX(5px); }
   100% { transform: translateX(0); }
 }
+/* 展开：右侧剩余时长与 ♥ 一起向左压一下（胶囊不参与，避免宽度动画叠加） */
 #am-root.am-tb-open .am-np-progrow > .am-np-time:last-child,
-#am-root.am-tb-open .am-np-row .am-fav-btn,
-#am-root.am-tb-open .am-np-row .am-badge {
+#am-root.am-tb-open .am-np-row .am-fav-btn {
   animation: am-np-nudge .34s ease-out both;
 }
+/* 收起：右侧剩余时长与 ♥ 向右弹 */
 #am-root.am-tb-close .am-np-progrow > .am-np-time:last-child,
-#am-root.am-tb-close .am-np-row .am-fav-btn,
-#am-root.am-tb-close .am-np-row .am-badge {
+#am-root.am-tb-close .am-np-row .am-fav-btn {
   animation: am-np-nudge-r .34s ease-out both;
+}
+}
+/* V4.4.8：沉浸「歌曲信息」面板字号随视口缩放——取消过低的上限，
+   之前 1600px 以上字号就不变了，窗口/全屏字号差不多 */
+#am-root .am-imm-info .am-imm-info-title { font-size: clamp(22px, 2.1vw, 42px) !important; }
+#am-root .am-imm-info .am-imm-info-sub { font-size: clamp(13px, 1.02vw, 22px) !important; }
+#am-root .am-imm-info .am-imm-info-grid { font-size: clamp(12px, 0.95vw, 20px) !important; }
+/* 行列间距改成 em，跟着字号一起放大 */
+#am-root .am-imm-info .am-imm-info-grid { column-gap: 2.1em; row-gap: 0.72em; }
+/* V4.4.8：沉浸层右上角按钮与主界面窗口三键逐像素一致——
+   34×34 按钮、gap 4px、右缘 13.7px、顶 17.6px、圆角 8px、字号 13px */
+#am-root .am-imm-closebar { top: 18px; right: 16px; gap: 3px; z-index: 4; color: #fff; }
+#am-root .am-imm-infobar { top: 18px; left: 16px; }
+#am-root .am-imm-closebar .am-tbtn { width: 34px; height: 34px; border-radius: 8px; font-size: 16px; }
+/* V4.4.8：只有 □ / × 是 SVG，它们视觉占位更小，用负边距把间隙收紧 */
+#am-root .am-imm-closebar .am-tbtn > svg { margin: 0 -2px; }
+/* × 的字形本身比 □ 窄，视觉上间隙偏大→往左微移 */
+#am-root .am-imm-closebar .am-tbtn:last-child { position: relative; left: -1.5px; }
+/* V4.4.8：沉浸底部控制按钮——图标居中、常驻白色（不变红） */
+#am-root .am-imm-ctl .am-imm-btn svg { display: block; }
+/* 气泡尾巴不占视觉重心，下移 0.5px 让它看起来居中 */
+#am-root .am-imm-ctl .am-imm-btn svg { translate: 0 0.5px; }
+#am-root .am-imm-ctl .am-imm-btn,
+#am-root .am-imm-ctl .am-imm-btn.on { color: #fff; }
+/* V4.4.8：沉浸待播清单覆盖右上角按钮条（面板在上） */
+#am-root.am-imm-q-on .am-imm-queue { z-index: 5; }
+/* V4.4.8：待播/评论面板的提示行统一为上下等距（原 .am-q-empty margin-top:40px 使上方过大） */
+#am-root .am-imm-queue .am-q-empty,
+#am-root .am-q-drawer .am-q-empty { margin: 0 0 17px; padding: 8px 0 0; line-height: 12px; text-align: center; }
+/* V4.4.8：评论页提示行距离正文更远一些（正文行高比歌曲行大） */
+#am-root .am-imm-queue .am-q-cmt,
+#am-root .am-q-drawer .am-q-cmt { margin-bottom: 6px; }
+/* V4.4.8：主界面待播抽屉做成浮动卡片（左上/左下圆角，右与底留 8px）；沉浸式面板不动 */
+#am-root .am-q-drawer {
+  /* 顶栏高 70px：上边不越过顶栏 */
+  top: 70px; right: 0; bottom: 16px;
+  border-radius: 12px 0 0 12px;
+  /* 不能 overflow:hidden，会把左侧的收起键裁掉 */
+}
+/* V4.4.8：彩胶长标题不再撑破布局——最多两行、超出省略 */
+#am-root .am-imm-vinyl .am-imm-title {
+  white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }

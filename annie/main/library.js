@@ -25,7 +25,7 @@ function walk(dir, out, depth = 0) {
     else if (e.isFile() && isAudio(full)) {
       try {
         const st = fs.statSync(full);
-        out.push({ path: full, name: e.name, dir, ext: path.extname(e.name).toLowerCase(), size: st.size, mtime: st.mtimeMs });
+        out.push({ path: full, name: e.name, dir, ext: path.extname(e.name).toLowerCase(), size: st.size, mtime: st.mtimeMs, ctime: (st.birthtimeMs || st.ctimeMs || st.mtimeMs) });
       } catch { }
     }
   }
@@ -61,7 +61,7 @@ function applyCueSplit(tracks) {
             virtuals.push({
               path: audioFull + '#cue' + t.no,
               name: (t.title || 'Track ' + t.no) + path.extname(audioFull),
-              dir, ext: src.ext, size: src.size, mtime: src.mtime,
+              dir, ext: src.ext, size: src.size, mtime: src.mtime, ctime: src.ctime,
               cue: { src: audioFull, start: t.startSec, end: t.endSec, no: t.no },
               cueMeta: { title: t.title, artist: t.artist || cue.albumArtist || '', album: cue.album || '' }
             });
@@ -191,6 +191,15 @@ function getDiskCover(filePath, mtimeMs) {
   if (fn.endsWith('.none')) return null;
   try {
     const buf = fs.readFileSync(path.join(coverDiskDir, fn));
+    /* V4.4.8：缓存自愈——0 字节坏文件、V4.4.7 之前存下的超大原图都视为失效，
+       删掉让上层重新解析（解析时会缩到 640px JPEG）；否则列表缩略图空白、
+       氛围背景的超长 dataURL 问题由渲染层 bgFromDataUrl 缩图兜底） */
+    if (buf.length === 0) {
+      try { fs.unlinkSync(path.join(coverDiskDir, fn)); } catch { }
+      coverDiskIndex.delete(h);
+      try { coverDiskBytes -= buf.length; } catch { }
+      return undefined;
+    }
     const ext = fn.slice(fn.lastIndexOf('.') + 1);
     const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
     return `data:${mime};base64,${buf.toString('base64')}`;
@@ -336,6 +345,20 @@ const COVER_SHRINK_THRESHOLD = 500 * 1024; // 500KB 以上才缩
 const COVER_SHRINK_SIZE = 640;             // 沉浸模式最大封面 640px，超过无意义
 async function shrinkCoverIfNeeded(buf) {
   if (!buf || buf.length <= COVER_SHRINK_THRESHOLD) return buf;
+  /* V4.4.8：先用 nativeImage 直接缩（毫秒级），失败再回落 ffmpeg ——
+     首屏几十张封面时 ffmpeg 每张 300~800ms，会拖到十几秒 */
+  try {
+    const { nativeImage } = require('electron');
+    const img = nativeImage.createFromBuffer(buf);
+    if (img && !img.isEmpty()) {
+      const sz = img.getSize();
+      const scaled = (sz.width > COVER_SHRINK_SIZE || sz.height > COVER_SHRINK_SIZE)
+        ? img.resize({ width: Math.min(sz.width, COVER_SHRINK_SIZE), height: Math.min(sz.height, COVER_SHRINK_SIZE), quality: 'good' })
+        : img;
+      const jpg = scaled.toJPEG(85);
+      if (jpg && jpg.length && jpg.length < buf.length) return jpg;
+    }
+  } catch (e) { }
   const os = require('os');
   const tmpIn = path.join(os.tmpdir(), 'annie-cov-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.bin');
   const tmpOut = tmpIn + '.jpg';

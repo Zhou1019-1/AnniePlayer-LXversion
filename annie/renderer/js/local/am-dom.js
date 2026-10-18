@@ -180,15 +180,76 @@
     document.addEventListener('mouseup', function () { setTimeout(syncRail, 60); }, true);
     window.__amSyncNpT = syncNpTight;
     window.__amSyncTransport = syncTransport;
-    /* 内容区 / 侧栏滚动条：滚动时才显形 */
+    /* 侧栏 / 内容区滚动条：鼠标移入该面板并移动时显示，停移约 900ms 隐藏，移出立即隐藏 */
     (function _amScrollbarHook() {
-      var A = window.__annieAMInternal;
-      if (!A || typeof A.autoHideScrollbar !== 'function') { setTimeout(_amScrollbarHook, 300); return; }
-      var c = document.querySelector('#am-root .am-content');
-      var s = document.querySelector('#am-root .am-side');
-      if (c && !c.__amSB) { c.__amSB = 1; A.autoHideScrollbar(c); }
-      if (s && !s.__amSB) { s.__amSB = 1; A.autoHideScrollbar(s); }
-      if (!c || !s) setTimeout(_amScrollbarHook, 300);
+      var root = document.getElementById('am-root');
+      if (!root) { setTimeout(_amScrollbarHook, 300); return; }
+      var c = root.querySelector('.am-content');
+      var s = root.querySelector('.am-side');
+      if (!c || !s) { setTimeout(_amScrollbarHook, 300); return; }
+      function bind(el) {
+        if (!el || el.__amSB) return; el.__amSB = 1;
+        var t = 0;
+        el.addEventListener('mouseenter', function () { el.classList.add('am-sb-on'); });
+        el.addEventListener('mousemove', function () {
+          el.classList.add('am-sb-on');
+          clearTimeout(t);
+          t = setTimeout(function () { el.classList.remove('am-sb-on'); }, 900);
+        }, { passive: true });
+        el.addEventListener('scroll', function () {
+          el.classList.add('am-sb-on');
+          clearTimeout(t);
+          t = setTimeout(function () { el.classList.remove('am-sb-on'); }, 900);
+        }, { passive: true });
+        el.addEventListener('mouseleave', function () { clearTimeout(t); el.classList.remove('am-sb-on'); });
+      }
+      bind(c); bind(s);
+      function dragScroll(el) {
+        if (!el || el.__amDrag) return; el.__amDrag = 1;
+        var down = false, sy = 0, st = 0, moved = false, skipUntil = 0;
+        el.addEventListener('pointerdown', function (e) {
+          if (e.button !== 0) return;
+          down = true; moved = false; sy = e.clientY; st = el.scrollTop; el._sbPrev = el.style.scrollBehavior; el.style.scrollBehavior = 'auto'; el.classList.add('am-drag-lyr');
+        });
+        window.addEventListener('pointermove', function (e) {
+          if (!down) return;
+          var dy = e.clientY - sy;
+          if (Math.abs(dy) > 4) moved = true;
+          el.scrollTop = st - dy;
+        }, { passive: true });
+        window.addEventListener('pointerup', function () {
+          if (!down) return; down = false; el.classList.remove('am-drag-lyr'); el.style.scrollBehavior = el._sbPrev || '';
+          if (moved) {
+            skipUntil = Date.now() + 400;   /* 拖动后松手不算点击 */
+            setTimeout(function () {
+              if (down) return;
+              var A = window.__annieAMInternal;
+              var cur = el.querySelector('.am-lyr-line.cur');
+              if (!cur || !A || !A.progScrollTop) return;
+              el.style.scrollBehavior = 'smooth';
+              A.progScrollTop(el, cur.offsetTop - el.clientHeight * 0.35);
+            }, 2000);
+          }
+        }, true);
+        el.addEventListener('click', function (e) {
+          if (Date.now() < skipUntil) { e.stopPropagation(); e.preventDefault(); skipUntil = 0; }
+        }, true);
+      }
+      function bindLyrDrag() {
+        ['.am-lyr-scroll', '.am-imm-lyr', '.am-mini-lyr'].forEach(function (sel) {
+          var el = root.querySelector(sel); if (el) dragScroll(el);
+        });
+      }
+      bindLyrDrag(); setInterval(bindLyrDrag, 1500);
+      var lyr = root.querySelector('.am-lyrics');
+      if (lyr && !lyr.__amMV) {
+        lyr.__amMV = 1; var t2 = 0;
+        lyr.addEventListener('mousemove', function () {
+          lyr.classList.add('am-mv');
+          clearTimeout(t2); t2 = setTimeout(function () { lyr.classList.remove('am-mv'); }, 1200);
+        }, { passive: true });
+        lyr.addEventListener('mouseleave', function () { clearTimeout(t2); lyr.classList.remove('am-mv'); });
+      }
     })();
     /* 记录/恢复上次停留的视图（歌曲/专辑/文件夹/播放列表…），重启回到原位置 */
     try {

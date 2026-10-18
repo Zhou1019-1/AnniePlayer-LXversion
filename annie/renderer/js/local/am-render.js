@@ -2026,13 +2026,39 @@ function amModeSvg(id) {
         if (!ready) { if (_rr++ < 40) setTimeout(_tryRestore, 250); return; }
         try {
           meta.playing = false;
-          /* 静音 → 恢复（不 seek）→ 暂停 → 还原音量，压掉起播瞬间的沙沙声 */
           var _vg = (state.library && state.library.volume) || 0.6;
-          try { window.mine.engine('volume.set', { gain: 0 }).catch(function () { }); } catch (e10) { }
-          doRestore(meta, 0);
-          setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e8) { } }, 80);
-          setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e9) { } }, 600);
-          setTimeout(function () { try { window.mine.engine('volume.set', { gain: _vg }).catch(function () { }); } catch (e11) { } }, 900);
+          /* 先按持久化的独占/共享重建后端，再静默恢复；否则引擎启动默认独占会短暂静音其他程序 */
+          var _ex = true;
+          try { var _ev = localStorage.getItem('annieplayer.exclusive'); if (_ev !== null) _ex = _ev === '1'; } catch (e0) { }
+          var _go = function () {
+            try { window.mine.engine('volume.set', { gain: 0 }).catch(function () { }); } catch (e10) { }
+            doRestore(meta, 0);
+            setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e8) { } }, 80);
+            setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e9) { } }, 600);
+            setTimeout(function () { try { window.mine.engine('volume.set', { gain: _vg }).catch(function () { }); } catch (e11) { } }, 900);
+          };
+          if (_ex === false) {
+            var _kind = state.backendKind || 'wasapi';
+            var _id = null;
+            try { var _bk = (state.library && state.library.backend) || ''; var _p = _bk.split('|'); if (_p[0] === 'wasapi' && _p[1]) _id = _p[1]; } catch (e0) { }
+            var _select = function () { return window.mine.engine('devices.select', { kind: _kind, id: _id, exclusive: false }); };
+            var _apply = function () {
+              var _race = new Promise(function (res) { setTimeout(res, 1500); });
+              Promise.race([_select().then(function () { return true; }), _race.then(function () { return false; })])
+                .then(function (ok) { if (ok) window.__amExclDone = true; _go(); })
+                .catch(function () { _go(); });
+            };
+            var _nm = (window.__lastFormat && window.__lastFormat.device) || null;
+            if (_nm) {
+              try {
+                window.mine.engine('devices.list').then(function (dd) {
+                  var hit = ((dd && dd.wasapi) || []).filter(function (x) { return x.name === _nm; })[0];
+                  if (hit) _id = hit.id;
+                  _apply();
+                }).catch(function () { _apply(); });
+              } catch (e0) { _apply(); }
+            } else { _apply(); }
+          } else { _go(); }
         } catch (e3) { }
       })();
     }

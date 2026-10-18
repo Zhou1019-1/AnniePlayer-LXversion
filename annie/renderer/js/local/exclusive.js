@@ -171,7 +171,7 @@
     let appTries = 0;
     const t2 = setInterval(() => {
       appTries++;
-      if (!exclusive) { // 仅非默认值需要主动应用（默认独占引擎天然如此）
+      if (!exclusive && !window.__amExclDone) { // 恢复流程已先行应用共享时跳过，避免二次断流重建
         applyToEngine().then(() => clearInterval(t2)).catch(() => { });
       } else clearInterval(t2);
       if (appTries >= 15) clearInterval(t2);

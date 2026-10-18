@@ -154,6 +154,7 @@
       var want = Math.max(t2.right + _gap + 5, sb.right) - 2;   /* 再左移 2px：整体贴近侧栏竖线 */
       var ml = Math.max(0, want - t2.right - extra);
       np.style.marginLeft = ml + 'px';
+      np.style.marginRight = '8px';   /* 右侧最小间隙对齐左侧（含视觉补偿 3px） */
       /* 自检：np 左缘与目标偏差 >1px 时立刻补一次（不越过控制键） */
       var d = want - np.getBoundingClientRect().left;
       if (Math.abs(d) > 1) np.style.marginLeft = (ml + d) + 'px';

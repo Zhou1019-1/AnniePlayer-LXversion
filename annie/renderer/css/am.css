@@ -1575,6 +1575,22 @@ html[data-motion="off"] #am-root::before {
 /* 歌单头部：封面固定顶部、信息组贴底——按钮换行时封面不再被抬高 */
 #am-root .am-pl-head { align-items: stretch; }
 #am-root .am-pl-name { width: fit-content; max-width: 100%; }   /* 改名框贴合文字，不再铺满整行 */
+/* 侧栏 / 内容区滚动条：默认透明，滚动时才显形（与歌词面板一致） */
+.am-side::-webkit-scrollbar-thumb, .am-content::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.am-side.scrolling::-webkit-scrollbar-thumb, .am-content.scrolling::-webkit-scrollbar-thumb { background: var(--am-sep); }
+/* ===== V4.4.9：顶栏中间块间距统一 ===== */
+/* 信息行：封面 / 标题 / ♥ / 胶囊 统一 10px，去掉历史遗留的额外 5px 边距 */
+#am-root .am-np-row { gap: 0; padding-right: 0; }
+#am-root .am-np-row > * { margin-right: 10px !important; }   /* 只统一右侧间距，保留封面的 -5px 微调 */
+#am-root .am-np-row > *:last-child { margin-right: -3px !important; }   /* 胶囊右移 5px：圆角直线段的分界点对齐右侧时间 */
+/* 封面与标题整体右移 2px（封面原来偏左 5px，现为 3px） */
+#am-root .am-np-cover { margin-left: -3px; position: relative; top: 1px; }
+#am-root .am-np-text { position: relative; top: 1px; }   /* 封面与标题同步下移 1px */
+/* 清掉 ♥ 的历史 left:3px 偏移（会把 ♥/胶囊的间距带偏） */
+#am-root .am-np-row .am-fav-btn { left: 0 !important; margin-left: 0 !important; }
+/* 进度条行：左右时间盒固定 40px，左边的右对齐、左边的左对齐，两侧视觉间隙都为 8px */
+#am-root .am-np-progrow { gap: 8px; }
+#am-root .am-np-progrow > .am-np-time { width: auto !important; min-width: 0 !important; text-align: left !important; }   /* 盒子完全贴合数字 */
 #am-root .am-pl-cover, #am-root .am-pl-cover-ph { align-self: flex-start; }
 #am-root .am-pl-head .am-pl-info { align-self: flex-end; }
 /* 歌曲页头部：内容窄时搜索框可收缩/换行，避免和标题重叠 */
@@ -1634,7 +1650,7 @@ html[data-motion="off"] #am-root::before {
 /* 左上角控制键尺寸固定：不参与伸缩，键间距恒定 */
 #am-root .am-topbar .am-transport { flex: none; justify-content: space-between; }
 /* 顶栏内容块不裁剪：封面阴影/圆角、胶囊尾巴都不切（胶囊靠即时收缩避免压到图标） */
-#am-root .am-np { overflow: visible; clip-path: inset(-28px 0 -28px -28px); }   /* 仅右缘裁剪：极限拖动时胶囊不会盖到图标 */
+#am-root .am-np { overflow: visible; clip-path: inset(-28px -8px -28px -28px); }   /* 仅右缘裁剪：极限拖动时胶囊不会盖到图标 */
 #am-root .am-np-row .am-badge { min-width: 0; transition: width .22s ease, opacity .16s ease; }
 /* 拖动分栏时：胶囊参与挤压，文字逐字被裁（而不是整段换字） */
 /* 顶栏空间不足时隐藏音质胶囊（由 JS 按 np 宽度切 am-np-tight） */
@@ -1703,7 +1719,7 @@ html[data-motion="off"] #am-root::before {
    （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
 #am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
 /* V4.4.8：封面 + 歌名整体再左移 4px（微调）；♥ 与音质胶囊位置不变 */
-#am-root .am-np-text { margin-right: 5px; }
+#am-root .am-np-text { margin-right: 10px; }
 /* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
    宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
 /* 顶栏「封面/进度条/收藏/音质」整块左缘对齐侧栏分界线（封面有 -5px 微调，这里 +5 抵消） */

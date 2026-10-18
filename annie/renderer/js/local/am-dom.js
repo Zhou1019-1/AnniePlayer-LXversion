@@ -151,7 +151,7 @@
       var m0 = parseFloat(np.style.marginLeft) || 0;
       var extra = npNow - t2.right - m0;
       var _gap = Math.max(8, t2.left);   /* 控制栏到左边框的距离，作为最小间距 */
-      var want = Math.max(t2.right + _gap + 5, sb.right);   /* +5 抵消封面 -5px 偏左 */
+      var want = Math.max(t2.right + _gap + 5, sb.right) - 2;   /* 再左移 2px：整体贴近侧栏竖线 */
       var ml = Math.max(0, want - t2.right - extra);
       np.style.marginLeft = ml + 'px';
       /* 自检：np 左缘与目标偏差 >1px 时立刻补一次（不越过控制键） */
@@ -179,6 +179,16 @@
     document.addEventListener('mouseup', function () { setTimeout(syncRail, 60); }, true);
     window.__amSyncNpT = syncNpTight;
     window.__amSyncTransport = syncTransport;
+    /* 内容区 / 侧栏滚动条：滚动时才显形 */
+    (function _amScrollbarHook() {
+      var A = window.__annieAMInternal;
+      if (!A || typeof A.autoHideScrollbar !== 'function') { setTimeout(_amScrollbarHook, 300); return; }
+      var c = document.querySelector('#am-root .am-content');
+      var s = document.querySelector('#am-root .am-side');
+      if (c && !c.__amSB) { c.__amSB = 1; A.autoHideScrollbar(c); }
+      if (s && !s.__amSB) { s.__amSB = 1; A.autoHideScrollbar(s); }
+      if (!c || !s) setTimeout(_amScrollbarHook, 300);
+    })();
     /* 记录/恢复上次停留的视图（歌曲/专辑/文件夹/播放列表…），重启回到原位置 */
     try {
       var _lvLast = '';

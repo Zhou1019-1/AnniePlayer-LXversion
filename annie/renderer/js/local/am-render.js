@@ -3010,7 +3010,8 @@ function amModeSvg(id) {
         if (p2 && !state.currentStream && S.view !== 'stream'
             && !(S.view === 'albums' && !S.albumKey) && !(S.view === 'folders' && !S.folderPath)
             && currentTracks().some(function (t) { return t.path === p2; })) {
-          scrollRowIntoView(p2, { auto: true });
+          /* V4.4.9：用户刚手动滚动过（1.5s 内）就不强制定位，避免打断浏览 */
+          if (Date.now() - (S._userScrollAt || 0) > 1500) scrollRowIntoView(p2, { auto: true });
         } else if (p2 && state.currentStream && (S.view === 'stream' || S.view.indexOf('spl:') === 0)
             && AM.scrollStreamRowIntoView) {
           // V4.4：流媒体切歌终点校正——playStreamAt 的 smooth 滚动会被 refresh 链里

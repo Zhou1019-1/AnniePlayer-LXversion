@@ -1251,7 +1251,7 @@
           }, 250);
         });
       }
-      var markUser = function () { _userScrolled = true; };
+      var markUser = function () { _userScrolled = true; S._userScrollAt = Date.now(); };
       [R.sidebar, R.content].forEach(function (el0) {
         if (!el0) return;
         el0.addEventListener('wheel', markUser, { passive: true });

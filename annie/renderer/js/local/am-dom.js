@@ -2589,7 +2589,7 @@
     if (e.ctrlKey || e.metaKey) {
       if (S.msSel.has(t.path)) S.msSel.delete(t.path); else S.msSel.add(t.path);
       S._selAnchor = t.path;
-      renderView();
+      renderKeepScroll();
       return true;
     }
     if (e.shiftKey && S._selAnchor && opts.tracks) {
@@ -2598,12 +2598,12 @@
       if (a >= 0 && b >= 0) {
         S.msSel.clear();
         for (var k = Math.min(a, b); k <= Math.max(a, b); k++) S.msSel.add(opts.tracks[k].path);
-        renderView();
+        renderKeepScroll();
         return true;
       }
       return false;
     }
-    if (S.msSel.size) { S.msSel.clear(); renderView(); }
+    if (S.msSel.size) { S.msSel.clear(); renderKeepScroll(); }
     return false;
   }
   function msToggle(p, tr, ck) {
@@ -2613,7 +2613,25 @@
     var cnt = document.querySelector('.am-ms-count');
     if (cnt) cnt.textContent = '已选 ' + S.msSel.size + ' 首';
   }
-  function msExit() { S.msOn = false; if (S.msSel) S.msSel.clear(); renderView(); }
+  /* V4.4.9：多选工具条出现/消失会改变内容高度 —— 重绘后按高度差补偿滚动，避免界面跳到顶上 */
+  function renderKeepScroll() {
+    var c = R.content;
+    if (!c) { renderView(); return; }
+    var st = c.scrollTop;
+    var ob = c.querySelector('.am-ms-bar');
+    var oh = ob ? ob.offsetHeight : 0;
+    renderView();
+    var nb = c.querySelector('.am-ms-bar');
+    var nh = nb ? nb.offsetHeight : 0;
+    var target = Math.max(0, st + nh - oh);
+    c.scrollTop = target;
+    if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
+    setTimeout(function () {
+      c.scrollTop = target;
+      if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
+    }, 0);
+  }
+  function msExit() { S.msOn = false; if (S.msSel) S.msSel.clear(); renderKeepScroll(); }
   function renderMsToolbar(c, tracks) {
     var bar = el('div', 'am-ms-bar');
     var bAll = el('button', 'am-btn', (S.msSel && S.msSel.size >= tracks.length && tracks.length) ? '☐ 取消全选' : '☑ 全选');
@@ -2621,7 +2639,7 @@
       if (!S.msSel) S.msSel = new Set();
       if (S.msSel.size >= tracks.length) S.msSel.clear();
       else tracks.forEach(function (t) { S.msSel.add(t.path); });
-      renderView();
+      renderKeepScroll();
     };
     bar.appendChild(bAll);
     // V4.4：顶部工具条独立歌单选择器——不复用右键 R.pop，避免全局外点关闭逻辑立即收掉菜单
@@ -2662,7 +2680,7 @@
         var del = new Set(S.msSel);
         window.mine.playlistReorder(plId, pl.paths.filter(function (p) { return !del.has(p); })).then(function (pls) {
           S.playlists = pls; S.msOn = false; if (S.msSel) S.msSel.clear();
-          renderSidebar(); renderView();
+          renderSidebar(); renderKeepScroll();
         });
       };
       bar.appendChild(bRm);
@@ -2680,6 +2698,8 @@
     bar.appendChild(el('span', 'am-ms-count', '已选 ' + (S.msSel ? S.msSel.size : 0) + ' 首'));
     bar.classList.add('am-ms-float');
     c.appendChild(bar);
+    /* V4.4.9：把工具条高度告诉表头（sticky top 让位），避免两者叠在一起 */
+    try { var _r = document.getElementById('am-root'); if (_r) _r.style.setProperty('--am-ms-h', bar.offsetHeight + 'px'); } catch (e0) { }
   }
   /* 删除确认：默认仅移出曲库显示；勾选后连同源文件（系统回收站，可恢复） */
   function amConfirmDel(count, cb) {
@@ -3068,6 +3088,7 @@ renderView();
       tracks: tracks
     };
     if (S.msOn || (S.msSel && S.msSel.size)) renderMsToolbar(c, tracks); // V4.3.22：多选工具条（全选/删除选中/退出）；V4.4 快速多选有选中即显示
+    else { try { var _r0 = document.getElementById('am-root'); if (_r0) _r0.style.setProperty('--am-ms-h', '0px'); } catch (e0) { } }
     if (grp) tb.className = 'am-table am-grp';
     buildTableHead(tb, grp, opts);   // V4.4.9：列头可拖宽 / 换位（封面固定最左）
     var body = el('tbody');
@@ -3428,7 +3449,7 @@ renderView();
     // V4.3.22：多选（歌曲/专辑详情/喜爱歌曲/播放列表视图）——进入多选模式并选中本行
     if (S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey) || S.view.indexOf('pl:') === 0) {
       var mms = el('button', 'am-pop-item', '☑ 多选');
-      mms.onclick = function () { pop.classList.remove('on'); S.msOn = true; S.msSel = new Set([trackPath]); renderView(); };
+      mms.onclick = function () { pop.classList.remove('on'); S.msOn = true; S.msSel = new Set([trackPath]); renderKeepScroll(); };
       pop.appendChild(mms);
     }
     // V4.4：歌单视图里右键「移除」默认只移出本歌单（不碰曲库/其他歌单）——

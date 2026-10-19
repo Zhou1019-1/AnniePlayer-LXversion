@@ -284,7 +284,7 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 /* V4.3.22：在线音乐多选模式 */
 .am-ms-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .am-ms-bar.am-ms-float {
-  position: sticky; top: -20px; z-index: 8; margin: -20px -28px 10px; padding: 10px 28px;
+  position: sticky; top: -28px; z-index: 8; margin: -28px -28px 10px; padding: 10px 28px; /* V4.4.9：贴顶不留缝，与 .am-content padding-top 28 对齐 */
   background: var(--am-glass, rgba(28,30,38,.88));
   border-bottom: 1px solid var(--am-sep);
   backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
@@ -342,7 +342,7 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 .am-table { width: 100%; border-collapse: collapse; }
 .am-table th {
   text-align: left; font-size: 11px; font-weight: 500; color: var(--am-text-3);
-  padding: 6px 12px; border-bottom: 1px solid var(--am-sep); position: sticky; top: -28px; /* V4.4.9：吸附时贴顶，与 .am-content padding-top 28 对齐（此前 -20 留 8px 缝） */
+  padding: 6px 12px; border-bottom: 1px solid var(--am-sep); position: sticky; top: calc(-28px + var(--am-ms-h, 0px)); z-index: 6; /* V4.4.9：吸附贴顶；多选条出现时让到它下面；z-index 压住分组封面（2/3/4） */
   background: var(--am-bg); /* 不用 backdrop-filter：粘性表头逐帧模糊是滚动卡顿来源 */
 }
 .am-table td { padding: 7px 12px; font-size: 13px; border-bottom: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }

@@ -437,6 +437,11 @@
       var g = (+R.vol.value) / 100;
       window.mine.engine('volume.set', { gain: g }).catch(function () { });
       if (legacyVol) legacyVol.value = R.vol.value; // 与粒子舞台底栏音量保持同步
+      /* V4.4.9：持久化音量（此前只发引擎不落盘，重启会被 store 里的旧值覆盖成 100%） */
+      try {
+        if (state.library) state.library.volume = g;
+        if (window.mine && window.mine.saveSettings) window.mine.saveSettings({ volume: g });
+      } catch (e0) { }
     };
     vol.appendChild(R.vol);
     // V4.3.22：音量条关闭延迟——离开悬停区后保持 600ms，给鼠标移过去的余量；

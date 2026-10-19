@@ -342,7 +342,7 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
 .am-table { width: 100%; border-collapse: collapse; }
 .am-table th {
   text-align: left; font-size: 11px; font-weight: 500; color: var(--am-text-3);
-  padding: 6px 12px; border-bottom: 1px solid var(--am-sep); position: sticky; top: -20px;
+  padding: 6px 12px; border-bottom: 1px solid var(--am-sep); position: sticky; top: -28px; /* V4.4.9：吸附时贴顶，与 .am-content padding-top 28 对齐（此前 -20 留 8px 缝） */
   background: var(--am-bg); /* 不用 backdrop-filter：粘性表头逐帧模糊是滚动卡顿来源 */
 }
 .am-table td { padding: 7px 12px; font-size: 13px; border-bottom: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }

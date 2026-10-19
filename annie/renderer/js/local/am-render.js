@@ -2085,7 +2085,7 @@ function amModeSvg(id) {
         if (!ready) { if (_rr++ < 40) setTimeout(_tryRestore, 250); return; }
         try {
           meta.playing = false;
-          var _vg = (state.library && state.library.volume) || 0.6;
+          var _vg = (state.library && state.library.volume != null) ? state.library.volume : 0.6;
           /* 先按持久化的独占/共享重建后端，再静默恢复；否则引擎启动默认独占会短暂静音其他程序 */
           var _ex = true;
           try { var _ev = localStorage.getItem('annieplayer.exclusive'); if (_ev !== null) _ex = _ev === '1'; } catch (e0) { }

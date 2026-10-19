@@ -1180,6 +1180,390 @@
     }).catch(function () { });
   }
 
+  /* ===== V4.4.9：侧栏分组折叠（左侧按钮单击 / 标题双击） ===== */
+  function sideGroupState() {
+    var raw = null; try { raw = localStorage.getItem('annieplayer.am.sideCollapsed'); } catch (e) { }
+    if (raw) { try { var a = JSON.parse(raw); if (Array.isArray(a)) return a; } catch (e2) { } }
+    return [];
+  }
+  function sideGroupSave(arr) { try { localStorage.setItem('annieplayer.am.sideCollapsed', JSON.stringify(arr)); } catch (e) { } }
+  function sideHeadName(h) {
+    var t = h.querySelector('.am-side-h-txt');
+    return (h.dataset.amGrp || (t ? t.textContent : h.textContent) || '').trim();
+  }
+  function buildSideHead(h) {
+    if (h.__amBuilt) return;
+    h.__amBuilt = 1;
+    var raw = (h.textContent || '').trim();
+    h.textContent = '';
+    var caret = el('button', 'am-side-caret', '▾');
+    caret.type = 'button';
+    caret.setAttribute('aria-label', '收起或展开该分组');
+    caret.onclick = function (e) { e.preventDefault(); e.stopPropagation(); toggleSideGroup(h); };
+    caret.ondblclick = function (e) { e.stopPropagation(); };
+    var txt = el('span', 'am-side-h-txt', raw);
+    h.appendChild(caret);
+    h.appendChild(txt);
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.title = '单击箭头或双击标题：收起 / 展开该组';
+    h.addEventListener('dblclick', function (e) {
+      if (e.target && e.target.closest && e.target.closest('.am-side-caret')) return;
+      e.preventDefault(); e.stopPropagation(); toggleSideGroup(h);
+    });
+    h.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleSideGroup(h); }
+    });
+  }
+  function applySideGroups(sb) {
+    var closed = sideGroupState();
+    var cur = null;
+    for (var i = 0; i < sb.children.length; i++) {
+      var n = sb.children[i];
+      if (n.classList && n.classList.contains('am-side-h')) {
+        cur = n;
+        buildSideHead(n);
+        var name = sideHeadName(n);
+        n.dataset.amGrp = name;
+        var off = closed.indexOf(name) >= 0;
+        n.classList.toggle('am-grp-off', off);
+        n.setAttribute('aria-expanded', off ? 'false' : 'true');
+        var c = n.querySelector('.am-side-caret');
+        if (c) c.textContent = off ? '▸' : '▾';
+        continue;
+      }
+      if (cur && !(n.classList && n.classList.contains('am-search'))) {
+        n.classList.toggle('am-grp-hidden', cur.classList.contains('am-grp-off'));
+      }
+    }
+    queueSideSticky();   // V4.4.9：侧栏重绘后主动同步吸顶状态（否则切歌单后要滚一下才恢复）
+  }
+  function toggleSideGroup(h) {
+    var name = sideHeadName(h);
+    if (!name) return;
+    var closed = sideGroupState();
+    var i = closed.indexOf(name);
+    var on = i >= 0;
+    if (i >= 0) closed.splice(i, 1); else closed.push(name);
+    sideGroupSave(closed);
+    h.classList.toggle('am-grp-off', !on);
+    h.setAttribute('aria-expanded', on ? 'true' : 'false');
+    var c = h.querySelector('.am-side-caret');
+    if (c) c.textContent = on ? '▾' : '▸';
+    var n = h.nextElementSibling;
+    while (n && !n.classList.contains('am-side-h')) {
+      if (n.classList.contains('am-search')) break;
+      n.classList.toggle('am-grp-hidden', !on);
+      n = n.nextElementSibling;
+    }
+  }
+  /* ===== V4.4.9：歌曲 / 播放列表按专辑分组（组序固定专辑名 A–Z，组内按当前排序） ===== */
+  var AM_GRP_H = 52, AM_GRP_ROW_H = 40;
+  function amSongGroupOn() {
+    var v = S.view || '';
+    return (v === 'songs' || v === 'favorites' || v.indexOf('pl:') === 0) &&
+      !!(window.annieSettings && window.annieSettings.ui && window.annieSettings.ui.amSongGroup);
+  }
+  function grpCollapsedSet() { return S._grpCollapsed || (S._grpCollapsed = new Set()); }
+  function isGrpCollapsed(g) { return !!g && grpCollapsedSet().has(g.id); }
+  function expandGrp(g) { if (g) grpCollapsedSet().delete(g.id); }
+  function toggleGrp(g) {
+    if (!g) return;
+    var s = grpCollapsedSet();
+    if (s.has(g.id)) s.delete(g.id); else s.add(g.id);
+    renderView();
+  }
+  function grpSub(g, aa) {
+    var m = S.meta[g.first.path] || {};
+    var bits = [];
+    var a = aa || m.albumArtist || '';
+    if (a) bits.push(a);
+    bits.push(g.list.length + ' 首');
+    if (m.year) bits.push(m.year);
+    return bits.join(' · ');
+  }
+  function applyGrpMeta(m, cover, sub, g) {
+    if (cover && !cover.querySelector('img') && m && m.cover) {
+      cover.textContent = '';
+      var im = el('img'); im.alt = ''; im.loading = 'lazy'; im.draggable = false; im.src = m.cover;
+      cover.appendChild(im);
+    }
+    if (sub) sub.textContent = grpSub(g, (m && m.albumArtist) || '');
+  }
+  function fillGrpMeta(g, cover, sub) {
+    var p = g.first.path;
+    var cached = S.meta[p] || {};
+    if (cached._full) { applyGrpMeta(cached, cover, sub, g); return; }
+    if (!window.mine.metaFullBatch) {
+      albumCover(g.first, function (url) { if (url) applyGrpMeta({ cover: url }, cover, sub, g); });
+      return;
+    }
+    var q = S._grpFullQ || (S._grpFullQ = {});
+    if (q[p]) { q[p].push(function (m) { applyGrpMeta(m, cover, sub, g); }); return; }
+    q[p] = [function (m) { applyGrpMeta(m, cover, sub, g); }];
+    window.mine.metaFullBatch([p]).then(function (out) {
+      var m = (out && out[p]) || {};
+      m._full = 1;
+      S.meta[p] = Object.assign({}, S.meta[p] || {}, m);
+      var ws = q[p] || []; delete q[p];
+      ws.forEach(function (f) { try { f(m); } catch (e) { } });
+    }).catch(function () { delete q[p]; });
+  }
+  function buildGroupEntries(tracks) {
+    var groups = [], idxOf = {}, grp = null;
+    tracks.forEach(function (t, i) {
+      idxOf[t.path] = i;
+      var key = trackMeta(t).album || '未知专辑';
+      if (!grp || grp.key !== key) {
+        grp = { key: key, id: 'g:' + t.path, first: t, list: [] };
+        groups.push(grp);
+      }
+      grp.list.push(t);
+    });
+    var manual = grpOrderGet();
+    S._grpManualOn = !!(manual && manual.length);
+    if (manual && manual.length) {
+      var pos = {}, mk;
+      for (mk = 0; mk < manual.length; mk++) pos[manual[mk]] = mk;
+      groups.forEach(function (g, i) { g._i = i; });
+      groups.sort(function (a, b) {
+        var pa = pos[a.key], pb = pos[b.key];
+        if (pa === undefined) pa = 1e9 + a._i;
+        if (pb === undefined) pb = 1e9 + b._i;
+        return pa - pb;
+      });
+    }
+    var entries = [];
+    groups.forEach(function (g) {
+      entries.push({ k: 'h', grp: g });
+      g.list.forEach(function (t) { entries.push({ k: 't', t: t, i: idxOf[t.path], grp: g }); });
+    });
+    /* V4.4.9：不再自动展开「当前播放曲目所在组」，允许收起（Tab 全收起也生效） */
+    var offsets = new Array(entries.length), y = 0;
+    entries.forEach(function (e, k) {
+      offsets[k] = y;
+      y += e.k === 'h' ? AM_GRP_H : (isGrpCollapsed(e.grp) ? 0 : AM_GRP_ROW_H);
+    });
+    var trkEntry = new Array(tracks.length);
+    entries.forEach(function (e, k) { if (e.k === 't') trkEntry[e.i] = k; });
+    return { entries: entries, offsets: offsets, totalH: y, trkEntry: trkEntry };
+  }
+  function lowerBound(arr, v) {
+    var lo = 0, hi = arr.length;
+    while (lo < hi) { var mid = (lo + hi) >>> 1; if (arr[mid] < v) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+  function buildGroupRow(g) {
+    var tr = el('tr', 'am-grp-tr');
+    var collapsed = isGrpCollapsed(g);
+    if (collapsed) tr.classList.add('am-grp-collapsed');
+    tr.dataset.grpid = g.id;
+    tr.dataset.gkey = g.key;
+    if (grpDragAllowed()) tr.classList.add('am-grp-draggable');
+    if (S.msOn) tr.appendChild(el('td', 'am-grp-ckcell'));
+    // V4.4.9：封面单独占左列表头「封面」，组内歌曲在封面右侧
+    var tdCover = el('td', 'am-grp-covercell');
+    var cover = el('div', 'am-grp-cover');
+    tdCover.appendChild(cover);
+    tr.appendChild(tdCover);
+    albumCover(g.first, function (url) {
+      if (!url || cover.querySelector('img')) return;
+      var im = el('img'); im.alt = ''; im.loading = 'lazy'; im.draggable = false; im.src = url;
+      cover.appendChild(im);
+    });
+    var tdInfo = el('td', 'am-grp-infocell');
+    tdInfo.colSpan = 99;
+    var box = el('div', 'am-grp-box' + (collapsed ? ' off' : ''));
+    var info = el('div', 'am-grp-info');
+    info.appendChild(el('div', 'am-grp-name', g.key));
+    var sub = el('div', 'am-grp-sub', grpSub(g));
+    info.appendChild(sub);
+    box.appendChild(info);
+    tdInfo.appendChild(box);
+    tr.appendChild(tdInfo);
+    tr.ondblclick = function (e) { e.preventDefault(); e.stopPropagation(); toggleGrp(g); };
+    tr.oncontextmenu = function (e) {
+      e.preventDefault(); e.stopPropagation();
+      selectGroup(g, e.ctrlKey || e.metaKey);
+      if (g.list && g.list.length) openAddMenu(e.clientX, e.clientY, g.list[0].path);
+    };
+    fillGrpMeta(g, cover, sub);
+    bindGrpDrag(tr, g);
+    return tr;
+  }
+  function currentGrpIds() {
+    var w = S._tbl;
+    if (w && w.grp && w.entries) {
+      var ids = [];
+      w.entries.forEach(function (e) { if (e.k === 'h') ids.push(e.grp.id); });
+      if (ids.length) return ids;
+    }
+    // 非窗口化分组（≤300 首）：从 DOM 取组 id
+    var trs = document.querySelectorAll('#am-root .am-grp-tr');
+    if (!trs.length) return null;
+    var out = [];
+    for (var i = 0; i < trs.length; i++) if (trs[i].dataset.grpid) out.push(trs[i].dataset.grpid);
+    return out.length ? out : null;
+  }
+  function toggleAllGrps() {
+    var ids = currentGrpIds();
+    if (!ids) return false;
+    var s = grpCollapsedSet();
+    if (s.size) s.clear();
+    else for (var i = 0; i < ids.length; i++) s.add(ids[i]);
+    renderView();
+    return true;
+  }
+  if (!window.__amGrpTab) {
+    window.__amGrpTab = 1;
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (!amSongGroupOn()) return;
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (S.msOn) return;
+      if (toggleAllGrps()) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+  }
+  function selectGroup(g, additive) {
+    if (!g) return;
+    if (!additive || !S.msSel) S.msSel = new Set();
+    g.list.forEach(function (t) { S.msSel.add(t.path); });
+    if (g.list.length) S._selAnchor = g.list[0].path;
+    /* V4.4.9：保留滚动位置（否则右键组头会跳回顶部） */
+    var c = document.querySelector('#am-root .am-content');
+    var sc = c ? c.scrollTop : 0;
+    renderView();
+    if (c) {
+      void c.scrollHeight;
+      c.scrollTop = sc;
+      if (S._tbl) { S._tbl.lastStart = -1; if (typeof renderAmWindow === 'function') renderAmWindow(); }
+    }
+  }
+  function renderAmWindowGrp(win, c) {
+    var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
+    var base = win.tb.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop + headH;
+    var st = c.scrollTop, h = c.clientHeight, y0 = st - base;
+    var start = Math.max(0, lowerBound(win.offsets, y0) - AM_OVERSCAN);
+    var end = Math.min(win.entries.length, lowerBound(win.offsets, y0 + h) + AM_OVERSCAN);
+    if (start === win.lastStart && end === win.lastEnd) return;
+    win.lastStart = start; win.lastEnd = end;
+    var frag = document.createDocumentFragment();
+    if (start > 0) frag.appendChild(amSpacerRow(win.offsets[start], win.cols));
+    for (var k = start; k < end; k++) {
+      var e = win.entries[k];
+      if (e.k === 'h') frag.appendChild(buildGroupRow(e.grp));
+      else if (!isGrpCollapsed(e.grp)) frag.appendChild(buildTrackRow(e.t, e.i, win.opts));
+    }
+    if (end < win.entries.length) frag.appendChild(amSpacerRow(win.totalH - win.offsets[end], win.cols));
+    win.body.innerHTML = '';
+    win.body.appendChild(frag);
+    var ti = -1;
+    for (var j = start; j >= 0; j--) { if (win.entries[j].k === 't') { ti = win.entries[j].i; break; } }
+    if (ti >= 0) azSyncActive(win, ti);
+  }
+  function renderGroupRows(body, grp, opts) {
+    grp.entries.forEach(function (e) {
+      if (e.k === 'h') body.appendChild(buildGroupRow(e.grp));
+      else if (!isGrpCollapsed(e.grp)) body.appendChild(buildTrackRow(e.t, e.i, opts));
+    });
+  }
+  /* V4.4.9：侧栏标题吸顶——只在真正吸住时加半透明底，平时保持无底 */
+  function syncSideSticky() {
+    var side = document.querySelector('#am-root .am-side');
+    if (!side) return;
+    var sr = side.getBoundingClientRect();
+    var stuck = side.scrollTop > 0;
+    var hs = side.querySelectorAll('.am-side-h');
+    for (var i = 0; i < hs.length; i++) {
+      var r = hs[i].getBoundingClientRect();
+      hs[i].classList.toggle('am-h-stuck', stuck && r.top <= sr.top + 9);
+    }
+    syncSideThumb();
+  }
+  var _sideStkRaf = 0;
+  function queueSideSticky() {
+    if (_sideStkRaf) return;
+    _sideStkRaf = requestAnimationFrame(function () { _sideStkRaf = 0; syncSideSticky(); });
+  }
+  document.addEventListener('scroll', function (e) {
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('am-side')) { queueSideSticky(); showSideThumb(); }
+  }, true);
+  window.addEventListener('resize', queueSideSticky);
+  /* V4.4.9：侧栏悬浮滚动条——鼠标在侧栏内出现，移动保持，停一会隐藏，移出立刻隐藏；拖动期间常显 */
+  var _sideThumbHide = 0, _sideThumbDrag = false;
+  function ensureSideThumb() {
+    var root = document.getElementById('am-root');
+    if (!root) return null;
+    var t = root.querySelector('.am-side-thumb');
+    if (t) return t;
+    t = document.createElement('div');
+    t.className = 'am-side-thumb';
+    root.appendChild(t);
+    t.addEventListener('mouseenter', function () { showSideThumb(); });
+    t.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      _sideThumbDrag = true;
+      clearTimeout(_sideThumbHide);
+      t.classList.add('on');
+      var side = document.querySelector('#am-root .am-side');
+      if (!side) return;
+      var startY = e.clientY, startTop = side.scrollTop;
+      var trackH = side.clientHeight - t.offsetHeight;
+      var maxTop = side.scrollHeight - side.clientHeight;
+      var move = function (ev) {
+        if (trackH > 0) side.scrollTop = startTop + (ev.clientY - startY) / trackH * maxTop;
+      };
+      var up = function () {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        _sideThumbDrag = false;
+        showSideThumb();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    return t;
+  }
+  function showSideThumb() {
+    var t = ensureSideThumb();
+    if (!t || t.style.display === 'none') return;
+    t.classList.add('on');
+    clearTimeout(_sideThumbHide);
+    if (!_sideThumbDrag) _sideThumbHide = setTimeout(function () { t.classList.remove('on'); }, 900);
+  }
+  function hideSideThumb() {
+    var t = document.querySelector('#am-root .am-side-thumb');
+    if (!t || _sideThumbDrag) return;
+    clearTimeout(_sideThumbHide);
+    t.classList.remove('on');
+  }
+  function syncSideThumb() {
+    var side = document.querySelector('#am-root .am-side');
+    var t = ensureSideThumb();
+    if (!side || !t) return;
+    var sh = side.scrollHeight, ch = side.clientHeight;
+    if (sh <= ch + 2) { t.classList.remove('on'); t.style.display = 'none'; return; }
+    t.style.display = '';
+    var sr = side.getBoundingClientRect();
+    var h = Math.max(26, Math.round(ch * ch / sh));
+    var maxTop = sh - ch;
+    var y = sr.top + (maxTop ? (side.scrollTop / maxTop) * (ch - h) : 0);
+    t.style.height = h + 'px';
+    t.style.top = Math.round(y) + 'px';
+    t.style.right = Math.round(window.innerWidth - sr.right + 2) + 'px';
+  }
+  document.addEventListener('mousemove', function (e) {
+    var el = e.target;
+    if (!el || !el.closest) return;
+    if (el.closest('.am-side') || el.closest('.am-side-thumb')) showSideThumb();
+  }, true);
+  document.addEventListener('mouseout', function (e) {
+    var el = e.target, to = e.relatedTarget;
+    if (!el || !el.closest || !el.closest('.am-side')) return;
+    if (!to || !to.closest || (!to.closest('.am-side') && !to.closest('.am-side-thumb'))) hideSideThumb();
+  }, true);
   function renderSidebar() {
     if (!R.sidebar) return;
     var sb = R.sidebar;
@@ -1501,13 +1885,14 @@
     inp.addEventListener('compositionend', function () { inp._ime = false; commitSideSearch(); });
     inp.oninput = function () { if (inp._ime) return; commitSideSearch(); };
     sch.appendChild(inp); sb.appendChild(sch);
+    applySideGroups(sb);
   }
 
   /* ---------------- 内容区 ---------------- */
   /* V4.3.22：视图头部共享构建器——标题 + 视图内搜索框 + 排序下拉（歌曲/专辑/喜爱歌曲共用）。
    * 搜索框匹配字段跟随当前排序方式（标题排序搜标题、演唱者排序搜演唱者……），
    * 查询串存 S.viewQuery[view]（会话级），输入 150ms 防抖重绘。 */
-  var SONG_SORT_OPTS = [['az', '首字母 A–Z（标题）'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'],
+  var SONG_SORT_OPTS = [['az', '首字母 A–Z（标题）'], ['albumAz', '专辑名 A–Z'], ['azArtist', '首字母 A–Z（演唱者）'], ['name', '文件名'],
     ['mtimeDesc', '修改时间 · 新→旧'], ['mtimeAsc', '修改时间 · 旧→新'],
     ['ctimeDesc', '创建时间 · 新→旧'], ['ctimeAsc', '创建时间 · 旧→新'], ['sizeDesc', '大小 · 大→小'], ['sizeAsc', '大小 · 小→大']];
   var ALBUM_SORT_OPTS = [['az', '名称 A–Z'], ['azArtist', '艺人 A–Z'], ['countDesc', '曲目数 · 多→少'], ['countAsc', '曲目数 · 少→多']];
@@ -1681,7 +2066,7 @@
   AM.sortDropdown = sortDropdown;   // V4.4.8：在线歌单复用同一个排序胶囊
   function songSearchPh(mode) {
     var f = AM.songSearchField(mode);
-    return f === 'artist' ? '搜索演唱者' : f === 'name' ? '搜索文件名' : '搜索标题';
+    return f === 'artist' ? '搜索演唱者' : f === 'name' ? '搜索文件名' : f === 'album' ? '搜索专辑' : '搜索标题';
   }
 
   function renderView() {
@@ -1747,7 +2132,7 @@
         if (e.button !== 0) return;
         var inTableView = S.view === 'songs' || S.view === 'favorites' || (S.view === 'albums' && S.albumKey) || S.view.indexOf('pl:') === 0;
         if (!inTableView) return;
-        if (e.target.closest && e.target.closest('tr.am-tr, thead, .am-view-head, .am-ms-bar, button, input, select, a, .am-az')) return;
+        if (e.target.closest && e.target.closest('tr.am-tr, tr.am-grp-tr, thead, .am-view-head, .am-ms-bar, button, input, select, a, .am-az')) return;
         if (e.target === c && e.offsetX >= c.clientWidth) return; // 滚动条
         var sx = e.clientX, sy = e.clientY, box = null, rect = null;
         function mv(ev) {
@@ -1837,6 +2222,7 @@
     }
     // V4.4：快速多选（Ctrl/Shift/框选）不换视图沿用，换视图即清空（msOn 复选框模式维持原行为）
     if (S._msView !== S.view) { S._msView = S.view; if (!S.msOn && S.msSel && S.msSel.size) S.msSel.clear(); }
+    if (S._grpView !== S.view) { S._grpView = S.view; if (S._grpCollapsed) S._grpCollapsed.clear(); }
 
     if (S.view === 'stream') { renderStreamView(c); return; }
     if (S.view === 'downloads') { if (window.annieAMDownload) window.annieAMDownload.render(c); return; } // V4.3.22：下载情况
@@ -1912,6 +2298,7 @@
     if (S.view === 'songs' && (!AM.songSortMode || AM.songSortMode() === 'az' || AM.songSortMode() === 'azArtist')) {
       ensureMetaDeep(); // 首字母排序依赖全库标签，闲时深加载（按块到达自动重排）；平铺排序不需要
     }
+    if (amSongGroupOn()) ensureMetaDeep();   // V4.4.9：分组依赖全库专辑标签，否则启动时全挤进「未知专辑」
 
     if (!tracks.length) {
       // 文件夹层级页：只有子文件夹没有直属音频时不报「曲库为空」
@@ -1924,7 +2311,7 @@
       return;
     }
     renderTrackTable(c, tracks);
-    if (S.view === 'songs') renderAzBar(c, tracks); // V4.3.8：右侧 A–Z 索引栏
+    if (S.view === 'songs' && !S._grpManualOn) renderAzBar(c, tracks); // V4.4.9：手动排过组序时索引条失去意义
     ensureMeta(tracks.slice(0, 120));
   }
 
@@ -2091,9 +2478,12 @@
       albumCover(t, function (url) { if (url) { img.src = url; img.style.visibility = ''; } });
       tdCover.appendChild(img); tr.appendChild(tdCover);
     }
-    tr.appendChild(el('td', 'am-c-title', esc(m.title)));
-    tr.appendChild(el('td', 'am-c-dim', esc(m.artist)));
-    tr.appendChild(el('td', 'am-c-dim', esc(m.album)));
+    if (opts.grouped) tr.appendChild(el('td', 'am-c-covercell'));
+    amCols().order.forEach(function (k) {
+      if (k === 'title') tr.appendChild(el('td', 'am-c-title', esc(m.title)));
+      else if (k === 'artist') tr.appendChild(el('td', 'am-c-dim am-c-artist', esc(m.artist)));
+      else tr.appendChild(el('td', 'am-c-dim am-c-album', esc(m.album)));
+    });
     var acts = el('td', 'am-c-acts');
     /* V4.4.7（PR#6）：行内收藏键与顶栏同款——未收藏空心描边，收藏后填成主题色 */
     var bFav = el('button', 'am-mini-btn' + (state.favorites && state.favorites.has(t.path) ? ' faved' : ''));
@@ -2134,7 +2524,7 @@
     // V4.4.6：azArtist 排序模式下视图顺序≠paths 顺序，拖拽落点会错位——此时禁用拖拽
     if (opts.inPlaylist && !S.msOn && !(AM.plSortMode && AM.plSortMode() === 'azArtist')) {
       tr.draggable = true;
-      tr.title = '拖拽调整顺序';
+      tr.removeAttribute('title');
       tr.addEventListener('dragstart', function (e) {
         S._plDragPath = t.path;
         try { e.dataTransfer.effectAllowed = 'move'; } catch (er) { }
@@ -2337,37 +2727,368 @@
     tr.appendChild(td);
     return tr;
   }
+  /* ===== V4.4.9：歌曲表列（封面固定最左；歌曲/艺人/专辑可拖宽、可换位） ===== */
+  var AM_COL_DEFS = { title: '歌曲', artist: '艺人', album: '专辑' };
+  var _amColsCache = null;
+  function amCols() {
+    if (_amColsCache) return _amColsCache;
+    var st = { order: ['title', 'artist', 'album'], w: { title: 0.38, artist: 0.26, album: 0.36 } };
+    try {
+      var raw = localStorage.getItem('annieplayer.am.cols');
+      if (raw) {
+        var o = JSON.parse(raw);
+        if (o && Array.isArray(o.order)) {
+          var seen = {}, ord = [];
+          o.order.forEach(function (k) { if (AM_COL_DEFS[k] && !seen[k]) { seen[k] = 1; ord.push(k); } });
+          ['title', 'artist', 'album'].forEach(function (k) { if (ord.indexOf(k) < 0) ord.push(k); });
+          st.order = ord;
+        }
+        if (o && o.w) ['title', 'artist', 'album'].forEach(function (k) {
+          var v = +o.w[k];
+          if (v > 1) v = v / 100;   // 兼容旧版百分数
+          if (isFinite(v) && v >= 0.08 && v <= 0.8) st.w[k] = v;
+        });
+      }
+    } catch (e) { }
+    var sum = st.w.title + st.w.artist + st.w.album;
+    if (sum > 0) { st.w.title /= sum; st.w.artist /= sum; st.w.album /= sum; }
+    _amColsCache = st;
+    return st;
+  }
+  function amColsSave(st) {
+    _amColsCache = st;
+    try { localStorage.setItem('annieplayer.am.cols', JSON.stringify({ order: st.order, w: st.w })); } catch (e) { }
+  }
+  /* V4.4.9：按「可用宽度」把比例换成 px（calc 在 <col> 上不生效） */
+  function layoutCols(tb) {
+    if (!tb || !tb.isConnected) return;
+    var st = amCols();
+    var total = tb.getBoundingClientRect().width;
+    if (!total) return;
+    var fixed = +(tb.dataset.colfixed || 0);
+    var avail = Math.max(150, total - fixed);
+    st.order.forEach(function (k) {
+      var c = tb.querySelector('colgroup col[data-col="' + k + '"]');
+      if (c) c.style.width = Math.max(60, Math.round(avail * st.w[k])) + 'px';
+    });
+    tb.dataset.colavail = String(Math.round(avail));
+  }
+  var _colRO = null;
+  function watchCols(tb) {
+    if (!window.ResizeObserver) return;
+    try { if (_colRO) _colRO.disconnect(); } catch (e) { }
+    _colRO = new ResizeObserver(function () {
+      var t = document.querySelector('#am-root .am-table');
+      if (t) layoutCols(t);
+    });
+    _colRO.observe(tb);
+  }
+  function buildTableHead(tb, grp, opts) {
+    var st = amCols(), ms = !!S.msOn;
+    tb.innerHTML = '';
+    var cg = document.createElement('colgroup');
+    function addCol(w, key) {
+      var c = document.createElement('col');
+      c.style.width = w;
+      if (key) c.dataset.col = key;
+      cg.appendChild(c);
+      return c;
+    }
+    if (ms) addCol('34px');
+    if (grp) addCol('92px'); else if (opts.withCover) addCol('46px');
+    var fixed = (ms ? 34 : 0) + (grp ? 92 : (opts.withCover ? 46 : 0)) + 96;
+    tb.dataset.colfixed = String(fixed);
+    st.order.forEach(function (k) { addCol((st.w[k] * 100) + '%', k); });
+    addCol('96px');
+    tb.appendChild(cg);
+    var thead = document.createElement('thead'), trh = document.createElement('tr');
+    function addTh(w, label) {
+      var th = el('th', '', label || '');
+      if (w) th.style.width = w;
+      trh.appendChild(th);
+      return th;
+    }
+    if (ms) addTh('34px');
+    if (grp) addTh('92px', '封面'); else if (opts.withCover) addTh('46px');
+    st.order.forEach(function (k, i) {
+      var th = addTh(null, AM_COL_DEFS[k]);
+      th.dataset.col = k;
+      th.draggable = true;
+      th.removeAttribute('title');
+      if (i < st.order.length - 1) {
+        var g = el('span', 'am-col-grip');
+        g.dataset.col = k;
+        g.draggable = false;
+        g.removeAttribute('title');
+        th.appendChild(g);
+      } else {
+        th.classList.add('am-col-last');
+      }
+    });
+    addTh('96px');
+    thead.appendChild(trh);
+    tb.appendChild(thead);
+    bindColDrag(tb, thead);
+  }
+  function bindColDrag(tb, thead) {
+    var ths = thead.querySelectorAll('th[data-col]');
+    Array.prototype.forEach.call(ths, function (th) {
+      th.addEventListener('dragstart', function (e) {
+        if (e.target && e.target.classList && e.target.classList.contains('am-col-grip')) { e.preventDefault(); return; }
+        S._dragCol = th.dataset.col;
+        try { e.dataTransfer.setData('text/plain', th.dataset.col); e.dataTransfer.effectAllowed = 'move'; } catch (x) { }
+        th.classList.add('am-col-dragging');
+      });
+      th.addEventListener('dragend', function () {
+        th.classList.remove('am-col-dragging');
+        Array.prototype.forEach.call(ths, function (x) { x.classList.remove('am-col-drop'); });
+        S._dragCol = null;
+      });
+      th.addEventListener('dragover', function (e) {
+        if (!S._dragCol || S._dragCol === th.dataset.col) return;
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch (x) { }
+        th.classList.add('am-col-drop');
+      });
+      th.addEventListener('dragleave', function () { th.classList.remove('am-col-drop'); });
+      th.addEventListener('drop', function (e) {
+        e.preventDefault();
+        var from = S._dragCol, to = th.dataset.col;
+        th.classList.remove('am-col-drop');
+        if (!from || !to || from === to) return;
+        var st = amCols(), a = st.order.slice();
+        var fi = a.indexOf(from), ti = a.indexOf(to);
+        if (fi < 0 || ti < 0) return;
+        a.splice(fi, 1);
+        a.splice(ti, 0, from);
+        st.order = a;
+        amColsSave(st);
+        S._dragCol = null;
+        renderView();
+      });
+    });
+    Array.prototype.forEach.call(thead.querySelectorAll('.am-col-grip'), function (g) {
+      g.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (S._dragSession) return;
+        S._dragSession = 'col';
+        window.__amDragBusy = true;
+        var key = g.dataset.col, st = amCols();
+        var startX = e.clientX, f0 = st.w[key];
+        var order = st.order.slice();
+        var i = order.indexOf(key);
+        var nb = order[i + 1];
+        if (!nb) return;
+        var f1 = st.w[nb];
+        var avail = 0;
+        Array.prototype.forEach.call(thead.querySelectorAll('th[data-col]'), function (th) { avail += th.getBoundingClientRect().width; });
+        var fixed = +(tb.dataset.colfixed || 0);
+        var minF = Math.min(0.45, 80 / Math.max(avail, 1));
+        var cols = tb.querySelectorAll('colgroup col');
+        var colOf = function (k) {
+          var out = null;
+          Array.prototype.forEach.call(cols, function (c) { if (c.dataset.col === k) out = c; });
+          return out;
+        };
+        var elKey = colOf(key), elNb = colOf(nb);
+        var move = function (ev) {
+          var d = (ev.clientX - startX) / Math.max(avail, 1);
+          var f = f0 + d, fn = f1 - d;
+          if (f < minF) { f = minF; fn = f0 + f1 - f; }
+          if (fn < minF) { fn = minF; f = f0 + f1 - fn; }
+          if (elKey) elKey.style.width = Math.round(avail * f) + 'px';
+          if (elNb) elNb.style.width = Math.round(avail * fn) + 'px';
+          st.w[key] = f; st.w[nb] = fn;
+        };
+        var up = function () {
+          document.removeEventListener('mousemove', move);
+          document.removeEventListener('mouseup', up);
+          document.documentElement.classList.remove('am-col-resizing');
+          S._dragSession = null;
+          window.__amDragBusy = false;
+          if (window.__amFlushDragRender) window.__amFlushDragRender();
+          amColsSave(st);
+        };
+        document.documentElement.classList.add('am-col-resizing');
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+      });
+    });
+  }
+  /* ===== V4.4.9：长按组名拖动整组换位（顺序按「视图#排序」记忆） ===== */
+  function grpSortSig() {
+    var ui = (window.annieSettings && annieSettings.ui) || {};
+    var v = S.view || '';
+    var mode = v === 'songs' ? (ui.amSongSort || 'az')
+      : v === 'favorites' ? (ui.amFavSort || 'az')
+        : v.indexOf('pl:') === 0 ? (ui.amPlSort || 'default')
+          : v.indexOf('spl:') === 0 ? (ui.amSplSort || 'default') : '';
+    return v + '#' + mode;
+  }
+  function grpStore() {
+    try { return JSON.parse(localStorage.getItem('annieplayer.am.grpOrder') || '{}'); } catch (e) { return {}; }
+  }
+  function grpOrderGet() {
+    try {
+      var st = grpStore()[grpSortSig()];
+      if (!st || st.sig !== grpSortSig() || !Array.isArray(st.order)) return null;
+      return st.order;
+    } catch (e) { return null; }
+  }
+  function grpOrderSet(order) {
+    try {
+      var all = grpStore();
+      all[grpSortSig()] = { sig: grpSortSig(), order: order };
+      localStorage.setItem('annieplayer.am.grpOrder', JSON.stringify(all));
+    } catch (e) { }
+  }
+  /* 只有「播放列表/在线歌单 + 原始顺序」才允许整组拖动；其它按 A–Z 等排序的视图不允许 */
+  function grpDragAllowed() {
+    var v = S.view || '';
+    if (v.indexOf('pl:') !== 0 && v.indexOf('spl:') !== 0) return false;
+    var ui = (window.annieSettings && annieSettings.ui) || {};
+    var mode = v.indexOf('pl:') === 0 ? (ui.amPlSort || 'default') : (ui.amSplSort || 'default');
+    return mode === 'default';
+  }
+  function bindGrpDrag(tr, g) {
+    tr.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      if (S._dragSession) return;
+      if (!grpDragAllowed()) return;
+      S._dragSession = 'grp';
+      window.__amDragBusy = true;
+      var startView = S.view;
+      var startTable = tr.closest('table');
+      var startW = startTable ? startTable.getBoundingClientRect().width : 0;
+      var sx = e.clientX, sy = e.clientY, timer = null, active = false, ghost = null, moved = false;
+      var allRows = function () { return Array.prototype.slice.call(document.querySelectorAll('.am-grp-tr')).filter(function (x) { return !(x.closest && x.closest('.am-grp-ghost')); }); };
+      var cleanup = function () {
+        clearTimeout(timer);
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        S._dragSession = null;
+        window.__amDragBusy = false;
+        if (window.__amFlushDragRender) window.__amFlushDragRender();
+        tr.classList.remove('am-grp-dragging');
+        allRows().forEach(function (x) { x.classList.remove('am-grp-drop'); });
+        if (ghost) { ghost.remove(); ghost = null; }
+      };
+      var onMove = function (ev) {
+        if (S.view !== startView) { cleanup(); return; }
+        if (!active) {
+          if (Math.abs(ev.clientX - sx) > 5 || Math.abs(ev.clientY - sy) > 5) cleanup();
+          return;
+        }
+        moved = true;
+        if (ghost) { ghost.style.top = (ev.clientY - 30) + 'px'; ghost.style.left = (ev.clientX - 60) + 'px'; }
+        var under = document.elementFromPoint(ev.clientX, ev.clientY);
+        var row = under && under.closest ? under.closest('.am-grp-tr') : null;
+        allRows().forEach(function (x) { x.classList.toggle('am-grp-drop', !!row && x === row && x !== tr); });
+        var c = document.querySelector('.am-content');
+        if (c) {
+          var rr = c.getBoundingClientRect();
+          if (ev.clientY < rr.top + 56) c.scrollTop -= 12;
+          else if (ev.clientY > rr.bottom - 56) c.scrollTop += 12;
+        }
+      };
+      var onUp = function (ev) {
+        if (S.view !== startView) { cleanup(); return; }
+        if (!active) { cleanup(); return; }
+        active = false;
+        var under = document.elementFromPoint(ev.clientX, ev.clientY);
+        var row = under && under.closest ? under.closest('.am-grp-tr') : null;
+        if (row && row.closest('table') !== document.querySelector('#am-root .am-table')) row = null;
+        var rows = allRows();
+        cleanup();
+        if (moved && row && row !== tr && row.dataset.gkey != null) {
+          var keys = rows.map(function (x) { return x.dataset.gkey; });
+          var from = keys.indexOf(g.key), to = keys.indexOf(row.dataset.gkey);
+          if (from >= 0 && to >= 0) {
+keys.splice(from, 1);
+keys.splice(from < to ? to - 1 : to, 0, g.key);   // 插入到目标行之前（删除后目标下标左移一格）
+grpOrderSet(keys);
+renderView();
+          }
+        }
+      };
+      timer = setTimeout(function () {
+        active = true;
+        tr.classList.add('am-grp-dragging');
+        var r = tr.getBoundingClientRect();
+        var wrap = document.createElement('table');
+        wrap.className = 'am-table am-grp am-grp-ghost';
+        wrap.style.cssText = 'position:fixed;left:' + r.left + 'px;top:' + r.top + 'px;width:' + (startW || r.width) + 'px;pointer-events:none;z-index:9999;';
+        if (startTable) {
+          var cg0 = startTable.querySelector('colgroup');
+          if (cg0) wrap.appendChild(cg0.cloneNode(true));
+        }
+        var tb2 = document.createElement('tbody');
+        var clone = tr.cloneNode(true);
+        clone.classList.remove('am-grp-dragging');
+        tb2.appendChild(clone);
+        wrap.appendChild(tb2);
+        // 必须挂在 #am-root 内：AM 的样式都带 #am-root 作用域，挂 body 会让封面按原图尺寸撑满
+        (document.getElementById('am-root') || document.body).appendChild(wrap);
+        ghost = wrap;
+      }, 480);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  /* V4.4.9：HTML5 拖动（歌曲行/列头）期间同样标注 busy，切歌时延迟整表重绘 */
+  document.addEventListener('dragstart', function (e) {
+    var el = e.target;
+    if (el && el.closest && el.closest('#am-root .am-table')) window.__amDragBusy = true;
+  }, true);
+  document.addEventListener('dragend', function () {
+    window.__amDragBusy = false;
+    if (window.__amFlushDragRender) window.__amFlushDragRender();
+  }, true);
+  document.addEventListener('drop', function () {
+    window.__amDragBusy = false;
+    if (window.__amFlushDragRender) window.__amFlushDragRender();
+  }, true);
   function renderTrackTable(c, tracks) {
     var tb = el('table', 'am-table');
     var inPlaylist = S.view.indexOf('pl:') === 0;
+    var grp = amSongGroupOn() ? buildGroupEntries(tracks) : null;   // V4.4.9：歌曲视图按专辑分组（连续块）
+    S._grpOn = !!grp;
+    if (!grp) S._grpManualOn = false;
     var opts = {
-      withCover: true, // V4.1：封面列全量开启（窗口化 + 专辑共享缓存兜底）
+      withCover: !grp, // V4.4.9：分组模式去掉行内封面（只留组封面）
+      grouped: !!grp,
       inPlaylist: inPlaylist,
       plId: inPlaylist ? S.view.slice(3) : null,
       tracks: tracks
     };
     if (S.msOn || (S.msSel && S.msSel.size)) renderMsToolbar(c, tracks); // V4.3.22：多选工具条（全选/删除选中/退出）；V4.4 快速多选有选中即显示
-    tb.innerHTML = '<thead><tr>' + (S.msOn ? '<th style="width:34px"></th>' : '') + (opts.withCover ? '<th style="width:46px"></th>' : '') +
-      '<th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:96px"></th></tr></thead>';
+    if (grp) tb.className = 'am-table am-grp';
+    buildTableHead(tb, grp, opts);   // V4.4.9：列头可拖宽 / 换位（封面固定最左）
     var body = el('tbody');
     tb.appendChild(body);
     c.appendChild(tb);
+    layoutCols(tb); watchCols(tb);   // V4.4.9：列宽按可用宽度换算 + 跟随容器变化
 
     if (tracks.length <= AM_WINDOW_MIN) {
       S._tbl = null;
-      tracks.forEach(function (t, i) { body.appendChild(buildTrackRow(t, i, opts)); });
+      if (grp) renderGroupRows(body, grp, opts);
+      else tracks.forEach(function (t, i) { body.appendChild(buildTrackRow(t, i, opts)); });
       return;
     }
     // 窗口化：可视区 ±15 行
     var rowH = opts.withCover ? AM_ROW_H_COVER : AM_ROW_H_PLAIN;
-    var cols = (opts.withCover ? 5 : 4) + (S.msOn ? 1 : 0);
-    var win = { tracks: tracks, opts: opts, body: body, tb: tb, rowH: rowH, cols: cols, lastStart: -1, lastEnd: -1 };
+    var cols = (opts.withCover || grp ? 5 : 4) + (S.msOn ? 1 : 0);
+    var win = grp
+      ? { grp: true, entries: grp.entries, offsets: grp.offsets, totalH: grp.totalH, trkEntry: grp.trkEntry, tracks: tracks, opts: opts, body: body, tb: tb, rowH: AM_GRP_ROW_H, cols: cols, lastStart: -1, lastEnd: -1 }
+      : { tracks: tracks, opts: opts, body: body, tb: tb, rowH: rowH, cols: cols, lastStart: -1, lastEnd: -1 };
     S._tbl = win;
     renderAmWindow();
   }
   function renderAmWindow() {
     var win = S._tbl, c = R.content;
     if (!win || !c || !win.body.isConnected) { return; }
+    if (win.grp) { renderAmWindowGrp(win, c); return; }   // V4.4.9：专辑分组窗口化
     /* V4.4：隐藏中（迷你模式 .am-body display:none）不算窗口——
      * clientHeight=0 会算出「顶部几行+巨大垫片」的假窗口，恢复显示后视口落在垫片上=列表空白。
      * 标脏返回，保持现有 DOM；恢复可见后由 exitMini/滚动事件重开。 */
@@ -2418,12 +3139,26 @@
     if (win && win.body.isConnected) {
       // 窗口化：与 scrollRowIntoView 同一套 base 换算；
       // 再多回退「表头 + 一行 + 6px」，否则字母组首行会被 sticky 表头（歌曲/艺人/专辑）盖住
+      if (win.grp) {
+        var _ee = win.trkEntry[idx], _gg = _ee != null ? win.entries[_ee].grp : null;
+        if (_gg && isGrpCollapsed(_gg)) { expandGrp(_gg); renderView(); setTimeout(function () { azJump(L); }, 30); return; }
+        var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
+        var base = win.tb.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop + headH;
+        c.scrollTo({ top: base + win.offsets[_ee] - headH - win.rowH - 6, behavior: 'smooth' });
+        return;
+      }
       var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
       var base = win.tb.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop + headH;
       c.scrollTo({ top: base + idx * win.rowH - headH - win.rowH - 6, behavior: 'smooth' });
     } else {
-      var rows = c.querySelectorAll('tr.am-tr');
-      var row = rows[idx];
+      var row = null;
+      if (amSongGroupOn()) {   // V4.4.9：分组后行序≠曲目序，按 path 找
+        var _tk = currentTracks()[idx];
+        row = _tk ? c.querySelector('.am-tr[data-path="' + CSS.escape(_tk.path) + '"]') : null;
+      } else {
+        var rows = c.querySelectorAll('tr.am-tr');
+        row = rows[idx];
+      }
       if (row) {
         // V4.3.11 修复：不能用 scrollIntoView——它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
         //（用户实锤：点字母索引后顶部播放栏消失）。与窗口化路径同算法手动滚容器，
@@ -2780,11 +3515,21 @@
         var win = S._tbl, idx = -1;
         for (var k = 0; k < win.tracks.length; k++) if (win.tracks[k].path === p) { idx = k; break; }
         if (idx < 0) return;
-        var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
-        var base = win.tb.getBoundingClientRect().top - R.content.getBoundingClientRect().top + R.content.scrollTop + headH;
-        R.content.scrollTop = Math.max(0, base + idx * win.rowH - (R.content.clientHeight - win.rowH) / 2);
-        renderAmWindow();
-        row = R.content.querySelector(sel);
+        if (win.grp) {
+          var _e = win.trkEntry[idx], _g = _e != null ? win.entries[_e].grp : null;
+          if (_g && isGrpCollapsed(_g)) { expandGrp(_g); renderView(); scrollRowIntoView(p, opts); return; }
+          var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
+          var base = win.tb.getBoundingClientRect().top - R.content.getBoundingClientRect().top + R.content.scrollTop + headH;
+          R.content.scrollTop = Math.max(0, base + win.offsets[_e] + win.rowH / 2 - R.content.clientHeight / 2);
+          renderAmWindow();
+          row = R.content.querySelector(sel);
+        } else {
+          var headH = win.tb.tHead ? win.tb.tHead.offsetHeight : 0;
+          var base = win.tb.getBoundingClientRect().top - R.content.getBoundingClientRect().top + R.content.scrollTop + headH;
+          R.content.scrollTop = Math.max(0, base + idx * win.rowH - (R.content.clientHeight - win.rowH) / 2);
+          renderAmWindow();
+          row = R.content.querySelector(sel);
+        }
       } else if (row) {
         // 非窗口化：手动滚容器——不能用 scrollIntoView，它会连 #am-root（fixed 壳）一起滚，把顶栏顶出视口
         var cRect = R.content.getBoundingClientRect();

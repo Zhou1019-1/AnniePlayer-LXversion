@@ -106,9 +106,9 @@
       if (!m || m.fail) continue;
       var titleEl = tr.querySelector('.am-c-title');
       if (titleEl && m.title) titleEl.textContent = m.title;
-      var dims = tr.querySelectorAll('.am-c-dim');
-      if (dims[0] && m.artist) dims[0].textContent = m.artist;
-      if (dims[1]) dims[1].textContent = m.album || '';
+      var celA = tr.querySelector('.am-c-artist'), celB = tr.querySelector('.am-c-album');
+      if (celA && m.artist) celA.textContent = m.artist;
+      if (celB) celB.textContent = m.album || '';
     }
   }
   /* 搜索时全库深加载标签（metaCache 持久化，全库解析只有一次成本；分块避免一次 IPC 过大） */
@@ -130,7 +130,7 @@
         missing.forEach(function (p) { if (!S.meta[p]) S.meta[p] = { fail: true }; });
         S._metaTick = (S._metaTick || 0) + 1; // V4.3.8：首字母排序缓存失效
         // 新标签可能让新曲目命中搜索/改变歌曲视图排序，需重绘；但按块到达，200ms 合并避免每块整表重建
-        if ((S.search || S.view === 'songs') && window.annieTheme && annieTheme.current === 'am') {
+        if ((S.search || S.view === 'songs' || S._grpOn) && window.annieTheme && annieTheme.current === 'am') {
           clearTimeout(S._deepRT);
           S._deepRT = setTimeout(renderView, 200);
         }
@@ -304,12 +304,40 @@
   }
   /* 视图内搜索的匹配字段跟随当前排序方式：标题排序搜标题、演唱者排序搜演唱者、文件名排序搜文件名 */
   function songSearchField(mode) {
-    return mode === 'azArtist' ? 'artist' : mode === 'name' ? 'name' : 'title';
+    return mode === 'azArtist' ? 'artist' : mode === 'name' ? 'name' : mode === 'albumAz' ? 'album' : 'title';
   }
   function sortSongs(list, mode) {
     mode = mode || songSortMode();
     if (mode === 'az') return sortByInitial(list);
     if (mode === 'azArtist') return sortByInitial(list, 'artist'); // V4.3.16
+    if (mode === 'albumAz') {   // V4.4.9：专辑名 A–Z（拉丁优先，其次数字 / 中文拼音，未知最后）
+      var _tick = S._metaTick || 0, _qs = S.search || '', _ce = S._azCache;
+      if (_ce && _ce.list === list && _ce.search === _qs && _ce.tick === _tick && _ce.field === 'album') return _ce.out;
+      var _ac = azCollator(), _al = list.slice();
+      var _cls = function (s) {
+        var ch = (s || '').charAt(0);
+        if (!ch) return 3;
+        if (/[A-Za-z]/.test(ch)) return 0;
+        if (/[0-9]/.test(ch)) return 1;
+        return 2;
+      };
+      _al.sort(function (a, b) {
+        var ma = trackMeta(a), mb = trackMeta(b);
+        var ka = (ma.album || '').trim(), kb = (mb.album || '').trim();
+        var ca = _cls(ka), cb = _cls(kb);
+        if (ca !== cb) return ca - cb;
+        var c = _ac.compare(ka || '\uFFFF', kb || '\uFFFF');
+        return c !== 0 ? c : _ac.compare(ma.title || '', mb.title || '');
+      });
+      var _fi = {};
+      _al.forEach(function (t, i) {
+        var _a = (trackMeta(t).album || '未知专辑').trim();
+        var _L = azLetterOf(_a);
+        if (_fi[_L] === undefined) _fi[_L] = i;
+      });
+      S._azCache = { list: list, search: _qs, tick: _tick, field: 'album', out: _al, firstIdx: _fi };
+      return _al;
+    }
     var arr = list.slice();
     if (mode === 'name') arr.sort(function (a, b) { return azCollator().compare(a.name, b.name); });
     else if (mode === 'mtimeDesc') arr.sort(function (a, b) { return (b.mtime || 0) - (a.mtime || 0); });

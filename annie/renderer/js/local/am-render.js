@@ -269,6 +269,7 @@ function amModeSvg(id) {
     }
     function addRow(coverUrl, track, title, sub, durText, cur, onclick, opts) {
       var row = el('div', 'am-q-row' + (cur ? ' cur' : ''));
+      if (track && track.path) row.dataset.path = track.path; // V4.4.9：切歌时按 path 只改高亮，不整表重建
       var img = document.createElement('img');
       img.className = 'am-q-cover'; img.alt = ''; img.draggable = false;
       if (coverUrl) img.src = coverUrl;
@@ -331,7 +332,7 @@ function amModeSvg(id) {
     }
 
     if (S.qTab !== 'hist') {
-      // 待播清单：流媒体用搜索结果队列，本地用 state.queue（从当前索引起）
+      // 待播清单：流媒体用搜索结果队列，本地用 state.queue（完整队列，当前曲高亮）
       if (state.currentStream) {
         // V4.3.13：跟随实际播放队列（在线歌单快照 S._playList），不是搜索结果列表
         var rs = S._playList || S.stResults || [];
@@ -356,7 +357,8 @@ function amModeSvg(id) {
       function qGenLive(box, g) { return _qGens.get(box) === g; }
       /* V4.4.7（PR#6）：队列可能有上万首——原来一次性同步建几千行、每行还排一次封面解析，
          面板要等好几秒才弹出来。改成先建外壳 + 每帧只干 ~8ms（超预算就交还事件循环）。 */
-      var qGen = qGenNext(box), qPut = Math.max(0, state.index), qStop = q.length;
+      /* V4.4.9：渲染完整队列（此前从 state.index 起，点选靠后的歌会让上面已播曲目从列表消失） */
+      var qGen = qGenNext(box), qPut = 0, qStop = q.length;
       (function pumpQueueRows() {
       if (!qGenLive(box, qGen)) return;        // 同一容器又开了一轮渲染 → 这一轮作废
       var qT0 = performance.now();
@@ -371,7 +373,18 @@ function amModeSvg(id) {
             { dragIdx: idx, onRemove: function () { removeQueueRow(idx); } });
         })(q[i], i);
       }
-      if (qPut < qStop) setTimeout(pumpQueueRows, 0);
+      if (qPut < qStop) { setTimeout(pumpQueueRows, 0); return; }
+      /* 打开面板时把当前曲滚进可视区（只跳一次，避免跟随播放打断手动浏览） */
+      if (S._qJumpCur) {
+        S._qJumpCur = false;
+        try {
+          var curRow = list.querySelector('.am-q-row.cur');
+          if (curRow) {
+            var rt = curRow.offsetTop - (list.clientHeight - curRow.offsetHeight) / 2;
+            list.scrollTop = Math.max(0, rt);
+          }
+        } catch (e0) { }
+      }
       })();
       return;
     }
@@ -1934,7 +1947,7 @@ function amModeSvg(id) {
     S.immQOn = on;
     document.getElementById('am-root').classList.toggle('am-imm-q-on', on && S.imm);
     R.immBtnQ.classList.toggle('on', on);
-    if (on && S.imm) { renderQueuePanel(R.immQ); immShowChrome(); } // 打开队列即退出静止隐藏态
+    if (on && S.imm) { S._qJumpCur = true; renderQueuePanel(R.immQ); immShowChrome(); } // 打开队列即退出静止隐藏态
   }
 
   /* ================= V4.4：主界面待播清单抽屉 ================= */
@@ -1949,7 +1962,7 @@ function amModeSvg(id) {
     S.qOn = on;
     document.getElementById('am-root').classList.toggle('am-q-on', on);
     if (R.btnQ) R.btnQ.classList.toggle('on', on);
-    if (on) renderQueuePanel(R.qDrawer);
+    if (on) { S._qJumpCur = true; renderQueuePanel(R.qDrawer); }
   }
   AM.toggleMainQueue = toggleMainQueue;
   /* 队列剩余条数角标（流媒体=当前之后的曲目数；本地=当前索引之后） */
@@ -1969,9 +1982,27 @@ function amModeSvg(id) {
     R.btnQBadge.style.display = (n > 0 && qbMode !== 'off') ? '' : 'none';
   }
   /* 抽屉开着时的轻刷新：切歌/队列增删后更新高亮与角标（仅 queue 页签需要，评论/历史各自有事件或手动切回） */
+  /* V4.4.9：切歌只改当前行高亮，不重建整表（避免封面闪烁、列表跳动） */
+  function amQueueCurUpdate(box) {
+    try {
+      var list = box && box.querySelector('.am-q-list');
+      if (!list) return false;
+      var rows = list.querySelectorAll('.am-q-row');
+      if (!rows.length) return false;
+      var curPath = state.currentPath || '';
+      var hasPath = false;
+      for (var i = 0; i < rows.length; i++) {
+        var rp = rows[i].dataset.path || '';
+        if (rp) hasPath = true;
+        var on = !state.currentStream && rp && rp === curPath;
+        if (on !== rows[i].classList.contains('cur')) rows[i].classList.toggle('cur', on);
+      }
+      return hasPath;
+    } catch (e) { return false; }
+  }
   function refreshQDrawerIfOpen() {
     refreshQBadge();
-    if (S.qOn && R.qDrawer && S.qTab !== 'cmt') renderQueuePanel(R.qDrawer);
+    if (S.qOn && R.qDrawer && S.qTab !== 'cmt' && !amQueueCurUpdate(R.qDrawer)) renderQueuePanel(R.qDrawer);
   }
 
   /* ================= V4.4：重启恢复播放（本地 + 流媒体） =================
@@ -1998,10 +2029,18 @@ function amModeSvg(id) {
           songs: list.slice(0, 200) // 快照上限 200 首（约 100~300KB，localStorage 容量内）
         }));
       } else if (state.currentPath && state.queue && state.queue.length && state.index >= 0) {
+        /* V4.4.9：播放列表曲目可能不在媒体库（未加入库的目录），恢复时按 libIndex 查不到——
+           额外存一份轻量曲目信息，doRestore 里作为兜底 */
         localStorage.setItem(RESUME_META, JSON.stringify({
           v: 1, kind: 'local', idx: state.index, playing: !!state.playing, path: state.currentPath,
           title: (state.queue[state.index] && state.queue[state.index].name) || '',
-          paths: state.queue.map(function (t) { return t && t.path; }).filter(Boolean)
+          paths: state.queue.map(function (t) { return t && t.path; }).filter(Boolean),
+          items: state.queue.slice(0, 200).map(function (t) {
+            if (!t) return null;
+            var mm = trackMeta(t);
+            return { path: t.path, name: t.name || '', title: mm.title || '', artist: mm.artist || '',
+                     album: mm.album || '', dur: t.dur || t.duration || 0 };
+          }).filter(Boolean)
         }));
       }
     } catch (e) { /* 配额超限等：静默放弃本次保存 */ }
@@ -2133,14 +2172,38 @@ function amModeSvg(id) {
   function doRestore(meta, pos) {
     if (meta.kind === 'local') {
       var byPath = state.libIndex || null;
-      var tracks = (meta.paths || []).map(function (p) { return byPath ? byPath.get(p) : null; }).filter(Boolean);
+      /* V4.4.9：播放列表曲目未必在媒体库索引里（未入库目录），此时用恢复点自带的 items 兜底 */
+      var byItem = {};
+      (meta.items || []).forEach(function (it) { if (it && it.path) byItem[it.path] = it; });
+      var tracks = (meta.paths || []).map(function (p) {
+        var t = byPath ? byPath.get(p) : null;
+        if (!t && byItem[p]) t = byItem[p];
+        return t || null;
+      }).filter(Boolean);
       var idx = -1;
       tracks.forEach(function (t, i) { if (t.path === meta.path) idx = i; });
-      if (idx < 0 || !tracks.length) return; // 曲目已不在媒体库（移动/移除）→ 放弃恢复
+      if (idx < 0 || !tracks.length) return; // 曲目已不在媒体库且无兜底信息（移动/移除）→ 放弃恢复
       state.queue = tracks;
       state.queueCtx = 'list'; // 手动恢复的队列不视为全库（全文件顺序模式不越权接管）
       _resumePause = !meta.playing;
       playAt(idx, pos);
+      /* V4.4.9：未入库的播放列表曲目没有标签缓存 → 顶栏标题会退化成文件路径、
+         队列行只剩编号。恢复后异步补标签，到达后重刷顶栏与队列 */
+      try {
+        var _need = tracks.filter(function (x) { return x && x.path && !(S.meta && S.meta[x.path]); });
+        if (_need.length) {
+          if (window.__annieAMInternal && window.__annieAMInternal.ensureMeta) window.__annieAMInternal.ensureMeta(_need.slice(0, 200));
+          var _mt = 0;
+          (function _pollQueueMeta() {
+            var miss = tracks.filter(function (x) { return x && x.path && !(S.meta && S.meta[x.path] && !S.meta[x.path].fail); });
+            if (miss.length && _mt++ < 40) { setTimeout(_pollQueueMeta, 300); return; }
+            try { refreshNowPlaying(); } catch (e1) { }
+            try { if (S.qOn && R.qDrawer) renderQueuePanel(R.qDrawer); } catch (e2) { }
+            try { if (S.immQOn && R.immQ && S.imm) renderQueuePanel(R.immQ); } catch (e3) { }
+            try { if (S.miniQOn && R.miniQ && S.mini) renderQueuePanel(R.miniQ); } catch (e4) { }
+          })();
+        }
+      } catch (eM) { }
     } else if (meta.kind === 'stream' && Array.isArray(meta.songs) && meta.songs[meta.idx]) {
       S.stQuality = meta.quality || S.stQuality;
       S._playList = meta.songs; // 纯快照队列，不污染搜索视图 stResults
@@ -2937,9 +3000,9 @@ function amModeSvg(id) {
         resetResumePos(state.currentPath); // 新曲位置键归零（此刻 S.pos 仍是旧曲值）
         // V4.4：任何打开的队列面板随切歌刷新（评论页签不打断，历史/待播更新当前行高亮）
         if (S.qTab !== 'cmt') {
-          if (S.qOn && R.qDrawer) renderQueuePanel(R.qDrawer);
-          if (S.immQOn && R.immQ && S.imm) renderQueuePanel(R.immQ);
-          if (S.miniQOn && R.miniQ && S.mini) renderQueuePanel(R.miniQ);
+          if (S.qOn && R.qDrawer && !amQueueCurUpdate(R.qDrawer)) renderQueuePanel(R.qDrawer);
+          if (S.immQOn && R.immQ && S.imm && !amQueueCurUpdate(R.immQ)) renderQueuePanel(R.immQ);
+          if (S.miniQOn && R.miniQ && S.mini && !amQueueCurUpdate(R.miniQ)) renderQueuePanel(R.miniQ);
         }
         // V4.1：切歌后自动定位到当前播放行（随机/顺序播放跳转到远处时滚动跟随；
         // 行已在可视区则不打扰；流媒体与专辑/文件夹网格视图跳过）

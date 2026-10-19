@@ -764,6 +764,8 @@
       if (!S._tbl || S._tblRAF) return;
       S._tblRAF = requestAnimationFrame(function () { S._tblRAF = 0; renderAmWindow(); });
     });
+    scrollMemBind();
+    scrollMemRestoreTick();   // V4.4.9：重启后恢复侧栏/内容区滚动位置
     var lyr = el('aside', 'am-lyrics');
     // V4.3.22：面板顶部封面（绝对定位叠加在歌词滚动区上方；无封面/开关关闭时隐藏）
     R.lyrCover = el('img', 'am-lyr-cover'); R.lyrCover.alt = '';
@@ -1220,6 +1222,69 @@
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleSideGroup(h); }
     });
   }
+  /* ===== V4.4.9：滚动位置记忆（侧栏 + 内容区）——重启回到上次位置 ===== */
+  var SCROLL_SIDE_KEY = 'annieplayer.am.sideScroll';
+  var SCROLL_VIEW_KEY = 'annieplayer.am.viewScroll';
+  var _scrollDeadline = Date.now() + 60000;
+  var _sideScrollDone = false, _viewScrollDone = false;
+  var _userScrolled = false;   // 只有用户真的滚动过才写盘，避免启动瞬间的 0 覆盖上次位置
+  function viewScrollKey() { return (S.view || '') + '|' + (S.albumKey || ''); }
+  function scrollMemBind() {
+    try {
+      if (R.sidebar) {
+        var _t1 = null;
+        R.sidebar.addEventListener('scroll', function () {
+          clearTimeout(_t1);
+          _t1 = setTimeout(function () {
+            if (!_userScrolled) return;
+            try { localStorage.setItem(SCROLL_SIDE_KEY, String(Math.round(R.sidebar.scrollTop))); } catch (e) { }
+          }, 250);
+        });
+      }
+      if (R.content) {
+        var _t2 = null;
+        R.content.addEventListener('scroll', function () {
+          clearTimeout(_t2);
+          _t2 = setTimeout(function () {
+            if (!_userScrolled) return;
+            try { localStorage.setItem(SCROLL_VIEW_KEY, JSON.stringify({ k: viewScrollKey(), top: Math.round(R.content.scrollTop) })); } catch (e) { }
+          }, 250);
+        });
+      }
+      var markUser = function () { _userScrolled = true; };
+      [R.sidebar, R.content].forEach(function (el0) {
+        if (!el0) return;
+        el0.addEventListener('wheel', markUser, { passive: true });
+        el0.addEventListener('pointerdown', markUser, { passive: true });
+        el0.addEventListener('keydown', markUser, { passive: true });
+      });
+    } catch (e) { }
+  }
+  function scrollMemRestoreSide() {
+    if (_userScrolled || Date.now() > _scrollDeadline) return;
+    var sb = R.sidebar; if (!sb) return;
+    var v = 0;
+    try { v = parseInt(localStorage.getItem(SCROLL_SIDE_KEY), 10) || 0; } catch (e) { }
+    if (!v) return;
+    if (Math.abs(sb.scrollTop - v) > 2) sb.scrollTop = v;
+  }
+  function scrollMemRestoreView() {
+    if (_userScrolled || Date.now() > _scrollDeadline) return;
+    var c = R.content; if (!c) return;
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SCROLL_VIEW_KEY) || 'null'); } catch (e) { }
+    if (!saved || !saved.top) return;
+    /* 启动时视图可能是默认视图（songs），等切回目标视图再恢复；到期限再放弃 */
+    if (saved.k !== viewScrollKey()) return;
+    /* 持续对齐到期限：分帧渲染/窗口化校准会二次改动 scrollTop */
+    if (Math.abs(c.scrollTop - saved.top) > 2) c.scrollTop = saved.top;
+  }
+  function scrollMemRestoreTick() {
+    scrollMemRestoreSide();
+    scrollMemRestoreView();
+    if (_userScrolled || Date.now() > _scrollDeadline) return;
+    setTimeout(scrollMemRestoreTick, 200);
+  }
   function applySideGroups(sb) {
     var closed = sideGroupState();
     var cur = null;
@@ -1242,6 +1307,7 @@
       }
     }
     queueSideSticky();   // V4.4.9：侧栏重绘后主动同步吸顶状态（否则切歌单后要滚一下才恢复）
+    scrollMemRestoreSide(); // V4.4.9：侧栏构建完成后恢复滚动位置
   }
   function toggleSideGroup(h) {
     var name = sideHeadName(h);
@@ -2318,6 +2384,7 @@
     renderTrackTable(c, tracks);
     if (S.view === 'songs' && !S._grpManualOn) renderAzBar(c, tracks); // V4.4.9：手动排过组序时索引条失去意义
     ensureMeta(tracks.slice(0, 120));
+    scrollMemRestoreView(); // V4.4.9：内容区渲染完成后恢复滚动位置（重启场景）
   }
 
   /* V4.3.20：文件夹根列表——媒体库根目录（点入逐级深入；根外目录兜底平铺） */
@@ -3075,6 +3142,7 @@ renderView();
     if (window.__amFlushDragRender) window.__amFlushDragRender();
   }, true);
   function renderTrackTable(c, tracks) {
+    setTimeout(scrollMemRestoreView, 0);   // V4.4.9：列表渲染完成后尝试恢复内容区滚动（重启场景）
     var tb = el('table', 'am-table');
     var inPlaylist = S.view.indexOf('pl:') === 0;
     var grp = amSongGroupOn() ? buildGroupEntries(tracks) : null;   // V4.4.9：歌曲视图按专辑分组（连续块）

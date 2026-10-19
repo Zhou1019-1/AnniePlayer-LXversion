@@ -1393,7 +1393,7 @@ html[data-motion="off"] #am-root::before {
   left: 50%; right: auto; top: calc(100% + 8px); bottom: auto;
   /* 布局盒 112×30，绕自身中心转 -90° 后视觉尺寸 30×112；
      translateY 补 (112-30)/2 = 41，让视觉顶边正好落在图标下方 8px */
-  transform: translateX(-50%) translateY(41px) rotate(90deg);
+  transform: translateX(-50%) translateY(41px) rotate(-90deg);
   width: 112px; height: 30px; padding: 0 14px; box-sizing: border-box;
 }
 /* 悬停隐形桥跟着变窄变高（原桥向右铺 118px，正是挡按钮的元凶） */
@@ -1525,7 +1525,7 @@ html[data-motion="off"] #am-root::before {
 #am-root .am-np-text { margin-right: 5px; }
 /* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
    宽度 500px，右侧按钮组展开时自动收窄，不会重叠 */
-#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 24px; }
+#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 max(8px, calc(var(--am-side-w, 240px) - 136.9px)); min-width: 0; }
 #am-root .am-topbar .am-tb-right { margin-left: auto; }
 /* V4.4.8 展开「更多」时图标挤压中间块：右侧剩余时长与 ♥/胶囊 向左压一下 */
 @keyframes am-np-nudge {
@@ -1718,7 +1718,6 @@ html[data-motion="off"] #am-root::before {
 /* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
 #am-root .am-lyr-scroll { padding: 0 26px 40vh; }
 #am-root .am-imm-lyr { padding-top: 0; padding-bottom: 40vh; }
-#am-root .am-imm-vinyl .am-imm-lyr { padding: 0 8px 40vh 0; }
 /* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
    = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
 #am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
@@ -1739,7 +1738,6 @@ html[data-motion="off"] #am-root::before {
 /* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
    宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
 /* 顶栏「封面/进度条/收藏/音质」整块左缘对齐侧栏分界线（封面有 -5px 微调，这里 +5 抵消） */
-#am-root .am-topbar .am-np { flex: 0 1 500px; margin: 0 0 0 max(8px, calc(var(--am-side-w, 240px) - 136.9px)) min-width: 0; }
 #am-root .am-topbar .am-tb-right { margin-left: auto; }
 /* V4.4.8 展开「更多」时图标会挤压中间块，让 ♥ 与音质胶囊做一下微小回弹 */
 /* 胶囊换文案时的运动模糊（filter 用 animation，比 transition 更可靠可见） */
@@ -1795,7 +1793,6 @@ html[data-motion="off"] #am-root::before {
 }
 #am-root.am-tb-close .am-np-row .am-badge {
   animation: am-badge-nudge-r .34s ease-out both;
-}
 }
 /* V4.4.8：沉浸「歌曲信息」面板字号随视口缩放——取消过低的上限，
    之前 1600px 以上字号就不变了，窗口/全屏字号差不多 */

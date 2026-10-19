@@ -66,7 +66,7 @@
       // 左：侧栏（向左拖变窄 → sign = +1 时向右拖变宽）
       make('am-resize-l',
         function () { var s = root.querySelector('.am-side'); return s ? Math.round(s.getBoundingClientRect().width) : 240; },
-        function (w) { w = Math.max(56, Math.min(Math.round(innerWidth * 0.33), w)); root.__sideWant = w; root.__sideWant = w; root.style.setProperty('--am-side-w', w + 'px'); return w; },
+        function (w) { w = Math.max(56, Math.min(Math.round(innerWidth * 0.33), w)); root.__sideWant = w; root.style.setProperty('--am-side-w', w + 'px'); return w; },
         null, 1);
       // 右：歌词面板（手柄在面板左缘，向左拖变宽 → sign = -1）
       /* 切换视图会重建内容区，重建后要重新判断一次 */

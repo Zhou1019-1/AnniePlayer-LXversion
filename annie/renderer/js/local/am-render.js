@@ -2032,7 +2032,7 @@ function amModeSvg(id) {
           try { var _ev = localStorage.getItem('annieplayer.exclusive'); if (_ev !== null) _ex = _ev === '1'; } catch (e0) { }
           var _go = function () {
             try { window.mine.engine('volume.set', { gain: 0 }).catch(function () { }); } catch (e10) { }
-            doRestore(meta, 0);
+            doRestore(meta, pos);
             setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e8) { } }, 80);
             setTimeout(function () { try { window.mine.engine('pause').catch(function () { }); } catch (e9) { } }, 600);
             setTimeout(function () { try { window.mine.engine('volume.set', { gain: _vg }).catch(function () { }); } catch (e11) { } }, 900);

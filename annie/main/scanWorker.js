@@ -60,7 +60,7 @@ async function scan(jobId, folders) {
         if (ext === '.iso') { // SVLX 1.2.0：SACD ISO 分轨（主线程探测后生成虚拟分轨）
           let size = 0, mtime = 0, ctime = 0;
           try { const st = fs.statSync(full); size = st.size; mtime = st.mtimeMs; ctime = (st.birthtimeMs || st.ctimeMs || st.mtimeMs); } catch { }
-          isoFiles.push({ path: full, name: e.name, dir, size, mtime, ctime, ctime });
+          isoFiles.push({ path: full, name: e.name, dir, size, mtime, ctime });
           continue;
         }
         if (!AUDIO_EXTS.has(ext)) continue;

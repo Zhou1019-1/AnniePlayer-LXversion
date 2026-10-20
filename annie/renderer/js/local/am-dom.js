@@ -3792,3 +3792,40 @@ renderView();
   setTimeout(scan, 600);
   setTimeout(scan, 2000);
 })();
+
+/* 歌曲行拖拽光标延迟：按住 260ms 才变手掌，双击播放不再瞬间变 grab */
+(function () {
+  if (window.__amDragCursor) return;
+  window.__amDragCursor = 1;
+  var tmr = 0, cur = null;
+  function clear() {
+    clearTimeout(tmr);
+    if (cur) cur.classList.remove('drag-ready');
+    cur = null;
+  }
+  document.addEventListener('mousedown', function (e) {
+    var tr = e.target && e.target.closest && e.target.closest('tr.am-tr[draggable="true"]');
+    if (!tr) return;
+    clear();
+    cur = tr;
+    tmr = setTimeout(function () { if (cur === tr) tr.classList.add('drag-ready'); }, 260);
+  }, true);
+  document.addEventListener('mouseup', clear, true);
+  document.addEventListener('dragend', clear, true);
+})();
+
+/* 内容区真正滚动时，暂时隐藏歌词面板的折叠按钮（侧栏滚动不影响） */
+(function () {
+  if (window.__amFoldHide) return;
+  window.__amFoldHide = 1;
+  var tmr = 0;
+  document.addEventListener('scroll', function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('am-content')) return;
+    var root = document.getElementById('am-root');
+    if (!root) return;
+    root.classList.add('am-rolling');
+    clearTimeout(tmr);
+    tmr = setTimeout(function () { root.classList.remove('am-rolling'); }, 650);
+  }, true);
+})();

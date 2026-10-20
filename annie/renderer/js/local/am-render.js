@@ -2074,8 +2074,15 @@ function amModeSvg(id) {
       if (pp && pp.path === meta.path) pos = Math.max(0, pp.pos || 0);
     } catch (e) { }
     // V4.4.2：不再静默续播——弹确认框由用户决定（无论上次退出是播放还是暂停）
-    /* V4.4.9：已能恢复上次界面，默认不弹；代码保留，需要时置 window.__amResumePrompt = true */
-    if (window.__amResumePrompt) { showResumePrompt(meta, pos); }
+    /* V4.4.9：设置项「启动时询问是否续播」写入 localStorage，这里必须读同一个键；
+       window.__amResumePrompt 仅保留为 DevTools 逃生口（此前只读 window 导致开关形同虚设） */
+    var _ask = false;
+    try {
+      var _rpLs = localStorage.getItem('annieplayer.amResumePrompt');
+      if (_rpLs === 'on' || _rpLs === '1') _ask = true;
+      else if (_rpLs === null && window.annieSettings && annieSettings.ui && annieSettings.ui.amResumePrompt === 'on') _ask = true;
+    } catch (e0) { }
+    if (_ask || window.__amResumePrompt) { showResumePrompt(meta, pos); }
     else {
       /* V4.4.9：默认静默恢复队列并强制暂停；等曲库索引就绪再执行（否则会静默失败） */
       var _rr = 0;

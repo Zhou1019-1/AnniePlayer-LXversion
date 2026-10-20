@@ -1887,3 +1887,54 @@ html[data-motion="off"] #am-root::before {
 #am-root .am-table .am-grp-tr + .am-tr:hover { background: linear-gradient(90deg, transparent 0 92px, var(--am-hover) 92px); }
 #am-root .am-table .am-grp-tr + .am-tr.cur { background: linear-gradient(90deg, transparent 0 92px, var(--am-row-cur) 92px); }
 #am-root .am-table .am-grp-tr + .am-tr.cur:hover { background: linear-gradient(90deg, transparent 0 92px, var(--am-row-cur) 92px); }
+
+/* 复选框：隐藏原生控件（它会多画两个小点），由 td 伪元素自绘并居中 */
+#am-root .am-table td:has(> input.am-ms-ck) { position: relative; }
+#am-root .am-table input.am-ms-ck {
+  -webkit-appearance: none; appearance: none;
+  opacity: 0; position: absolute; left: 10px; top: 50%;
+  width: 16px; height: 16px; margin: 0; transform: translateY(-50%);
+  cursor: pointer; z-index: 3;
+}
+#am-root .am-table td:has(> input.am-ms-ck)::before {
+  content: ''; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; box-sizing: border-box; border-radius: 4px;
+  border: 1.5px solid color-mix(in srgb, var(--am-text) 40%, transparent);
+  background: transparent; pointer-events: none;
+}
+#am-root .am-table td:has(> input.am-ms-ck:checked)::before {
+  background-color: var(--am-accent);
+  border-color: var(--am-accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.3 8.4 L6.4 11.5 L12.7 4.9' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 11px 11px; background-position: center; background-repeat: no-repeat;
+}
+/* 组头整组复选框：更大、靠左 */
+#am-root .am-table input.am-grp-ck { left: 10px; width: 19px; height: 19px; }
+#am-root .am-table td.am-grp-ckcell:has(> input.am-grp-ck)::before {
+  left: 10px; width: 19px; height: 19px; border-radius: 5px; border-width: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--am-accent) 16%, transparent);
+}
+#am-root .am-table td.am-grp-ckcell:has(> input.am-grp-ck:checked)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.3 8.4 L6.4 11.5 L12.7 4.9' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 13px 13px; background-position: center; background-repeat: no-repeat;
+}
+/* 多选工具条窄窗换行，避免被右侧歌词面板裁掉 */
+#am-root .am-ms-bar { flex-wrap: wrap; row-gap: 6px; }
+/* 专辑详情头部：标题过长省略，排序下拉不被挤走 */
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-view-h {
+  flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-btn,
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-sort-btn,
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-dd,
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-select { flex: none; }
+/* 搜索框清空按钮（位置由 JS 按输入框计算） */
+#am-root .am-clear-btn, #settings-panel .am-clear-btn {
+  position: absolute; width: 17px; height: 17px; padding: 0; border: 0; border-radius: 50%;
+  background: color-mix(in srgb, var(--am-text) 16%, transparent);
+  color: var(--am-text); font-size: 10px; line-height: 17px; text-align: center;
+  cursor: pointer; z-index: 3; opacity: .75; transform: translateY(-50%);
+}
+#am-root .am-clear-btn:hover, #settings-panel .am-clear-btn:hover {
+  opacity: 1; background: color-mix(in srgb, var(--am-text) 28%, transparent);
+}

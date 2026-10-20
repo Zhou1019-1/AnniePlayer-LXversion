@@ -1432,7 +1432,23 @@
     tr.dataset.grpid = g.id;
     tr.dataset.gkey = g.key;
     if (grpDragAllowed()) tr.classList.add('am-grp-draggable');
-    if (S.msOn) tr.appendChild(el('td', 'am-grp-ckcell'));
+    if (S.msOn) {
+      var tdGck = el('td', 'am-grp-ckcell');
+      var gck = document.createElement('input');
+      gck.type = 'checkbox';
+      gck.className = 'am-ms-ck am-grp-ck';
+      gck.title = '选中本组全部歌曲';
+      gck.checked = !!(S.msSel && g.list.length && g.list.every(function (x) { return S.msSel.has(x.path); }));
+      gck.onclick = function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        if (!S.msSel) S.msSel = new Set();
+        if (gck.checked) g.list.forEach(function (x) { S.msSel.add(x.path); });
+        else g.list.forEach(function (x) { S.msSel.delete(x.path); });
+        renderKeepScroll();
+      };
+      tdGck.appendChild(gck);
+      tr.appendChild(tdGck);
+    }
     // V4.4.9：封面单独占左列表头「封面」，组内歌曲在封面右侧
     var tdCover = el('td', 'am-grp-covercell');
     var cover = el('div', 'am-grp-cover');
@@ -1951,7 +1967,8 @@
       S.search = inp.value.trim();
       if (S.search) {
         // 搜索是全库行为：专辑网格/文件夹列表/在线搜索里输入时切回歌曲列表
-        if (S.view === 'stream' || (S.view === 'albums' && !S.albumKey) || (S.view === 'folders' && !S.folderPath)) {
+        /* 专辑视图不跳走：搜索词直接用于过滤专辑（视图内搜索框仍只匹配专辑名） */
+        if (S.view === 'stream' || (S.view === 'folders' && !S.folderPath)) {
           S.view = 'songs'; S.albumKey = null; S.folderPath = null;
           var pos = inp.selectionStart;
           renderSidebar(); // 侧栏重建会换新搜索框——恢复焦点与光标，保证连续输入
@@ -2344,7 +2361,8 @@
     } else if (S.view === 'albums' && S.albumKey) {
       // V4.4.3：详情页头部 = ‹ 专辑 返回 + 共享头（标题 + 排序下拉，复用 buildViewHead 的下拉逻辑但无搜索框）
       if (!reuseHead) {
-        var back = el('button', 'am-btn', '‹ 专辑');
+        var back = el('button', 'am-btn am-btn-back', '');
+        back.innerHTML = amIcoTop('back', 14) + '<span class="am-btn-label">专辑</span>';
         back.onclick = function () { S.albumKey = null; renderView(); };
         var dhead = el('div', 'am-view-head');
         dhead.dataset.hkey = 'albumDetail#' + S.albumKey + '#' + (AM.albumDetailSortMode ? AM.albumDetailSortMode() : 'release');
@@ -2436,13 +2454,25 @@
       if (!byAlbum[k]) byAlbum[k] = { name: k, artist: m.artist, tracks: [] };
       byAlbum[k].tracks.push(t);
     });
-    // 视图内搜索：匹配字段跟随排序方式（艺人排序搜艺人，其余搜专辑名）
+    // 视图内搜索框只匹配专辑名；左下角搜索另按「专辑名 或 专辑内曲目的歌名/歌手」过滤
     var aq = viewQuery('albums').toLowerCase();
-    if (aq) {
+    var sq = (S.search || '').toLowerCase();
+    if (aq || sq) {
       Object.keys(byAlbum).forEach(function (k) {
         var a = byAlbum[k];
-        var v = (amode === 'azArtist' ? (a.artist || '') : a.name).toLowerCase();
-        if (v.indexOf(aq) < 0) delete byAlbum[k];
+        var hitQ = !aq || (a.name || '').toLowerCase().indexOf(aq) >= 0;
+        var hitS = true;
+        if (sq) {
+          hitS = (a.name || '').toLowerCase().indexOf(sq) >= 0;
+          if (!hitS) {
+            var list = a.tracks || [];
+            for (var ti = 0; ti < list.length; ti++) {
+              var mm = trackMeta(list[ti]) || {};
+              if (((mm.title || '') + ' ' + (mm.artist || '')).toLowerCase().indexOf(sq) >= 0) { hitS = true; break; }
+            }
+          }
+        }
+        if (!hitQ || !hitS) delete byAlbum[k];
       });
     }
     // 排序：名称/艺人走拼音 collator，曲目数按数量
@@ -3682,4 +3712,83 @@ renderView();
   AM.renderView = renderView;
   AM.renderAmWindow = renderAmWindow;
   AM.scrollRowIntoView = scrollRowIntoView;
+})();
+
+/* 所有搜索框「✕ 清空」按钮（按输入框位置定位，不贴容器右边） */
+(function () {
+  if (window.__amClearBtn) return;
+  window.__amClearBtn = 1;
+  function isSearch(inp) {
+    if (!inp || inp.tagName !== 'INPUT') return false;
+    var ty = (inp.type || 'text').toLowerCase();
+    if (ty !== 'text' && ty !== 'search') return false;
+    var ph = inp.placeholder || '';
+    if (/搜索|Search|search|粘贴|链接/.test(ph)) return true;
+    var cls = inp.className || '';
+    if (/am-search|am-st-input|search|qz/i.test(cls)) return true;
+    if (inp.closest && inp.closest('.am-search,.am-view-head,.am-qz-bar,.am-st-bar,.am-searchbox')) return true;
+    return false;
+  }
+  function place(inp, btn) {
+    var p = btn.parentElement;
+    if (!p) return;
+    var ir = inp.getBoundingClientRect(), pr = p.getBoundingClientRect();
+    if (!ir.width || !pr.width) return;
+    btn.style.left = Math.round(ir.right - pr.left - 24) + 'px';
+    btn.style.top = Math.round(ir.top - pr.top + ir.height / 2) + 'px';
+  }
+  function sync(inp) {
+    var p = inp.parentElement;
+    if (!p) return;
+    var btn = null;
+    for (var i = 0; i < p.children.length; i++) {
+      if (p.children[i].classList && p.children[i].classList.contains('am-clear-btn')) { btn = p.children[i]; break; }
+    }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'am-clear-btn';
+      btn.title = '清空';
+      btn.textContent = '✕';
+      btn.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        inp.value = '';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        try { inp.focus(); } catch (er) { }
+        btn.style.display = 'none';
+        inp.style.paddingRight = '';
+      });
+      if (getComputedStyle(p).position === 'static') p.style.position = 'relative';
+      p.appendChild(btn);
+    }
+    var has = !!inp.value;
+    btn.style.display = has ? '' : 'none';
+    inp.style.paddingRight = has ? '26px' : '';
+    if (has) place(inp, btn);
+  }
+  function scan() {
+    var list = document.querySelectorAll('input');
+    for (var i = 0; i < list.length; i++) if (isSearch(list[i])) sync(list[i]);
+  }
+  function reposition() {
+    var list = document.querySelectorAll('.am-clear-btn');
+    for (var i = 0; i < list.length; i++) {
+      var btn = list[i];
+      var inp = btn.parentElement && btn.parentElement.querySelector('input');
+      if (inp && btn.style.display !== 'none') place(inp, btn);
+    }
+  }
+  var raf = 0;
+  function schedule() { if (raf) return; raf = requestAnimationFrame(function () { raf = 0; reposition(); }); }
+  document.addEventListener('input', function (e) { if (isSearch(e.target)) sync(e.target); }, true);
+  document.addEventListener('focusin', function (e) { if (isSearch(e.target)) sync(e.target); }, true);
+  window.addEventListener('resize', schedule);
+  document.addEventListener('scroll', schedule, true);
+  var tmr = 0;
+  try {
+    new MutationObserver(function () { clearTimeout(tmr); tmr = setTimeout(scan, 150); })
+      .observe(document.body, { childList: true, subtree: true });
+  } catch (e) { }
+  setTimeout(scan, 600);
+  setTimeout(scan, 2000);
 })();

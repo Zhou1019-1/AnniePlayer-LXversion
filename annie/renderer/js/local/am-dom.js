@@ -1690,9 +1690,30 @@
     var sb = R.sidebar;
     sb.innerHTML = '';
 
+
+    /* 侧栏图标统一用 SVG：几何尺寸一致，不受系统 emoji 字体影响 */
+    var NAV_ICONS = {
+      '🔍': '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="8" cy="8" r="4.6" fill="none" stroke="#3d9bf5" stroke-width="2"/><rect x="11.6" y="10.8" width="5" height="2" rx="1" transform="rotate(45 11.6 10.8)" fill="#3d9bf5"/></svg>',
+      '⬇': '<svg viewBox="0 0 18 18" aria-hidden="true"><rect x="8.1" y="2.6" width="1.8" height="8" rx=".9" fill="#3f3f46"/><path d="M5.2 8.4 L9 12.2 L12.8 8.4" fill="none" stroke="#3f3f46" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="14" width="12" height="1.8" rx=".9" fill="#3f3f46"/></svg>',
+      '🔷': '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2.4 L15.6 9 L9 15.6 L2.4 9 Z" fill="#3f7bf7"/></svg>',
+      '＋': '<svg viewBox="0 0 18 18" aria-hidden="true"><rect x="8" y="3.5" width="2" height="11" rx="1" fill="#a3a3ad"/><rect x="3.5" y="8" width="11" height="2" rx="1" fill="#a3a3ad"/></svg>',
+      '🎵': '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="#7c5cf5" style="width:19px;height:19px;display:block"><path d="M12 3v9.28a4.39 4.39 0 0 0-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg>',
+      '💿': '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.2" fill="#b39cf7"/><circle cx="9" cy="9" r="2.3" fill="#f7f4f2"/><circle cx="9" cy="9" r="1.1" fill="#c9b6ff"/></svg>',
+      '📁': '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="#ffc933" style="width:19px;height:19px;display:block"><path d="M3 5h18v14H3z"/><path d="M6 8h12v1.6H6z" fill="#fff" opacity=".45"/></svg>',
+      '❤': '<svg viewBox="0 0 18 18" width="19" height="19" aria-hidden="true" style="width:19px;height:19px;display:block"><path d="M9 14.6S2.6 10.9 2.6 6.9A3.4 3.4 0 0 1 9 4.9a3.4 3.4 0 0 1 6.4 2c0 4-6.4 7.7-6.4 7.7Z" fill="#ff4d7d"/></svg>',
+      '🎧': '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 10v-.6a6 6 0 0 1 12 0V10" fill="none" stroke="#8a6ff0" stroke-width="1.8" stroke-linecap="round"/><rect x="2.2" y="9.6" width="3.2" height="4.6" rx="1.6" fill="#8a6ff0"/><rect x="12.6" y="9.6" width="3.2" height="4.6" rx="1.6" fill="#8a6ff0"/></svg>'
+    };
+    function navIcoSpan(icon) {
+      var sp = el('span', 'am-nav-ico');
+      var key = icon || '';
+      if (NAV_ICONS[key]) sp.innerHTML = NAV_ICONS[key];
+      else if (key.indexOf('❤') === 0) sp.innerHTML = NAV_ICONS['❤'];
+      else sp.textContent = icon;
+      return sp;
+    }
     function nav(icon, name, view) {
       var b = el('button', 'am-nav' + (S.view === view && !S.albumKey && !S.folderPath ? ' cur' : ''));
-      b.appendChild(el('span', 'am-nav-ico', icon));
+      b.appendChild(navIcoSpan(icon));
       b.appendChild(el('span', 'am-nav-name', name));
       b.onclick = function () { S.view = view; S.albumKey = null; S.folderPath = null; renderSidebar(); renderView(); };
       return b;
@@ -1704,7 +1725,7 @@
     sb.appendChild(nav('🔷', 'Qobuz', 'qobuz')); // V4.3.6：Qobuz 在线播放/下载（登录自己的付费账号）
     // 添加文件夹：只作入口，文件夹列表不外显在 AM 界面（与粒子舞台/FB2K 不同）
     var addFolder = el('button', 'am-nav am-new');
-    addFolder.appendChild(el('span', 'am-nav-ico', '＋'));
+    addFolder.appendChild(navIcoSpan('＋'));
     addFolder.appendChild(el('span', 'am-nav-name', '添加歌曲文件夹…'));
     addFolder.onclick = function () {
       window.mine.pickFolder().then(function (store) {
@@ -2201,7 +2222,17 @@
       c._plDropBound = true;
       function plDropRowOf(e) {
         var tr = (e.target && e.target.closest) ? e.target.closest('tr.am-tr') : null;
-        return (tr && tr.dataset.path) ? tr : null;   // 窗口化垫片行没有 data-path
+        if (tr && tr.dataset.path) return tr;          // 窗口化垫片行没有 data-path
+        /* 落在组头行 / 行间空白 / 表格留白：按鼠标 Y 找最近的歌曲行，
+           这样整个内容区都是有效落点，不用贴着一行才能拖进来 */
+        var rows = c.querySelectorAll('tr.am-tr[data-path]');
+        var y = e.clientY, best = null, bestD = 1e9;
+        for (var i = 0; i < rows.length; i++) {
+          var rr = rows[i].getBoundingClientRect();
+          var dd = (y < rr.top) ? (rr.top - y) : (y > rr.bottom ? y - rr.bottom : 0);
+          if (dd < bestD) { bestD = dd; best = rows[i]; }
+        }
+        return best;
       }
       /* V4.4.7（PR#6）：落点提示改成「有方向的插入线」——上半屏插到本行之前、
          下半屏插到本行之后，和行内拖拽排序用同一套 .drop-before / .drop-after 视觉 */
@@ -2247,6 +2278,50 @@
         addDroppedToPlaylist(S.view.slice(3), paths, beforePath);
       });
     }
+    /* 歌单内拖动排序兜底：拖到组头 / 行间空白也按最近行计算落点 */
+    if (!c._plRowDropBound) {
+      c._plRowDropBound = true;
+      var _nearestRow = function (y) {
+        var rows = c.querySelectorAll('tr.am-tr[data-path]');
+        var best = null, bd = 1e9;
+        for (var i2 = 0; i2 < rows.length; i2++) {
+          var rr = rows[i2].getBoundingClientRect();
+          var d2 = (y < rr.top) ? (rr.top - y) : (y > rr.bottom ? y - rr.bottom : 0);
+          if (d2 < bd) { bd = d2; best = rows[i2]; }
+        }
+        return best;
+      };
+      c.addEventListener('dragover', function (e) {
+        if (S.view.indexOf('pl:') !== 0 || !S._plDragPath) return;
+        var tgt = (e.target && e.target.closest) ? e.target.closest('tr') : null;
+        if (tgt && tgt.dataset && tgt.dataset.path) return;
+        var row = _nearestRow(e.clientY);
+        if (!row) return;
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch (er) { }
+        var rr2 = row.getBoundingClientRect();
+        var before = (e.clientY - rr2.top) < rr2.height / 2;
+        var marked = c.querySelectorAll('tr.drop-before,tr.drop-after');
+        for (var m2 = 0; m2 < marked.length; m2++) marked[m2].classList.remove('drop-before', 'drop-after');
+        row.classList.add(before ? 'drop-before' : 'drop-after');
+      });
+      c.addEventListener('drop', function (e) {
+        if (S.view.indexOf('pl:') !== 0 || !S._plDragPath) return;
+        var tgt = (e.target && e.target.closest) ? e.target.closest('tr') : null;
+        if (tgt && tgt.dataset && tgt.dataset.path) return;
+        var row = _nearestRow(e.clientY);
+        var from = S._plDragPath; S._plDragPath = null;
+        if (!row) return;
+        e.preventDefault();
+        var rr3 = row.getBoundingClientRect();
+        var before2 = (e.clientY - rr3.top) < rr3.height / 2;
+        row.classList.remove('drop-before', 'drop-after');
+        if (from && row.dataset.path && from !== row.dataset.path) {
+          movePlRow(S.view.slice(3), from, row.dataset.path, !before2);
+        }
+      });
+    }
+
     // V4.4：框选多选——空白处按下拖出选框，命中行入 selection（Ctrl 追加、否则替换）；
     // 行/表头/按钮/输入框上不启动（行要留给点击与拖拽排序）；只命中已渲染行（窗口化限制）
     if (!c._marqueeBound) {
@@ -2458,6 +2533,98 @@
     });
   }
 
+  /* 统一给卡片设封面：优先专辑级缓存，其次路径级缓存 */
+  function applyAlbumCover(img, first, fallbackUrl) {
+    if (!img) return;
+    var u = null;
+    try {
+      var Sx = AM.S;
+      var k = AM.albumKeyOf ? AM.albumKeyOf(first) : null;
+      if (k && Sx && Sx.acover && Sx.acover[k]) u = Sx.acover[k];
+      if (!u && Sx && Sx.cover && first && first.path && Sx.cover[first.path]) u = Sx.cover[first.path];
+    } catch (e0) { }
+    if (!u) u = fallbackUrl;
+    if (u && img.getAttribute('src') !== u) img.src = u;
+  }
+  /* 插入后批量补一遍（构造期拿不到的，此刻缓存可能已就绪） */
+  function applyAlbumCovers(grid, cache) {
+    var cards = grid.querySelectorAll('.am-album-card');
+    for (var i = 0; i < cards.length; i++) {
+      var img = cards[i].querySelector('img');
+      if (!img || img.getAttribute('src')) continue;
+      var idx = +cards[i].dataset.idx;
+      var it = (isNaN(idx) ? null : cache[idx]);
+      if (it && it.first) applyAlbumCover(img, it.first, null);
+    }
+  }
+  function albumCardEl(it, idx) {
+    var card = el('div', 'am-album-card');
+    if (typeof idx === 'number') card.dataset.idx = idx;
+    var img = el('img'); img.alt = ''; img.loading = 'lazy';
+    /* 封面统一在插入 DOM 后赋值（构造期赋值会被后续重建覆盖） */
+    if (it.first) {
+      albumCover(it.first, function (url) { if (url) applyAlbumCover(img, it.first, url); });
+    } else if (it.url) {
+      img.src = it.url;
+    }
+    img.style.background = 'linear-gradient(135deg, rgba(150,160,190,.16), rgba(120,130,170,.10))';
+    card.appendChild(img);
+    card.appendChild(el('div', 'am-album-name', it.name));
+    card.appendChild(el('div', 'am-album-sub', it.artist + ' · ' + it.count + ' 首'));
+    card.onclick = function () { S.albumKey = it.name; renderView(); };
+    /* V4.3.22：专辑右键——删除整个专辑（移出曲库；弹窗里可选择连文件一起删） */
+    card.oncontextmenu = function (e) {
+      e.preventDefault();
+      var pop = R.pop;
+      pop.innerHTML = '';
+      pop.appendChild(el('div', 'am-pop-head', it.name));
+      pop.appendChild(el('div', 'am-pop-sep'));
+      var md = el('button', 'am-pop-item', '🗑 删除该专辑（' + it.count + ' 首）…');
+      md.onclick = function () {
+        pop.classList.remove('on');
+        deleteTracks((it.tracks || []).map(function (x) { return x.path; }));
+      };
+      pop.appendChild(md);
+      pop.classList.add('on');
+      var w = pop.offsetWidth, h = pop.offsetHeight;
+      pop.style.left = Math.min(e.clientX, window.innerWidth - w - 12) + 'px';
+      pop.style.top = Math.min(e.clientY, window.innerHeight - h - 12) + 'px';
+    };
+    return card;
+  }
+  function fillAlbumGrid(c, grid, cache, from) {
+    var per = 42;                       // 每批卡片数（约 2~3 屏）
+    var end = Math.min(cache.length, from + per);
+    var frag = document.createDocumentFragment();
+    for (var i = from; i < end; i++) frag.appendChild(albumCardEl(cache[i], i));
+    grid.appendChild(frag);
+    applyAlbumCovers(grid, cache);
+    /* 封面解析是异步排队（并发 3），每 120ms 补一次，最长约 8s */
+    var _retryN = 0;
+    var _retry = function () {
+      if (!grid.isConnected) return;
+      if (!grid.querySelector('.am-album-card img:not([src])')) return;
+      applyAlbumCovers(grid, cache);
+      if (++_retryN < 66) setTimeout(_retry, 120);
+    };
+    setTimeout(_retry, 80);
+    return end;
+  }
+  function renderAlbumGridFromCache(c, cache) {
+    var grid = el('div', 'am-album-grid');
+    var filled = fillAlbumGrid(c, grid, cache, 0);
+    c.appendChild(grid);
+    if (filled >= cache.length) return;
+    var onScroll = function () {
+      if (!grid.isConnected) { c.removeEventListener('scroll', onScroll); return; }
+      if (c.scrollTop + c.clientHeight < c.scrollHeight - 300) return;
+      filled = fillAlbumGrid(c, grid, cache, filled);
+      if (filled >= cache.length) c.removeEventListener('scroll', onScroll);
+    };
+    c.addEventListener('scroll', onScroll);
+    setTimeout(onScroll, 0);
+  }
+
   function renderAlbumGrid(c, reuseHead) {
     // V4.3.22：专辑视图头部——视图内搜索 + 排序下拉（名称/艺人/曲目数）
     var amode = AM.albumSortMode ? AM.albumSortMode() : 'az';
@@ -2469,6 +2636,14 @@
     }));
     var tracks = allTracks();
     ensureMeta(tracks.slice(0, 400)); // 专辑分组依赖标签，取回后自动重绘
+    /* 专辑视图缓存：曲库条目数 + 排序 + 搜索词都没变时复用上次分组结果，
+       切换视图不再重新分组/排序（大库明显更快） */
+    var _ak = S.view + '|' + tracks.length + '|' + amode + '|' +
+      viewQuery('albums') + '|' + (S.search || '') + '|' + (S.albumSortRev || 0);
+    if (AM._albCacheKey === _ak && AM._albCache) {
+      renderAlbumGridFromCache(c, AM._albCache);
+      return;
+    }
     var byAlbum = {};
     tracks.forEach(function (t) {
       var m = trackMeta(t);
@@ -2508,34 +2683,14 @@
       var r = col ? col.compare(ka, kb) : ka.localeCompare(kb);
       return r !== 0 ? r : (col ? col.compare(a.name, b.name) : a.name.localeCompare(b.name));
     });
-    var grid = el('div', 'am-album-grid');
-    keys.forEach(function (k) {
+    /* 先建缓存数据，再交给统一的按需渲染（首屏 42 张、滚到底再补、插入后补封面） */
+    var _cache = keys.map(function (k) {
       var a = byAlbum[k];
-      var card = el('div', 'am-album-card');
-      var img = el('img'); img.alt = ''; img.loading = 'lazy';
-      albumCover(a.tracks[0], function (url) { if (url) img.src = url; }); // 与表格共享专辑级缓存
-      card.appendChild(img);
-      card.appendChild(el('div', 'am-album-name', a.name));
-      card.appendChild(el('div', 'am-album-sub', a.artist + ' · ' + a.tracks.length + ' 首'));
-      card.onclick = function () { S.albumKey = k; renderView(); };
-      // V4.3.22：专辑右键——删除整个专辑（仅移出曲库 / 连同源文件，弹窗勾选确认）
-      card.oncontextmenu = function (e) {
-        e.preventDefault();
-        var pop = R.pop;
-        pop.innerHTML = '';
-        pop.appendChild(el('div', 'am-pop-head', a.name)); // V4.4：标题改不可点样式
-        pop.appendChild(el('div', 'am-pop-sep'));
-        var md = el('button', 'am-pop-item', '🗑 删除该专辑（' + a.tracks.length + ' 首）…');
-        md.onclick = function () { pop.classList.remove('on'); deleteTracks(a.tracks.map(function (t) { return t.path; })); };
-        pop.appendChild(md);
-        pop.classList.add('on');
-        var w = pop.offsetWidth, h = pop.offsetHeight;
-        pop.style.left = Math.min(e.clientX, window.innerWidth - w - 12) + 'px';
-        pop.style.top = Math.min(e.clientY, window.innerHeight - h - 12) + 'px';
-      };
-      grid.appendChild(card);
+      return { name: a.name, artist: a.artist, count: a.tracks.length, first: a.tracks[0], tracks: a.tracks };
     });
-    c.appendChild(grid);
+    AM._albCache = _cache;
+    AM._albCacheKey = _ak;
+    renderAlbumGridFromCache(c, _cache);
   }
 
   function renderPlaylistHead(c) {
@@ -2763,6 +2918,29 @@
       if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
     }, 0);
   }
+
+  /* 视图没变的重绘保持滚动位置：删除/添加曲库歌曲、收藏等操作后不再跳回顶部 */
+  (function () {
+    var _rv = renderView;
+    function _vkey() { return [S.view, S.albumKey || '', S.folderPath || '', S.msOn ? '1' : '0'].join('|'); }
+    var _lastKey = _vkey();
+    renderView = function () {
+      var key = _vkey();
+      var c = R.content;
+      var keep = (c && key === _lastKey) ? c.scrollTop : -1;
+      var out = _rv.apply(this, arguments);
+      if (keep > 0 && c) {
+        c.scrollTop = keep;
+        if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
+        setTimeout(function () {
+          c.scrollTop = keep;
+          if (S._tbl) { S._tbl.lastStart = -1; S._tbl.lastEnd = -1; renderAmWindow(); }
+        }, 0);
+      }
+      _lastKey = key;
+      return out;
+    };
+  })();
   function msExit() { S.msOn = false; if (S.msSel) S.msSel.clear(); renderKeepScroll(); }
   function renderMsToolbar(c, tracks) {
     var bar = el('div', 'am-ms-bar');

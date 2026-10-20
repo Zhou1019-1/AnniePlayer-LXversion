@@ -3082,16 +3082,8 @@ function amModeSvg(id) {
     var cv = R.vizBar;
     if (!cv || !S.mounted || document.hidden) return;
     if (window.annieTheme && annieTheme.current !== 'am') return;
-    if (window.annieSettings && annieSettings.ui.amViz === false) {
-      if (cv.style.display !== 'none') cv.style.display = 'none';
-      var _r0 = document.getElementById('am-root'); if (_r0) _r0.classList.add('am-viz-off');
-      return;
-    }
-    var _r1 = document.getElementById('am-root'); if (_r1) _r1.classList.remove('am-viz-off');
-    if (cv.style.display === 'none') cv.style.display = '';
-    /* V4.4.7：取色/模式轮询必须排在「频谱条有没有尺寸」之前——沉浸模式里 .am-vizbar 是
-       display:none（宽高 0），原来在这儿就 return 了，氛围模式面板的配色会永远停在
-       进沉浸前那一首（表现：沉浸里切歌，面板频谱色不变） */
+    /* 取色轮询放在「频谱条是否显示」判断之前：主频谱条隐藏或在沉浸模式时也要更新 vizPal，
+       否则氛围面板的 L/R 与频谱会一直用强调色 */
     var now = Date.now();
     if (now - vizColorAt > 1000) { // 强调色/模式/封面 1s 轮询（支持自定义强调色与切歌实时切换）
       vizColorAt = now;
@@ -3107,6 +3099,16 @@ function amModeSvg(id) {
         }
       }
     }
+    if (window.annieSettings && annieSettings.ui.amViz === false) {
+      if (cv.style.display !== 'none') cv.style.display = 'none';
+      var _r0 = document.getElementById('am-root'); if (_r0) _r0.classList.add('am-viz-off');
+      return;
+    }
+    var _r1 = document.getElementById('am-root'); if (_r1) _r1.classList.remove('am-viz-off');
+    if (cv.style.display === 'none') cv.style.display = '';
+    /* V4.4.7：取色/模式轮询必须排在「频谱条有没有尺寸」之前——沉浸模式里 .am-vizbar 是
+       display:none（宽高 0），原来在这儿就 return 了，氛围模式面板的配色会永远停在
+       进沉浸前那一首（表现：沉浸里切歌，面板频谱色不变） */
     var w = cv.clientWidth, h = cv.clientHeight;
     if (!w || !h) return;
     if (cv.width !== w * 2) { cv.width = w * 2; cv.height = h * 2; } // 2x 高清

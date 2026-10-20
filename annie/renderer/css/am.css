@@ -1957,3 +1957,27 @@ html[data-motion="off"] #am-root::before {
 #am-root:not(.am-hdr-line) .am-side .am-side-h.am-h-stuck::after {
   background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 12%, color-mix(in srgb, var(--am-glass-2) 42%, transparent));
 }
+
+/* ===== V4.5.1：侧栏排版统一 ===== */
+/* 行高 33、上下内边距 4（三种间隙一致） */
+#am-root .am-side > .am-side-h {
+  height: 33px; min-height: 33px; padding-top: 4px; padding-bottom: 4px;
+  margin-top: 0; padding-left: 10px; gap: 4px;
+}
+#am-root .am-side .am-nav { min-height: 33px; padding-top: 4px; padding-bottom: 4px; gap: 10px; }
+/* 图标在 20px 列内居中（折叠箭头不参与，保持贴左） */
+#am-root .am-side .am-nav-ico { justify-content: center; text-align: center; }
+#am-root .am-side .am-side-caret { width: 16px; min-width: 16px; justify-content: flex-start; }
+/* 分组头与相邻可见行各 +0.5px；头→头不动 */
+#am-root .am-side .am-side-h + .am-nav:not(.am-grp-hidden) { margin-top: 0.5px; }
+#am-root .am-side .am-nav:not(.am-grp-hidden) + .am-side-h { margin-top: 0.5px; }
+/* 顶部留白 8px（底部 10px），吸顶头钉在内容区顶部 */
+#am-root .am-side { padding-top: 8px; }
+#am-root .am-side > .am-side-h { top: 0; }
+/* 吸顶胶囊：高 31px（= 搜索框），上沿贴顶 */
+#am-root:not(.am-hdr-line) .am-side .am-side-h.am-h-stuck::after { top: 0; bottom: 2px; }
+/* 侧栏 SVG 图标统一尺寸 */
+#am-root .am-side .am-nav-ico > svg { width: 18px; height: 18px; display: block; }
+
+/* 文字与图标/封面垂直居中（行高收紧，避免文字整体偏下） */
+#am-root .am-side .am-nav-name { line-height: 1; display: flex; align-items: center; }

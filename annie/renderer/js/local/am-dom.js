@@ -336,6 +336,16 @@
   var ensureMeta = AM.ensureMeta;
   var ensureMetaDeep = AM.ensureMetaDeep;
   var albumCover = AM.albumCover;
+  /* 行内封面：优先用这首文件自己的内嵌封面（同专辑不同内嵌图会各不相同），
+     拿不到再退回专辑级共享封面兜底 */
+  function rowCover(t, cb) {
+    var p = (t && (t.path || (t.cue && t.cue.src) || (t.iso && t.iso.src))) || '';
+    if (!p || !AM.ensureCover) { albumCover(t, cb); return; }
+    AM.ensureCover(p, function (u) {
+      if (u) cb(u);
+      else albumCover(t, cb);
+    });
+  }
   var folderRoots = AM.folderRoots;
   var folderChildren = AM.folderChildren;
   var normP = AM.normP;
@@ -790,7 +800,9 @@
     scrollMemRestoreTick();   // V4.4.9：重启后恢复侧栏/内容区滚动位置
     var lyr = el('aside', 'am-lyrics');
     // V4.3.22：面板顶部封面（绝对定位叠加在歌词滚动区上方；无封面/开关关闭时隐藏）
-    R.lyrCover = el('img', 'am-lyr-cover'); R.lyrCover.alt = '';
+    R.lyrCoverBg = el('div', 'am-lyr-cover-bg');   // 长方形封面的模糊铺底
+  lyr.appendChild(R.lyrCoverBg);
+  R.lyrCover = el('img', 'am-lyr-cover'); R.lyrCover.alt = '';
     lyr.appendChild(R.lyrCover);
     // V4.3.26：封面大小可拖拽调节（右下角把手对角拖拽 140–280px，CSS 变量驱动，localStorage 记忆）。
     // 把手挂 .am-lyrics（封面同容器）——overflow:hidden 不影响内部正坐标子元素。
@@ -2774,7 +2786,7 @@
       var tdCover = el('td');
       var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy'; img.draggable = false;
       img.style.visibility = 'hidden';
-      albumCover(t, function (url) { if (url) { img.src = url; img.style.visibility = ''; } });
+      rowCover(t, function (url) { if (url) { img.src = url; img.style.visibility = ''; } });
       tdCover.appendChild(img); tr.appendChild(tdCover);
     }
     if (opts.grouped) tr.appendChild(el('td', 'am-c-covercell'));
@@ -4224,6 +4236,50 @@ renderView();
   }, true);
   document.addEventListener('dragend', function () { window.__amDragging = false; stop(); }, true);
   document.addEventListener('drop', function () { window.__amDragging = false; stop(); }, true);
+})();
+
+
+/* ===== 歌词折叠按钮贴合面板真实左边缘 =====
+   窄窗口时 .am-lyrics 可能被布局溢出推出视口，而按钮仍按 --am-lyr-w（=面板宽度）定位，
+   两者相差几像素，缝隙里露出背景（封面取色），看起来像一条彩色分界线。 */
+(function () {
+  if (window.__amFoldAlign) return;
+  window.__amFoldAlign = 1;
+  var raf = 0;
+  function place() {
+    raf = 0;
+    var root = document.getElementById('am-root');
+    var f = document.querySelector('#am-root .am-lyr-fold');
+    var L = document.querySelector('#am-root .am-lyrics');
+    if (!root || !f || !L) return;
+    if (!root.classList.contains('am-lyr-on')) { f.style.right = '0px'; return; }
+    var vw = document.documentElement.clientWidth;
+    var left = L.getBoundingClientRect().left;
+    /* 与面板左边缘对齐后再左移 0.1px（保留两位小数，避免取整把它吃掉） */
+    var r = Math.max(0, vw - left) + 0.7;
+    f.style.right = (Math.round(r * 100) / 100).toFixed(2) + 'px';
+    f.style.zIndex = '4';
+  }
+  function kick() {
+    if (raf) return;
+    raf = requestAnimationFrame(place);
+  }
+  window.addEventListener('resize', kick);
+  document.addEventListener('scroll', kick, true);
+  document.addEventListener('transitionend', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('am-lyrics')) kick();
+  }, true);
+  /* 类切换 / 面板尺寸变化都重新对齐 */
+  function watch() {
+    var root = document.getElementById('am-root');
+    var L = document.querySelector('#am-root .am-lyrics');
+    if (!root || !L) { setTimeout(watch, 800); return; }
+    try { new MutationObserver(kick).observe(root, { attributes: true, attributeFilter: ['class'] }); } catch (e) { }
+    try { new ResizeObserver(kick).observe(L); } catch (e2) { }
+    place();
+  }
+  watch();
+  window.__amFoldPlace = kick;
 })();
 
 })();

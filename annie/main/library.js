@@ -152,7 +152,7 @@ function initCoverDiskCache(dir) {
     coverDiskIndex = new Map();
     coverDiskBytes = 0;
     for (const f of fs.readdirSync(dir)) {
-      const m = /^([0-9a-f]{40})_\d+\..+$/.exec(f);
+      const m = /^(?:v2_)?([0-9a-f]{40})_\d+\..+$/.exec(f);   // 兼容 v2_ 前缀
       if (m) {
         coverDiskIndex.set(m[1], f);
         try { coverDiskBytes += fs.statSync(path.join(dir, f)).size; } catch { }
@@ -187,7 +187,7 @@ function getDiskCover(filePath, mtimeMs) {
   if (!coverDiskIndex || !mtimeMs) return undefined;
   const h = coverSha1(filePath);
   const fn = coverDiskIndex.get(h);
-  if (!fn || !fn.startsWith(h + '_' + Math.floor(mtimeMs) + '.')) return undefined; // mtime 漂移 = 失效
+  if (!fn || !fn.startsWith('v2_' + h + '_' + Math.floor(mtimeMs) + '.')) return undefined; // 版本 / mtime 漂移 = 失效
   if (fn.endsWith('.none')) return null;
   try {
     const buf = fs.readFileSync(path.join(coverDiskDir, fn));
@@ -210,7 +210,7 @@ function setDiskCover(filePath, mtimeMs, coverDataUrl) {
   if (!coverDiskDir || !coverDiskIndex || !mtimeMs) return;
   try {
     const h = coverSha1(filePath);
-    const base = h + '_' + Math.floor(mtimeMs);
+    const base = 'v2_' + h + '_' + Math.floor(mtimeMs);   // v2：等比缩放后的封面
     const old = coverDiskIndex.get(h);
     if (old) {
       if (old.startsWith(base + '.')) return; // 同版本已缓存
@@ -352,8 +352,14 @@ async function shrinkCoverIfNeeded(buf) {
     const img = nativeImage.createFromBuffer(buf);
     if (img && !img.isEmpty()) {
       const sz = img.getSize();
-      const scaled = (sz.width > COVER_SHRINK_SIZE || sz.height > COVER_SHRINK_SIZE)
-        ? img.resize({ width: Math.min(sz.width, COVER_SHRINK_SIZE), height: Math.min(sz.height, COVER_SHRINK_SIZE), quality: 'good' })
+      /* 等比缩放：按最长边缩到 640，另一维按比例算，避免把 16:9 拉成正方形 */
+      const _maxSide = Math.max(sz.width, sz.height);
+      const scaled = _maxSide > COVER_SHRINK_SIZE
+        ? img.resize({
+            width: Math.max(1, Math.round(sz.width * COVER_SHRINK_SIZE / _maxSide)),
+            height: Math.max(1, Math.round(sz.height * COVER_SHRINK_SIZE / _maxSide)),
+            quality: 'good'
+          })
         : img;
       const jpg = scaled.toJPEG(85);
       if (jpg && jpg.length && jpg.length < buf.length) return jpg;

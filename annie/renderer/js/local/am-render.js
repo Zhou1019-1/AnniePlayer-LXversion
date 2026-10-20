@@ -27,6 +27,16 @@
   var trackMeta = AM.trackMeta;
   var ensureCover = AM.ensureCover;
   var albumCover = AM.albumCover;
+  /* 曲目封面：优先本文件内嵌图（同专辑不同内嵌图各不相同），取不到再退回专辑级共享封面 */
+  function trackCover(t, cb) {
+    var p = '';
+    try { p = (t && (t.path || (t.cue && t.cue.src) || (t.iso && t.iso.src))) || ''; } catch (e) { p = ''; }
+    if (!p) { albumCover(t, cb); return; }
+    ensureCover(p, function (u) {
+      if (u) cb(u);
+      else albumCover(t, cb);
+    });
+  }
   var albumKeyOf = AM.albumKeyOf;
   var srcFileOf = AM.srcFileOf;
   var refreshPlaylists = AM.refreshPlaylists;
@@ -251,7 +261,7 @@ function amModeSvg(id) {
        点开面板要等好几秒。改成只有滚到列表可视区 ±400px 内才真正去解。 */
     var qCoverObs = null, qCoverPend = new WeakMap();
     function qCoverLazy(img, track) {
-      if (typeof IntersectionObserver !== 'function') { albumCover(track, function (u) { if (u) img.src = u; }); return; }
+      if (typeof IntersectionObserver !== 'function') { trackCover(track, function (u) { if (u) img.src = u; }); return; }
       if (!qCoverObs) {
         qCoverObs = new IntersectionObserver(function (entries) {
           for (var i = 0; i < entries.length; i++) {
@@ -260,7 +270,7 @@ function amModeSvg(id) {
             qCoverObs.unobserve(en.target);
             var tr = qCoverPend.get(en.target);
             qCoverPend['delete'](en.target);
-            if (tr) albumCover(tr, (function (node) { return function (u) { if (u) node.src = u; }; })(en.target));
+            if (tr) trackCover(tr, (function (node) { return function (u) { if (u) node.src = u; }; })(en.target));
           }
         }, { root: list, rootMargin: '400px 0px' });
       }
@@ -2450,6 +2460,21 @@ function amModeSvg(id) {
   /* V4.4：沉浸封面切歌交叉转场——旧封面克隆为 ghost 淡出微缩，新封面从模糊放大态淡入；
    * 经典（.am-imm-cover 方角）与彩胶（.am-vinyl-cover 圆形标签）共用，ghost 克隆原 class 继承圆角。
    * 无封面/首次/切到无封面不交叉（直接走 swapCover），避免空层闪烁。 */
+  var immCovTimer = 0;
+  /* 只有长方形封面才放大；正方形保持原尺寸（放大后会压到歌名） */
+  function markImmCoverShape() {
+    try {
+      var im = R.immCover;
+      if (!im) return;
+      if (!im.__shapeBound) {
+        im.__shapeBound = 1;
+        im.addEventListener('load', markImmCoverShape);
+      }
+      var w = im.naturalWidth, h = im.naturalHeight;
+      if (!w || !h) return;
+      im.classList.toggle('am-imm-wide', (w / h) > 1.15);
+    } catch (e) { }
+  }
   function immCoverCrossfade(url) {
     var img = R.immCover;
     if (!img) return;
@@ -2466,10 +2491,16 @@ function amModeSvg(id) {
     ghost.src = nu;
     host.appendChild(ghost);
     img.classList.remove('am-swap', 'am-cov-in');
+    /* 底层立刻换成新图，保证一定切；顶层 ghost 只负责淡入过渡 */
+    img.src = nu;
+    markImmCoverShape();
+    void img.offsetWidth;
+    img.classList.add('am-cov-in');
     void ghost.offsetWidth;
     ghost.classList.add('am-cov-in');
-    setTimeout(function () {
-      if (img.isConnected) { img.src = nu; }
+    if (immCovTimer) clearTimeout(immCovTimer);
+    immCovTimer = setTimeout(function () {
+      immCovTimer = 0;
       if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
     }, 380);
   }
@@ -2535,6 +2566,25 @@ function amModeSvg(id) {
       e.preventDefault(); e.stopPropagation();
       try { toggleImmersive(false); } catch (x) { }
     }, true);
+  })();
+
+  /* 沉浸模式：文字随窗口比例缩放（以 1280×720 为基准），再乘设置里的字号系数 */
+  (function () {
+    if (window.__amImmFsBound) return;
+    window.__amImmFsBound = 1;
+    function apply() {
+      try {
+        var root = document.getElementById('am-root');
+        if (!root) return;
+        var k = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+        k = Math.max(0.85, Math.min(1.45, k));
+        var ls = (S && S.lyrScale) ? S.lyrScale : 1;
+        root.style.setProperty('--am-imm-fs', (k * ls).toFixed(3));
+      } catch (e) { }
+    }
+    window.addEventListener('resize', apply);
+    apply();
+    setInterval(apply, 1200);
   })();
 
   function refreshAuxProgress() {
@@ -2614,6 +2664,7 @@ function amModeSvg(id) {
     // V4.3.22：顶栏封面变化时镜像到歌词面板封面，并标记有无封面（CSS 据此给歌词区顶部让位）
     if (img === R.npCover && R.lyrCover) {
       swapCover(R.lyrCover, url);
+      if (R.lyrCoverBg) R.lyrCoverBg.style.backgroundImage = url ? 'url("' + url + '")' : '';
       var root = document.getElementById('am-root');
       if (root) {
         root.classList.toggle('am-lyrcover-has', !!url);
@@ -2833,7 +2884,7 @@ function amModeSvg(id) {
     } else {
       var srcPath = (state.currentCue && state.currentCue.src) ||
                     (state.currentIso && state.currentIso.src) || (t && t.path) || p;
-      if (srcPath) (t ? albumCover : ensureCover).call(null, t || srcPath, function (url) {
+      if (srcPath) (t ? trackCover : ensureCover).call(null, t || srcPath, function (url) {
         if (state.currentPath !== p) return;
         if (url && url.indexOf('data:') === 0) smtcCoverThumb(url, function (small) { S._smtcCover = small; S._smtcCoverReady = true; pushSmtc(); }); /* V4.4.7：SMTC 封面（缩到 400px） */
         swapCover(R.npCover, url || null);

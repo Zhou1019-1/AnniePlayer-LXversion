@@ -2021,3 +2021,38 @@ body.am-row-dragging { cursor: grabbing; }
 #am-root .am-imm-queue .am-q-list {
   padding-bottom: 6px !important;
 }
+
+
+/* ===== 本轮：封面比例 / 模糊铺底 / 沉浸封面与字号 / 折叠按钮 / 面板边线 ===== */
+#am-root .am-lyr-cover { object-fit: contain; background: transparent; z-index: 4; }
+#am-root .am-lyr-cover-bg {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%) scale(1.18);
+  width: var(--am-lyrcover-size, 200px); aspect-ratio: 1;
+  border-radius: 12px; overflow: hidden;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  filter: blur(18px) saturate(1.6) brightness(1.02);
+  opacity: 1; z-index: 3; pointer-events: none;
+}
+#am-root .am-lyr-cover-bg:not([style*="url("]) { display: none; }
+#am-root.am-lyrcover-off .am-lyr-cover-bg { display: none; }
+
+#am-root .am-imm-cover {
+  aspect-ratio: auto !important; height: auto !important;
+  max-height: 74vh; width: 100%; object-fit: contain;
+}
+#am-root .am-imm-cover:not(.am-imm-wide) { transform: none !important; }
+#am-root .am-imm-cover.am-imm-wide { transform: scale(1.15) !important; }
+
+#am-root .am-imm-title,
+#am-root .am-imm-sub,
+#am-root .am-imm-fmt,
+#am-root .am-imm-cur,
+#am-root .am-imm-remain,
+#am-root .am-imm-lyr .am-lyr-line,
+#am-root .am-imm-lyr .am-lyr-sub { zoom: var(--am-imm-fs, 1); }
+
+/* 待播清单收起按钮：与歌词面板收起按钮同一水平线并贴边 */
+#am-root .am-imm-q-fold { top: calc(50% + 35px) !important; left: -27.5px !important; }
+
+/* B 方案：歌词面板不画左边线（连 1px 边带一起去掉，否则会显出一条白线） */
+#am-root .am-lyrics { border-left-color: transparent !important; border-left-width: 0 !important; }

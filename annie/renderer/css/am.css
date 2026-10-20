@@ -1946,3 +1946,14 @@ html[data-motion="off"] #am-root::before {
 /* 内容区滚动时隐藏歌词折叠按钮，避免挡住滚动条 */
 #am-root .am-lyr-fold { transition: opacity .18s ease; }
 #am-root.am-rolling .am-lyr-fold { opacity: 0 !important; pointer-events: none; }
+
+/* 搜索框 / 吸顶条 / A–Z：用不受冷色偏向影响的颜色，保持半透明叠加 */
+#am-root .am-side > .am-search {
+  background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 12%, color-mix(in srgb, var(--am-glass-2) 34%, transparent));
+}
+#am-root .am-side > .am-search:hover {
+  background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 18%, color-mix(in srgb, var(--am-glass-2) 44%, transparent));
+}
+#am-root:not(.am-hdr-line) .am-side .am-side-h.am-h-stuck::after {
+  background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 12%, color-mix(in srgb, var(--am-glass-2) 42%, transparent));
+}

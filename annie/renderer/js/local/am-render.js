@@ -1727,10 +1727,12 @@ function amModeSvg(id) {
       if (!pal) {
         root.style.removeProperty('--am-cover-c1');
         root.style.removeProperty('--am-cover-c2');
+            root.style.removeProperty('--am-cover-vivid');
         return;
       }
       root.style.setProperty('--am-cover-c1', pal.primary);
       root.style.setProperty('--am-cover-c2', pal.accent);
+              root.style.setProperty('--am-cover-vivid', pal.vivid || pal.primary);
     });
   };
   AM.refreshImmMode = function () {
@@ -2512,11 +2514,13 @@ function amModeSvg(id) {
           if (!url) {
             root.style.removeProperty('--am-cover-c1');
             root.style.removeProperty('--am-cover-c2');
+            root.style.removeProperty('--am-cover-vivid');
           } else {
             window.amVizColor.analyze(url, function (pal) {
               if (!pal) {
                 root.style.removeProperty('--am-cover-c1');
                 root.style.removeProperty('--am-cover-c2');
+            root.style.removeProperty('--am-cover-vivid');
                 return;
               }
               /* 搜索框底色来源可选：跟随封面 / 跟随频谱主色 / 不着色 */
@@ -2525,6 +2529,7 @@ function amModeSvg(id) {
                       : (_tone === 'prime' ? pal.primary : (pal.vizUi || pal.primary));
               root.style.setProperty('--am-cover-c1', _c1);
               root.style.setProperty('--am-cover-c2', pal.accent);
+              root.style.setProperty('--am-cover-vivid', pal.vivid || pal.primary);
               /* 深色封面给更高占比、浅色封面给更低占比，避免「深封面一片白、浅封面一片灰」 */
               try {
                 var _m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(pal.primary || '');

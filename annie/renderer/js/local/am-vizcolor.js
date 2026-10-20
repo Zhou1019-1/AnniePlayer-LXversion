@@ -32,8 +32,9 @@
   function css(r, g, b) { return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')'; }
 
   function analyzePixels(data) {
-    var NB = 12, buckets = [], i;
+    var NB = 12, buckets = [], buckets2 = [], i;
     for (i = 0; i < NB; i++) buckets.push({ r: 0, g: 0, b: 0, w: 0, h: i / NB });
+    for (i = 0; i < NB; i++) buckets2.push({ r: 0, g: 0, b: 0, w: 0, h: i / NB });
     var colorful = 0, total = 0, lumSum = 0;
     for (i = 0; i < data.length; i += 4) {
       if (data[i + 3] < 128) continue;
@@ -49,6 +50,10 @@
                : (hsl.h > 0.72 && hsl.h <= 0.82 ? 0.55 : 0.25));
       var wgt = (0.06 + hsl.s) * (1 - Math.abs(hsl.l - 0.5)) * cool;
       b.r += data[i] * wgt; b.g += data[i + 1] * wgt; b.b += data[i + 2] * wgt; b.w += wgt;
+      /* 不做冷色偏向的第二套统计：用来给「搜索框/吸顶条」取更贴近封面的颜色 */
+      var wgt2 = (0.06 + hsl.s) * (1 - Math.abs(hsl.l - 0.5));
+      var b2 = buckets2[Math.min(NB - 1, Math.floor(hsl.h * NB))];
+      b2.r += data[i] * wgt2; b2.g += data[i + 1] * wgt2; b2.b += data[i + 2] * wgt2; b2.w += wgt2;
     }
     if (!total) return null; if (colorful / total < 0.06) {
       /* V4.4.8：纯白/黑白封面——按平均亮度给浅灰，频谱另用压暗版，避免浅到看不见 */
@@ -98,8 +103,43 @@
     var pr = base.r + (255 - base.r) * lift;
     var pg = base.g + (255 - base.g) * lift;
     var pb = base.b + (255 - base.b) * lift;
+    /* 鲜艳版：用未做冷色偏向的桶，取面积够大且最鲜艳的一个并适度提饱和 */
+    function hslToRgb(h, s, l) {
+      function f(p, q, t2) {
+        if (t2 < 0) t2 += 1; if (t2 > 1) t2 -= 1;
+        if (t2 < 1 / 6) return p + (q - p) * 6 * t2;
+        if (t2 < 1 / 2) return q;
+        if (t2 < 2 / 3) return p + (q - p) * (2 / 3 - t2) * 6;
+        return p;
+      }
+      if (!s) return [l * 255, l * 255, l * 255];
+      var q2 = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      var p2 = 2 * l - q2;
+      return [f(p2, q2, h + 1 / 3) * 255, f(p2, q2, h) * 255, f(p2, q2, h - 1 / 3) * 255];
+    }
+    var _list2 = buckets2.filter(function (b) { return b.w > 0; })
+      .map(function (b) { return { r: b.r / b.w, g: b.g / b.w, b: b.b / b.w, w: b.w }; })
+      .sort(function (a, b) { return b.w - a.w; });
+    var _best = null;
+    var _w0 = _list2.length ? _list2[0].w : 0;
+    _list2.slice(0, 8).forEach(function (cc) {
+      var s = rgbToHsl(cc.r, cc.g, cc.b);
+      if (s.s < 0.14) return;
+      var share = _w0 ? cc.w / _w0 : 0;
+      if (share < 0.15) return;   // 只认面积够大的色，避免小面积高饱和元素带偏
+      var score = s.s * Math.min(1, share * 2.2) * (1 - Math.abs(s.l - 0.55));
+      if (!_best || score > _best.score) _best = { c: cc, s: s, score: score, share: share };
+    });
+    var vividCss = css(pr, pg, pb);
+    if (_best) {
+      var _ts = Math.max(0.42, Math.min(0.62, _best.s.s * 1.1));
+      var _tl = Math.max(0.5, Math.min(0.62, _best.s.l < 0.4 ? 0.54 : _best.s.l));
+      var _rgb = hslToRgb(_best.s.h, _ts, _tl);
+      vividCss = css(_rgb[0], _rgb[1], _rgb[2]);
+    }
     return {
-      vizUi: css(pr, pg, pb),   /* 只用主色：暖色挑选会让 Chromium 反复重建大图层，内存暴涨 */
+      vizUi: css(pr, pg, pb),
+      vivid: vividCss,   /* 只用主色：暖色挑选会让 Chromium 反复重建大图层，内存暴涨 */
       primary: css(pr, pg, pb),
       accent: css(acc.r, acc.g, acc.b),
       stops: stops

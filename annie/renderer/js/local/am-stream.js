@@ -740,21 +740,26 @@
       tabBox.appendChild(chip);
     });
     bar.appendChild(tabBox);
-    var qSel = document.createElement('select');
-    qSel.className = 'am-st-quality';
-    [['flac24bit', 'Hi-Res'], ['flac', 'FLAC'], ['320k', '320K'], ['128k', '128K']].forEach(function (q) {
-      var o = document.createElement('option'); o.value = q[0]; o.textContent = q[1]; qSel.appendChild(o);
-    });
-    qSel.value = S.stQuality;
-    qSel.onchange = function () {
-      S.stQuality = qSel.value;
+    /* V4.4.8：音质选择改用与播放列表一致的胶囊 + 弹层（原生 select 下拉由系统绘制，跟皮肤不统一） */
+    var Q_OPTS = [['flac24bit', 'Hi-Res'], ['flac', 'FLAC'], ['320k', '320K'], ['128k', '128K']];
+    function onQualityPick(v) {
+      S.stQuality = v;
       // 音质档变化 → 实时刷新音质角标为「实际会播的档位」
       document.querySelectorAll('[data-stq]').forEach(function (b) {
         var song = S.stResults[+b.dataset.stq];
         if (song) fillQualityBadge(b, song);
       });
-    };
-    bar.appendChild(qSel);
+    }
+    if (AM.sortDropdown) {
+      bar.appendChild(AM.sortDropdown(Q_OPTS, S.stQuality, onQualityPick));
+    } else {
+      var qSel = document.createElement('select');
+      qSel.className = 'am-st-quality';
+      Q_OPTS.forEach(function (q) { var o = document.createElement('option'); o.value = q[0]; o.textContent = q[1]; qSel.appendChild(o); });
+      qSel.value = S.stQuality;
+      qSel.onchange = function () { onQualityPick(qSel.value); };
+      bar.appendChild(qSel);
+    }
     c.appendChild(bar);
 
     // 平台
@@ -1154,20 +1159,26 @@
     var bShuffle = el('button', 'am-btn', '🔀 随机播放');
     bShuffle.onclick = function () { if (pl.items.length) playSplAt(pl, Math.floor(Math.random() * pl.items.length)); };
     acts.appendChild(bPlay); acts.appendChild(bShuffle);
-    // V4.4.6：在线歌单排序下拉（平台原始顺序 / 演唱者 A–Z）
-    var splSortSel = el('select', 'am-sort-sel');
-    splSortSel.title = '排序方式';
-    [['default', '平台原始顺序'], ['azArtist', '演唱者 A–Z']].forEach(function (o) {
-      var op = document.createElement('option');
-      op.value = o[0]; op.textContent = o[1];
-      splSortSel.appendChild(op);
-    });
-    splSortSel.value = AM.splSortMode ? AM.splSortMode() : 'default';
-    splSortSel.onchange = function () {
-      if (window.annieSettings) { annieSettings.ui.amSplSort = splSortSel.value; annieSettings.save(); }
+    // V4.4.8：在线歌单排序改用和「播放列表」同一套胶囊 + 弹层
+    //（原来这里是原生 select，下拉列表由系统绘制，跟皮肤完全不统一）
+    var SPL_SORT_OPTS = [['default', '平台原始顺序'], ['azArtist', '演唱者 A–Z']];
+    function onSplSortPick(v) {
+      if (window.annieSettings) { annieSettings.ui.amSplSort = v; annieSettings.save(); }
       renderSplTable();
-    };
-    acts.appendChild(splSortSel);
+    }
+    if (AM.sortDropdown) {
+      acts.appendChild(AM.sortDropdown(SPL_SORT_OPTS, AM.splSortMode ? AM.splSortMode() : 'default', onSplSortPick));
+    } else {
+      var splSortSel = el('select', 'am-sort-sel');
+      SPL_SORT_OPTS.forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0]; op.textContent = o[1];
+        splSortSel.appendChild(op);
+      });
+      splSortSel.value = AM.splSortMode ? AM.splSortMode() : 'default';
+      splSortSel.onchange = function () { onSplSortPick(splSortSel.value); };
+      acts.appendChild(splSortSel);
+    }
     info.appendChild(acts);
     head.appendChild(info);
     // V4.3.26：歌单内搜索——输入即过滤定位（IME 组词期不重建输入框；data-st 保留原始索引，随机播放定位不受影响）

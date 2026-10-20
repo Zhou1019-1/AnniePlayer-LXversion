@@ -428,14 +428,23 @@
     var acc = el('div'); acc.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap';
     acc.appendChild(el('div', 'am-view-h', 'Qobuz'));
     acc.appendChild(el('span', 'am-c-dim', esc(QZ.st.userName) + (QZ.st.subscription ? ' · ' + QZ.st.subscription : '')));
-    var sel = document.createElement('select'); sel.className = 'am-st-input'; sel.style.cssText = 'width:auto;padding:4px 8px';
-    [4, 3, 2, 1].forEach(function (q) {
-      var o = document.createElement('option'); o.value = q; o.textContent = QLABEL[q];
-      if (q === quality()) o.selected = true;
-      sel.appendChild(o);
-    });
-    sel.onchange = function () { localStorage.setItem('annie.qz.q', sel.value); };
-    acc.appendChild(sel);
+    /* V4.4.8：Qobuz 音质 → 胶囊弹层（原生 select 标签会被截断，样式也不统一） */
+    if (AM.sortDropdown) {
+      acc.appendChild(AM.sortDropdown(
+        [['4', QLABEL[4]], ['3', QLABEL[3]], ['2', QLABEL[2]], ['1', QLABEL[1]]],
+        String(quality()),
+        function (v) { localStorage.setItem('annie.qz.q', v); }
+      ));
+    } else {
+      var sel = document.createElement('select'); sel.className = 'am-st-input';
+      [4, 3, 2, 1].forEach(function (q) {
+        var o = document.createElement('option'); o.value = q; o.textContent = QLABEL[q];
+        if (q === quality()) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () { localStorage.setItem('annie.qz.q', sel.value); };
+      acc.appendChild(sel);
+    }
     var bOut = el('button', 'am-btn', '退出登录');
     bOut.onclick = function () { window.mine.qobuzLogout().then(function (st) { QZ.st = st; QZ.results = []; QZ.detail = null; refresh(); }); };
     acc.appendChild(bOut);
@@ -460,13 +469,21 @@
     var row = el('div', 'am-st-inputrow');
     var inp = document.createElement('input'); inp.className = 'am-st-input'; inp.placeholder = '搜索 Qobuz…'; inp.value = QZ.kw;
     inp.onkeydown = function (e) { if (e.key === 'Enter') { QZ.kw = inp.value.trim(); doSearch(); } };
-    var tsel = document.createElement('select'); tsel.className = 'am-st-input'; tsel.style.cssText = 'width:auto;padding:4px 8px';
-    [['album', '专辑'], ['track', '单曲'], ['playlist', '歌单']].forEach(function (kv) {
-      var o = document.createElement('option'); o.value = kv[0]; o.textContent = kv[1];
-      if (kv[0] === QZ.type) o.selected = true;
-      tsel.appendChild(o);
-    });
-    tsel.onchange = function () { QZ.type = tsel.value; };
+    /* V4.4.8：搜索类型 → 胶囊弹层 */
+    var qzType = QZ.type;
+    var tsel = AM.sortDropdown
+      ? AM.sortDropdown([['album', '专辑'], ['track', '单曲'], ['playlist', '歌单']], qzType,
+          function (v) { QZ.type = v; })
+      : (function () {
+          var s = document.createElement('select'); s.className = 'am-st-input';
+          [['album', '专辑'], ['track', '单曲'], ['playlist', '歌单']].forEach(function (kv) {
+            var o = document.createElement('option'); o.value = kv[0]; o.textContent = kv[1];
+            if (kv[0] === qzType) o.selected = true;
+            s.appendChild(o);
+          });
+          s.onchange = function () { QZ.type = s.value; };
+          return s;
+        })();
     var bGo = el('button', 'am-btn am-btn-accent', '搜索');
     bGo.onclick = function () { QZ.kw = inp.value.trim(); doSearch(); };
     row.appendChild(inp); row.appendChild(tsel); row.appendChild(bGo);

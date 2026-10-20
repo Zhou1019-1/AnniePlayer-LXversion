@@ -1068,6 +1068,13 @@
         btn.classList.add('pl-drag-src');
         try { btn.setPointerCapture(pid); } catch (err) { }
       }
+      // 侧栏边缘自动滚动（拖到上下边缘时）
+      var _side = document.querySelector('#am-root .am-side');
+      if (_side) {
+        var _sr = _side.getBoundingClientRect();
+        if (e.clientY > _sr.bottom - 60) _side.scrollTop += 14;
+        else if (e.clientY < _sr.top + 60) _side.scrollTop -= 14;
+      }
       // 找当前悬停的歌单按钮
       var over = document.elementFromPoint(e.clientX, e.clientY);
       var target = over && over.closest ? over.closest('.am-nav[data-plid]') : null;
@@ -2815,11 +2822,109 @@
     // V4.3.22：播放列表内拖拽排序（与迷你待播清单同一交互：拖到目标行放下即插入该行前）
     // V4.4.6：azArtist 排序模式下视图顺序≠paths 顺序，拖拽落点会错位——此时禁用拖拽
     if (opts.inPlaylist && !S.msOn && !(AM.plSortMode && AM.plSortMode() === 'azArtist')) {
-      tr.draggable = true;
+      tr.draggable = false;
       tr.removeAttribute('title');
+      tr.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0) return;
+        if (e.target.closest && e.target.closest('button, input, a, .am-c-acts')) return;
+        var sx = e.clientX, sy = e.clientY, active = false, tgt = null, after = false;
+        try { tr.setPointerCapture(e.pointerId); } catch (er0) { }
+        var c = document.querySelector('.am-content');
+        function clearMark() {
+          var m = c ? c.querySelectorAll('tr.drop-before, tr.drop-after') : [];
+          for (var i = 0; i < m.length; i++) m[i].classList.remove('drop-before', 'drop-after');
+        }
+        var ghost = null;
+        function onMove(ev) {
+          if (!active) {
+            if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
+            active = true;
+            document.body.classList.add('am-row-dragging');
+            /* 拖动预览：只显示一个小胶囊（歌名），居中跟随指针 */
+            try {
+              ghost = document.createElement('div');
+              ghost.className = 'am-row-ghost';
+              ghost.textContent = m.title || (t && t.name) || '';
+              document.body.appendChild(ghost);
+              tr.classList.add('am-row-src');
+            } catch (eg) { ghost = null; }
+          }
+          if (ghost) {
+            ghost.style.left = Math.round(ev.clientX) + 'px';
+            ghost.style.top = Math.round(ev.clientY + 16) + 'px';
+          }
+          /* 落点：直接按 Y 坐标在表格里找行（组头/歌曲行都算），
+             不依赖 elementFromPoint —— 组头的单元格可能命中不到，之前拖上去没反应 */
+          function findRowByY(y) {
+            if (!c) return null;
+            var all = c.querySelectorAll('tr.am-tr, tr.am-grp-tr');
+            var best = null, bestD = 1e9;
+            for (var k = 0; k < all.length; k++) {
+              var rr = all[k].getBoundingClientRect();
+              if (rr.height <= 0) continue;
+              if (y >= rr.top && y <= rr.bottom) return all[k];
+              var d = Math.min(Math.abs(y - rr.top), Math.abs(y - rr.bottom));
+              if (d < bestD) { bestD = d; best = all[k]; }
+            }
+            return (best && bestD <= 48) ? best : null;
+          }
+          var row = findRowByY(ev.clientY);
+          clearMark();
+          tgt = null;
+          if (row && row !== tr) {
+            if (row.classList.contains('am-grp-tr')) {
+              /* 组头：按上下半区分指示线位置（上沿/下沿），
+                 落点结果都是「该组第一首之前」——组头下面就是该组歌曲，两者等效 */
+              var hr = row.getBoundingClientRect();
+              var below = (ev.clientY - hr.top) > hr.height / 2;
+              row.classList.add(below ? 'drop-after' : 'drop-before');
+              tgt = row; after = below;
+            } else if (row.dataset.path) {
+              var r = row.getBoundingClientRect();
+              after = (ev.clientY - r.top) > r.height / 2;
+              row.classList.add(after ? 'drop-after' : 'drop-before');
+              tgt = row;
+            }
+          }
+          if (c) {   // 边缘自动滚动
+            var rr = c.getBoundingClientRect();
+            if (ev.clientY < rr.top + 70) c.scrollTop -= 14;
+            else if (ev.clientY > rr.bottom - 70) c.scrollTop += 14;
+          }
+          ev.preventDefault();
+        }
+        function resolveDrop() {
+          if (!tgt) return null;
+          if (tgt.dataset && tgt.dataset.path) return { path: tgt.dataset.path, after: after };
+          if (tgt.classList && tgt.classList.contains('am-grp-tr')) {
+            var n = tgt.nextElementSibling;
+            while (n && !(n.classList && n.classList.contains('am-tr'))) n = n.nextElementSibling;
+            if (n && n.dataset.path) return { path: n.dataset.path, after: false };
+            var all = document.querySelectorAll('.am-content tr.am-tr');
+            var last = all.length ? all[all.length - 1] : null;
+            if (last && last.dataset.path) return { path: last.dataset.path, after: true };
+          }
+          return null;
+        }
+        function onUp() {
+          document.removeEventListener('pointermove', onMove, true);
+          document.removeEventListener('pointerup', onUp, true);
+          try { tr.releasePointerCapture(e.pointerId); } catch (er1) { }
+          document.body.classList.remove('am-row-dragging');
+          if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+          ghost = null;
+          tr.classList.remove('am-row-src');
+          clearMark();
+          var drop = active ? resolveDrop() : null;
+          if (drop && drop.path && drop.path !== t.path) {
+            movePlRow(opts.plId, t.path, drop.path, drop.after);
+          }
+        }
+        document.addEventListener('pointermove', onMove, true);
+        document.addEventListener('pointerup', onUp, true);
+      });
       tr.addEventListener('dragstart', function (e) {
-        S._plDragPath = t.path;
-        try { e.dataTransfer.effectAllowed = 'move'; } catch (er) { }
+        e.preventDefault();   // 禁掉原生拖拽（它会让滚轮失效）
       });
       /* V4.4.7（PR#6）：拖动指示改成和侧栏歌单一致的「插入线」——
          落在行上半 = 插到该行前，下半 = 插到该行后；原来整行红框看不出方向 */
@@ -2866,6 +2971,12 @@
     arr.splice(fi, 1);
     var at = arr.indexOf(toPath);          // 删除后目标索引自动前移
     arr.splice(after ? at + 1 : at, 0, fromPath); // 上半屏插前、下半屏插后
+    /* 分组视图：清掉「手动组顺序」，让分组回到"按 pl.paths 连续专辑块"。
+       这样把别的组的歌拖进某组中间时，该组会被真正拆成两块、歌落在拆开的位置；
+       若改成写入去重的组顺序，同一专辑的两个块排序时又会并回去（看起来没动）。 */
+    try {
+      if (typeof amSongGroupOn === 'function' && amSongGroupOn()) grpOrderClear();
+    } catch (e0) { }
     renderView(); // 本地先重排即时反馈，持久化随后
     window.mine.playlistReorder(plId, arr).then(function (pls) { S.playlists = pls; }).catch(function () { });
   }
@@ -3270,6 +3381,13 @@
       if (!st || st.sig !== grpSortSig() || !Array.isArray(st.order)) return null;
       return st.order;
     } catch (e) { return null; }
+  }
+  function grpOrderClear() {
+    try {
+      var all = grpStore();
+      delete all[grpSortSig()];
+      localStorage.setItem('annieplayer.am.grpOrder', JSON.stringify(all));
+    } catch (e) { }
   }
   function grpOrderSet(order) {
     try {
@@ -4028,4 +4146,84 @@ renderView();
     clearTimeout(tmr);
     tmr = setTimeout(function () { root.classList.remove('am-rolling'); }, 650);
   }, true);
+
+/* ===== 拖动自动滚动：行/文件拖到列表上下边缘时持续滚动 ===== */
+(function () {
+  if (window.__amDragScroll) return;
+  window.__amDragScroll = 1;
+  var EDGE = 80;          // 边缘感应高度
+  var STEP = 18;          // 每帧滚动像素
+  var dir = 0, raf = 0, host = null;
+
+  function pickHost(t) {
+    var content = document.querySelector('.am-content');
+    if (!t || !t.closest) return window.__amDragOriginHost || content;
+    /* 待播清单（抽屉 / 沉浸 / 迷你）：只滚它自己的列表，绝不带动主内容区 */
+    var q = t.closest('.am-q-list');
+    if (q) return q;
+    var qBox = t.closest('.am-q-drawer, .am-imm-queue, .am-mini-q, .am-q');
+    if (qBox) {
+      var ql = qBox.querySelector('.am-q-list');
+      if (ql) return ql;
+    }
+    /* 侧栏（拖动歌单排序） */
+    var side = t.closest('.am-side');
+    if (side) return side;
+    var c = t.closest('.am-content');
+    if (c) return c;
+    return window.__amDragOriginHost || content;
+  }
+  function loop() {
+    if (!dir || !host) { raf = 0; return; }
+    var before = host.scrollTop;
+    host.scrollTop = before + dir * STEP;
+    if (host.scrollTop === before) { raf = 0; return; }   // 到顶/到底
+    raf = requestAnimationFrame(loop);
+  }
+  function stop() {
+    dir = 0;
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  }
+  function update(e) {
+    if (!e || typeof e.clientY !== 'number') return;
+    var h = pickHost(e.target);
+    if (!h) return;
+    host = h;
+    var r = h.getBoundingClientRect();
+    var y = e.clientY;
+    if (y < r.top + EDGE) dir = -1;
+    else if (y > r.bottom - EDGE) dir = 1;
+    else dir = 0;
+    if (dir && !raf) raf = requestAnimationFrame(loop);
+    if (!dir) stop();
+  }
+  document.addEventListener('dragstart', function (e) {
+    var h = pickHost(e.target);
+    window.__amDragOriginHost = h || null;
+  }, true);
+  document.addEventListener('dragover', update, true);
+  document.addEventListener('dragenter', update, true);
+  document.addEventListener('dragend', stop, true);
+  document.addEventListener('drop', stop, true);
+  document.addEventListener('dragleave', function (e) {
+    if (!e.relatedTarget) stop();
+  }, true);
+  /* 拖动中滚轮：手动补一份滚动（部分浏览器拖拽期间不滚容器） */
+  document.addEventListener('wheel', function (e) {
+    if (!window.__amDragging) return;
+    var h = pickHost(e.target);
+    if (!h) return;
+    if (h.scrollHeight <= h.clientHeight) return;
+    h.scrollTop += e.deltaY;
+    e.preventDefault();
+  }, { capture: true, passive: false });
+  /* 拖拽开始/结束标记（行可拖、文件拖入都算） */
+  document.addEventListener('dragstart', function (e) {
+    window.__amDragging = true;
+    update(e);
+  }, true);
+  document.addEventListener('dragend', function () { window.__amDragging = false; stop(); }, true);
+  document.addEventListener('drop', function () { window.__amDragging = false; stop(); }, true);
+})();
+
 })();

@@ -288,19 +288,63 @@ function amModeSvg(id) {
       }
       if (opts && typeof opts.dragIdx === 'number') {
         var myIdx = opts.dragIdx;
-        row.draggable = true;
         row.title = '拖拽调整顺序';
-        row.addEventListener('dragstart', function (e) { qDragIdx = myIdx; try { e.dataTransfer.effectAllowed = 'move'; } catch (er) { } });
-        row.addEventListener('dragover', function (e) { e.preventDefault(); row.classList.add('drag-over'); });
-        row.addEventListener('dragleave', function () { row.classList.remove('drag-over'); });
-        row.addEventListener('drop', function (e) {
-          e.preventDefault(); row.classList.remove('drag-over');
-          if (qDragIdx >= 0 && qDragIdx !== myIdx) moveQueueRow(qDragIdx, myIdx);
-          qDragIdx = -1;
+        /* 用 Pointer 事件拖动：原生 HTML5 拖拽期间浏览器不派发滚轮事件，无法滚轮翻页 */
+        row.addEventListener('pointerdown', function (e) {
+          if (e.button !== 0) return;
+          if (e.target.closest && e.target.closest('.am-q-del')) return;
+          var pid = e.pointerId, sy = e.clientY, active = false, tgt = null, after = false;
+          try { row.setPointerCapture(pid); } catch (er) { }
+          function clearOver() {
+            var xs = list.querySelectorAll('.am-q-row.drag-over');
+            for (var z = 0; z < xs.length; z++) xs[z].classList.remove('drag-over');
+          }
+          function onMove(ev) {
+            if (!active) {
+              if (Math.abs(ev.clientY - sy) < 5) return;
+              active = true; row.classList.add('q-drag-src');
+            }
+            var under = document.elementFromPoint(ev.clientX, ev.clientY);
+            var r2 = under && under.closest ? under.closest('.am-q-row') : null;
+            clearOver();
+            tgt = null;
+            if (r2 && r2 !== row) {
+              var rr = r2.getBoundingClientRect();
+              after = (ev.clientY - rr.top) > rr.height / 2;
+              r2.classList.add('drag-over');
+              tgt = r2;
+            }
+            var lr = list.getBoundingClientRect();
+            if (ev.clientY < lr.top + 60) list.scrollTop -= 12;
+            else if (ev.clientY > lr.bottom - 60) list.scrollTop += 12;
+            ev.preventDefault();
+          }
+          function onUp() {
+            row.removeEventListener('pointermove', onMove);
+            row.removeEventListener('pointerup', onUp);
+            row.removeEventListener('pointercancel', onUp);
+            row.classList.remove('q-drag-src');
+            clearOver();
+            try { row.releasePointerCapture(pid); } catch (er2) { }
+            if (!active || !tgt) return;
+            row._dragMoved = true;
+            setTimeout(function () { row._dragMoved = false; }, 60);
+            var rows = Array.prototype.slice.call(list.querySelectorAll('.am-q-row'));
+            var toIdx = rows.indexOf(tgt);
+            if (toIdx < 0) return;
+            var insertAt = toIdx > myIdx ? toIdx - 1 : toIdx;
+            if (after) insertAt += 1;
+            if (insertAt !== myIdx) moveQueueRow(myIdx, insertAt);
+          }
+          row.addEventListener('pointermove', onMove);
+          row.addEventListener('pointerup', onUp);
+          row.addEventListener('pointercancel', onUp);
         });
-        row.addEventListener('dragend', function () { qDragIdx = -1; });
       }
-      row.onclick = onclick;
+      row.onclick = function (e) {
+        if (row._dragMoved) { row._dragMoved = false; e.stopPropagation(); e.preventDefault(); return; }
+        if (onclick) onclick.call(row, e);
+      };
       list.appendChild(row);
     }
 
@@ -348,6 +392,13 @@ function amModeSvg(id) {
       var q = state.queue || [];
       if (!q.length) { list.appendChild(el('div', 'am-q-empty', '（无待播曲目）')); return; }
       list.appendChild(el('div', 'am-q-empty', '拖拽调整顺序，✕ 移除'));
+      try {
+        var _qq = state.queue || [];
+        var _qn = _qq.length;
+        list.setAttribute('data-qsig', 'L' + _qn + '|' +
+          String(_qn ? ((_qq[0] && (_qq[0].path || _qq[0].id || _qq[0].title || '')) || '') : '').slice(-24) + '|' +
+          String(_qn ? ((_qq[_qn - 1] && (_qq[_qn - 1].path || _qq[_qn - 1].id || _qq[_qn - 1].title || '')) || '') : '').slice(-24));
+      } catch (eQ) { }
 
       /* 待播清单分帧渲染的世代号（切歌重建、关面板/重开、清空互不干扰）——
          只被下面的 pumpQueueRows 用到，所以放在这里而不是信息面板块里。
@@ -1991,6 +2042,15 @@ function amModeSvg(id) {
       if (!list) return false;
       var rows = list.querySelectorAll('.am-q-row');
       if (!rows.length) return false;
+      /* 队列内容变了（换歌单 / 播放别的列表）→ 交给调用方重建，不能只挪高亮 */
+      try {
+        var _q = state.currentStream ? (S._playList || S.stResults || []) : (state.queue || []);
+        var _n = _q.length;
+        var _sig = (state.currentStream ? 'S' : 'L') + _n + '|' +
+          String(_n ? ((_q[0] && (_q[0].path || _q[0].id || _q[0].title || '')) || '') : '').slice(-24) + '|' +
+          String(_n ? ((_q[_n - 1] && (_q[_n - 1].path || _q[_n - 1].id || _q[_n - 1].title || '')) || '') : '').slice(-24);
+        if (list.getAttribute('data-qsig') !== _sig) return false;
+      } catch (eS) { }
       var curPath = state.currentPath || '';
       var hasPath = false;
       for (var i = 0; i < rows.length; i++) {
@@ -2432,6 +2492,51 @@ function amModeSvg(id) {
       if (R.vol) R.miniVol.value = R.vol.value;
     }
   }
+  /* ===== 沉浸模式 Esc 逐级退出 =====
+     顺序：关信息面板 → 退出真全屏 → 取消最大化 → 退出沉浸回主界面 → 之后无反应。
+     设置中心 / 排序弹层 / 氛围模式打开时让位给它们自己的 Esc 处理。 */
+  (function () {
+    if (window.__immEscBound) return;
+    window.__immEscBound = 1;
+    function _isMaxed() {
+      try {
+        return window.outerWidth >= screen.availWidth - 2 &&
+               window.outerHeight >= screen.availHeight - 2;
+      } catch (e) { return false; }
+    }
+    function _exitFs() {
+      window.__immFs = false;
+      try { if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(false); } catch (x) { }
+      try {
+        if (R.immBtnFs) {
+          R.immBtnFs.classList.remove('on');
+          R.immBtnFs.title = '真全屏（隐藏任务栏）';
+        }
+        if (window.annieSettings && annieSettings.ui) {
+          annieSettings.ui.amImmFullscreen = false;
+          annieSettings.save();
+        }
+      } catch (x2) { }
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (!S.imm) return;
+      if (document.querySelector('#settings-panel.open')) return;
+      if (document.querySelector('.am-pop.on, .am-sort-pop.on')) return;
+      if (window.annieAmbient && window.annieAmbient.isOpen && window.annieAmbient.isOpen()) return;
+      if (_infoOn) { e.preventDefault(); e.stopPropagation(); setImmInfo(false); return; }
+      if (window.__immFs) { e.preventDefault(); e.stopPropagation(); _exitFs(); return; }
+      if (_isMaxed()) {
+        e.preventDefault(); e.stopPropagation();
+        try { if (window.mine && window.mine.winMax) window.mine.winMax(); } catch (x) { }
+        return;
+      }
+      /* 最后一级：退出沉浸回主界面 */
+      e.preventDefault(); e.stopPropagation();
+      try { toggleImmersive(false); } catch (x) { }
+    }, true);
+  })();
+
   function refreshAuxProgress() {
     if (state.seeking) return; // V4.3.16：拖动预览期间不覆盖沉浸/迷你进度
     var pct = S.dur > 0 ? Math.min(1, S.pos / S.dur) : 0;

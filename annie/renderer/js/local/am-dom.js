@@ -1342,7 +1342,8 @@
     if (!g) return;
     var s = grpCollapsedSet();
     if (s.has(g.id)) s.delete(g.id); else s.add(g.id);
-    renderView();
+    /* 折叠/展开只改变行数，保持当前滚动位置（此前 renderView 会跳回顶部） */
+    renderKeepScroll();
   }
   function grpSub(g, aa) {
     var m = S.meta[g.first.path] || {};
@@ -1482,7 +1483,7 @@
     var s = grpCollapsedSet();
     if (s.size) s.clear();
     else for (var i = 0; i < ids.length; i++) s.add(ids[i]);
-    renderView();
+    renderKeepScroll();
     return true;
   }
   if (!window.__amGrpTab) {
@@ -1551,6 +1552,17 @@
       hs[i].classList.toggle('am-h-stuck', stuck && r.top <= sr.top + 9);
     }
     syncSideThumb();
+  }
+  /* 侧栏宽度变化（拖分栏 / 折叠轨 / 窗口缩放）时同步悬浮滚动条位置——
+     拖分栏不触发 window resize，此前 thumb 会停在旧位置，看起来跑到左边 */
+  var _sideRO = null;
+  function watchSideSize() {
+    try {
+      var side = document.querySelector('#am-root .am-side');
+      if (!side || !window.ResizeObserver || _sideRO) return;
+      _sideRO = new ResizeObserver(function () { queueSideSticky(); });
+      _sideRO.observe(side);
+    } catch (e) { }
   }
   var _sideStkRaf = 0;
   function queueSideSticky() {
@@ -1623,7 +1635,7 @@
     var y = sr.top + (maxTop ? (side.scrollTop / maxTop) * (ch - h) : 0);
     t.style.height = h + 'px';
     t.style.top = Math.round(y) + 'px';
-    t.style.right = Math.round(window.innerWidth - sr.right + 2) + 'px';
+    t.style.right = Math.max(2, Math.round(window.innerWidth - sr.right + 2)) + 'px';
   }
   document.addEventListener('mousemove', function (e) {
     var el = e.target;
@@ -1957,6 +1969,7 @@
     inp.oninput = function () { if (inp._ime) return; commitSideSearch(); };
     sch.appendChild(inp); sb.appendChild(sch);
     applySideGroups(sb);
+    watchSideSize();   // 观察侧栏尺寸，宽度变化时重算悬浮滚动条位置
   }
 
   /* ---------------- 内容区 ---------------- */

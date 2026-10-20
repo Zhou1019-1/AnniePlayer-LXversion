@@ -24,6 +24,7 @@
     amImmMode: 'classic',   // V4.4：沉浸模式样式 classic 经典双栏 | vinyl 彩胶唱片
     amResume: true,         // V4.4：重启恢复上次播放（曲目/队列/进度；上次暂停则恢复为暂停态）
     amSongSort: 'az',       // V4.3.15：AM 歌曲视图排序 az|azArtist|name|mtimeDesc|mtimeAsc|sizeDesc|sizeAsc
+    amSongGroup: false,     // 歌曲列表按专辑分组（连续块；默认平铺）——分组表头依赖此开关
     amFavSort: 'az',        // V4.3.22：AM 喜爱歌曲视图排序（选项同歌曲视图）
     amAlbumSort: 'az',      // V4.3.22：AM 专辑视图排序 az|azArtist|countDesc|countAsc
     amAlbumDetailSort: 'release', // V4.4.3：AM 专辑详情页曲目排序 release(按发布碟号/曲目号)|az|azArtist|name|durDesc|durAsc
@@ -1731,6 +1732,10 @@
     /* ================= V4.4：AM 界面（主题专属设置页） ================= */
     buildWallpaperSection(pgUiAm);
     var sAmI = section(pgUiAm, '界面布局');
+    // 歌曲列表按专辑分组（与分组表头、右键组头配套；默认平铺）
+    checkRow(sAmI, '歌曲列表按专辑分组（默认平铺）', 'amSongGroup', function () {
+      if (ui.amSongGroup && ui.amSongSort === 'az') { ui.amSongSort = 'albumAz'; }   // 开分组时默认按专辑名 A–Z
+    }, '专辑 分组 专辑分组 组头 平铺 album group');
     sAmI.appendChild(el('div', 'set-hint', '本页设置仅作用于 AM 主题（切换主题互不影响）'));
     // —— 顶栏位置（顶部/底部）——
     var tbRow = markItem(el('div', 'set-row'), 'am 顶栏位置 底部 播放控制 进度条 转移 topbar bottom');

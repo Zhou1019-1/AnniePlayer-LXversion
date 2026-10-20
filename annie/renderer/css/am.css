@@ -2052,7 +2052,7 @@ body.am-row-dragging { cursor: grabbing; }
 #am-root .am-imm-lyr .am-lyr-sub { zoom: var(--am-imm-fs, 1); }
 
 /* 待播清单收起按钮：与歌词面板收起按钮同一水平线并贴边 */
-#am-root .am-imm-q-fold { top: calc(50% + 35px) !important; left: -27.5px !important; }
+#am-root .am-imm-q-fold { top: 50% !important; left: -27.5px !important; }
 
 /* B 方案：歌词面板不画左边线（连 1px 边带一起去掉，否则会显出一条白线） */
 #am-root .am-lyrics { border-left-color: transparent !important; border-left-width: 0 !important; }

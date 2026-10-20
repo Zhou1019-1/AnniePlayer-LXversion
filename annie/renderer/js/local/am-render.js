@@ -2397,18 +2397,21 @@ function amModeSvg(id) {
     var nu = url || '';
     if (old === nu) return;
     if (!old || !nu) { img.classList.remove('am-cov-in'); swapCover(img, nu || null); return; }
+    /* 新封面以克隆层盖在上面淡入：旧图仍在下面，不会再"盖回"新图。
+       （原实现把旧封面克隆到上层淡出，切歌时会看到：先新图、再闪回旧图、再回新图） */
     var host = img.parentElement;
     var ghost = img.cloneNode(false);
     ghost.removeAttribute('id');
     ghost.className += ' am-imm-cov-ghost';
+    ghost.src = nu;
     host.appendChild(ghost);
     img.classList.remove('am-swap', 'am-cov-in');
-    img.src = nu;
-    void img.offsetWidth;
-    img.classList.add('am-cov-in');
     void ghost.offsetWidth;
-    ghost.classList.add('am-cov-out');
-    setTimeout(function () { if (ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 560);
+    ghost.classList.add('am-cov-in');
+    setTimeout(function () {
+      if (img.isConnected) { img.src = nu; }
+      if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    }, 380);
   }
   /* 沉浸/迷你界面字段同步（封面/标题/参数 与 进度/播放键）；封面走 swapCover 弹入动画 */
   function syncAuxViews() {

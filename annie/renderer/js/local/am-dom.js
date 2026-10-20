@@ -433,16 +433,38 @@
     R.vol.type = 'range'; R.vol.min = 0; R.vol.max = 100;
     var legacyVol = document.querySelector('#volume');
     R.vol.value = legacyVol ? legacyVol.value : 80;
+    /* 音量条节流：原来每个 input 都发一次 IPC 到引擎 + 落一次盘，连续拖动时
+       主进程被这些消息打断，手感一卡一卡。现在引擎按帧节流、落盘防抖 400ms，
+       松手（change）再补一次最终值。 */
+    var _volRaf = 0, _volSaveT = 0, _volPending = -1;
+    function volPush(g) {
+      try { window.mine.engine('volume.set', { gain: g }).catch(function () { }); } catch (e9) { }
+    }
     R.vol.oninput = function () {
       var g = (+R.vol.value) / 100;
-      window.mine.engine('volume.set', { gain: g }).catch(function () { });
       if (legacyVol) legacyVol.value = R.vol.value; // 与粒子舞台底栏音量保持同步
-      /* V4.4.9：持久化音量（此前只发引擎不落盘，重启会被 store 里的旧值覆盖成 100%） */
+      try { if (state.library) state.library.volume = g; } catch (e0) { }
+      _volPending = g;
+      if (!_volRaf) {
+        _volRaf = requestAnimationFrame(function () {
+          _volRaf = 0;
+          if (_volPending >= 0) { volPush(_volPending); _volPending = -1; }
+        });
+      }
+      clearTimeout(_volSaveT);
+      _volSaveT = setTimeout(function () {
+        try { if (window.mine && window.mine.saveSettings) window.mine.saveSettings({ volume: +R.vol.value / 100 }); } catch (e1) { }
+      }, 400);
+    };
+    R.vol.addEventListener('change', function () {
+      clearTimeout(_volSaveT);
+      var g = (+R.vol.value) / 100;
+      volPush(g);
       try {
         if (state.library) state.library.volume = g;
         if (window.mine && window.mine.saveSettings) window.mine.saveSettings({ volume: g });
-      } catch (e0) { }
-    };
+      } catch (e2) { }
+    });
     vol.appendChild(R.vol);
     // V4.3.22：音量条关闭延迟——离开悬停区后保持 600ms，给鼠标移过去的余量；
     // 期间重新进入立即取消隐藏（隐形桥 ::after 是 vol 子元素，移到桥上不触发 mouseleave）

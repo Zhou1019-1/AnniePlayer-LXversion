@@ -356,6 +356,37 @@
     box.scrollTop = val;
   }
   AM.progScrollTop = progScrollTop;
+  /* V4.5：窗口 resize 时歌词容器 reflow、浏览器被动钳制 scrollTop 都会触发 scroll 事件——
+     若距上次程序滚动超过 800ms 会被误判为「手动翻看」并锁 5 秒保护期，期间 tick 不再重定位，
+     反复拖窗口边框 = 反复续满保护期，当前行就此跑偏不归位（用户实测：多次变比例后当前行跑到顶部）。
+     修复：resize 期间给程序滚动窗口续命防误判，并在防抖 150ms 后按各自跟随位置主动重定位一次。 */
+  var _lyrResizeT = 0;
+  (function bindLyrResizeReloc() {
+    window.addEventListener('resize', function () {
+      var boxes = [R.lyrScroll, R.immLyrBox, R.miniLyr];
+      var until = Date.now() + 1000;   // 覆盖整个 resize 抖动期，钳制类 scroll 不被误判手动
+      boxes.forEach(function (b) { if (b) _progScrollUntil.set(b, until); });
+      clearTimeout(_lyrResizeT);
+      _lyrResizeT = setTimeout(function () {
+        var cur = S.lyrCur;
+        if (cur == null || cur < 0) return;
+        try {
+          boxes.forEach(function (b) { if (b) _progScrollUntil.set(b, Date.now() + 800); });
+          var specs = [
+            [R.lyrScroll, lyrPosRate(S.lyrPos, 0.42), true],
+            [R.immLyrBox, lyrPosRate(S.immLyrPos, 0.35), !!(R.imm && S.imm && immLyrActive())],
+            [R.miniLyr, 0.40, !!(R.mini && S.mini && S.miniLyrOn)]
+          ];
+          specs.forEach(function (sp) {
+            var b = sp[0];
+            if (!b || !sp[2] || lyrManualActive(b)) return;   // 用户真在手动翻看时不抢滚动
+            var n = b.children[cur];
+            if (n && n._idx === cur) progScrollTop(b, n.offsetTop - b.clientHeight * sp[1]);
+          });
+        } catch (e) { }
+      }, 150);
+    }, { passive: true });
+  })();
   function autoHideScrollbar(box) {
     if (!box) return;
     var t = 0;

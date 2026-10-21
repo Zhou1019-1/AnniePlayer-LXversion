@@ -4040,6 +4040,7 @@ renderView();
   AM.build = build;
   AM.renderSidebar = renderSidebar;
   AM.renderView = renderView;
+  AM.renderKeepScroll = renderKeepScroll;   // 设置项切换（如分组开关）后原地重绘，不跳滚动位置
   AM.renderAmWindow = renderAmWindow;
   AM.scrollRowIntoView = scrollRowIntoView;
 })();

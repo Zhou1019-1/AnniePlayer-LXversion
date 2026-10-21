@@ -1281,17 +1281,18 @@ function amModeSvg(id) {
     R.immBtnFs.title = '真全屏（隐藏任务栏）';
     R.immBtnFs.onclick = function (e) {
       e.stopPropagation();
-      /* V4.4.8：按实际窗口状态切换，避免「持久化值 true 但窗口没全屏」时第一次点击无效 */
+      /* V4.5：全屏状态统一用 window.__immFs（按钮/Esc/进沉浸自动全屏共用同一状态源），
+         避免「窗口已全屏但按钮状态没跟上」第一次点击无效。按钮=显式改偏好，持久化到设置 */
       var ui = window.annieSettings && annieSettings.ui;
-      var on = !_immFsOn;
-      _immFsOn = on;
+      var on = !window.__immFs;
+      window.__immFs = on;
       if (ui) ui.amImmFullscreen = on;
       try { window.annieSettings.save(); } catch (x) { }
       try { if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(on); } catch (x) { }
       R.immBtnFs.classList.toggle('on', on);
       R.immBtnFs.title = on ? '退出真全屏（显示任务栏）' : '真全屏（隐藏任务栏）';
     };
-    var _immFsOn = false;   // V4.4.8：进入沉浸时窗口一定不是全屏（不再跟随设置）
+    window.__immFs = false;   // 构建按钮栏时复位；进沉浸若自动全屏会在 toggleImmersive 里再置 true
     R.immBtnFs.classList.remove('on');
     cb.insertBefore(R.immBtnFs, bExit);
     /* V4.4.7（秋野奈 PR#5）：沉浸界面最小化按钮（CSS 画横线图标，不用字形——em dash 太宽、U+2212 太窄） */
@@ -1985,9 +1986,18 @@ function amModeSvg(id) {
     // V4.4：沉浸模式真全屏（设置 → AM 界面 开关；退出沉浸无条件复位，非全屏时为无害空操作）
     try {
       var fsOn = !!(window.annieSettings && annieSettings.ui && annieSettings.ui.amImmFullscreen);
-      /* V4.4.8：进沉浸保持主界面窗口大小，不再自动真全屏；退出时若曾全屏则复原 */
-    var immKeepWindowSize = true;
-    if (!want && window.mine && window.mine.winFullScreen && fsOn) window.mine.winFullScreen(false);
+      /* V4.5：设置开启时进沉浸自动真全屏（V4.4.8 曾改为「保持窗口大小」导致开关形同虚设）；
+         __immFs 同步，供 Esc 逐级退出判断。退出沉浸无条件复位（非全屏时是无害空操作） */
+      if (window.mine && window.mine.winFullScreen) {
+        if (want && fsOn) {
+          window.mine.winFullScreen(true); window.__immFs = true;
+          if (R.immBtnFs) { R.immBtnFs.classList.add('on'); R.immBtnFs.title = '退出真全屏（显示任务栏）'; }
+        }
+        else if (!want) {
+          window.mine.winFullScreen(false); window.__immFs = false;
+          if (R.immBtnFs) { R.immBtnFs.classList.remove('on'); R.immBtnFs.title = '真全屏（隐藏任务栏）'; }
+        }
+      }
     } catch (e) { }
     var root = document.getElementById('am-root');
     root.classList.toggle('am-imm-on', want);
@@ -2526,43 +2536,19 @@ function amModeSvg(id) {
       if (R.vol) R.miniVol.value = R.vol.value;
     }
   }
-  /* ===== 沉浸模式 Esc 逐级退出 =====
-     顺序：关信息面板 → 退出真全屏 → 取消最大化 → 退出沉浸回主界面 → 之后无反应。
-     设置中心 / 排序弹层 / 氛围模式打开时让位给它们自己的 Esc 处理。 */
+  /* ===== 沉浸模式 Esc 一次退出 =====
+     V4.5（用户拍板）：无论经典/彩胶、无论是否真全屏/最大化/开着信息面板，
+     Esc 一次直接回主界面（全屏复位、信息面板收起由 toggleImmersive 统一处理）。
+     仅设置中心 / 排序弹层 / 氛围模式打开时让位给它们自己的 Esc 处理。 */
   (function () {
     if (window.__immEscBound) return;
     window.__immEscBound = 1;
-    function _isMaxed() {
-      try {
-        return window.outerWidth >= screen.availWidth - 2 &&
-               window.outerHeight >= screen.availHeight - 2;
-      } catch (e) { return false; }
-    }
-    function _exitFs() {
-      window.__immFs = false;
-      try { if (window.mine && window.mine.winFullScreen) window.mine.winFullScreen(false); } catch (x) { }
-      try {
-        if (R.immBtnFs) {
-          R.immBtnFs.classList.remove('on');
-          R.immBtnFs.title = '真全屏（隐藏任务栏）';
-        }
-        /* V4.5：Esc 只退出本次全屏，不改「沉浸模式真全屏」设置——下次进沉浸仍按设置自动全屏 */
-      } catch (x2) { }
-    }
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (!S.imm) return;
       if (document.querySelector('#settings-panel.open')) return;
       if (document.querySelector('.am-pop.on, .am-sort-pop.on')) return;
       if (window.annieAmbient && window.annieAmbient.isOpen && window.annieAmbient.isOpen()) return;
-      if (_infoOn) { e.preventDefault(); e.stopPropagation(); setImmInfo(false); return; }
-      if (window.__immFs) { e.preventDefault(); e.stopPropagation(); _exitFs(); return; }
-      if (_isMaxed()) {
-        e.preventDefault(); e.stopPropagation();
-        try { if (window.mine && window.mine.winMax) window.mine.winMax(); } catch (x) { }
-        return;
-      }
-      /* 最后一级：退出沉浸回主界面 */
       e.preventDefault(); e.stopPropagation();
       try { toggleImmersive(false); } catch (x) { }
     }, true);

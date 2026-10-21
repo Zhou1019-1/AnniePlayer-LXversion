@@ -1735,6 +1735,7 @@
     // 歌曲列表按专辑分组（与分组表头、右键组头配套；默认平铺）
     checkRow(sAmI, '歌曲列表按专辑分组（默认平铺）', 'amSongGroup', function () {
       if (ui.amSongGroup && ui.amSongSort === 'az') { ui.amSongSort = 'albumAz'; }   // 开分组时默认按专辑名 A–Z
+      try { var AM = window.__annieAMInternal; if (AM && AM.renderKeepScroll) AM.renderKeepScroll(); } catch (e) { }   // 立即重绘当前视图（保持滚动位置）
     }, '专辑 分组 专辑分组 组头 平铺 album group');
     sAmI.appendChild(el('div', 'set-hint', '本页设置仅作用于 AM 主题（切换主题互不影响）'));
     // —— 顶栏位置（顶部/底部）——

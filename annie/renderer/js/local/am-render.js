@@ -197,6 +197,111 @@ function amModeSvg(id) {
   }
 
   /* ================= 待播清单 / 历史记录（沉浸与迷你共享） ================= */
+  /* V4.5：把曲目插到「下一首」或待播清单末尾——右键菜单 / 多选工具条共用。
+     paths 为曲目路径数组；append=true 追加到末尾，否则插到当前曲之后。返回实际入列数量。 */
+  function enqueueNext(paths, append) {
+    var list = (paths || []).filter(function (p) { return !!p; });
+    if (!list.length) return 0;
+    var byPath = {};
+    try { (allTracks() || []).forEach(function (t) { if (t && t.path) byPath[t.path] = t; }); } catch (e) { }
+    var items = list.map(function (p) {
+      return byPath[p] || { path: p, name: String(p).split(/[\\/]/).pop() };
+    });
+    var q = state.queue || (state.queue = []);
+    var cur = (state.index == null) ? -1 : (state.index | 0);
+    var at = (append || !q.length) ? q.length : Math.max(0, cur + 1);
+    q.splice.apply(q, [at, 0].concat(items));
+    if (at <= cur) state.index = cur + items.length;  // 插在当前曲之前：索引跟着后移，保持当前曲不变
+    /* 已打开的待播面板要重建（新行要出现），但重建会把滚动位置归零——
+       这里先记下当前滚动位置，重建（分帧）完成后再还原，避免浏览到中间时被弹回顶部 */
+    try { if (S.qOn && R.qDrawer) refreshQueueKeepPos(R.qDrawer, at, items.length); } catch (e1) { }
+    try { if (S.immQOn && R.immQ && S.imm) refreshQueueKeepPos(R.immQ, at, items.length); } catch (e2) { }
+    try { if (S.miniQOn && R.miniQ) refreshQueueKeepPos(R.miniQ, at, items.length); } catch (e3) { }
+    return items.length;
+  }
+  /* 刷新已打开的待播面板并保住滚动位置：重建前登记，重建（分帧）完成后在 pump 末尾还原 */
+  function refreshQueueKeepPos(box, insertAt, count) {
+    if (!box) return;
+    qKeepCapture(box, insertAt, count);
+    S._qJumpCur = false;   // 插入/追加刷新优先保持当前位置，不跳到当前曲
+    /* 队列不大时一次性同步建完：避免「清空 → 分帧插入」之间那几帧空白，
+       否则即使最后滚回原位，观感上还是"跳了一下" */
+    _qSyncDrain = true;
+    try { renderQueuePanel(box); } finally { _qSyncDrain = false; }
+  }
+  var _qSyncDrain = false;
+  /* —— 面板重建后的滚动保持 ——
+     renderQueuePanel 会 box.innerHTML='' 再分帧重建，scrollTop 必然归零（原来只在「打开面板」时
+     跳一次当前曲）。这里在刷新前记下「视口内第一行 + 它相对列表顶部的偏移」，分帧建完后按该行的
+     新行号（新行插在它上方则 +插入数）滚回同一偏移。全部用 getBoundingClientRect 计算，
+     不依赖 offsetParent，也不受逐帧插入时 scrollHeight 还在增长的影响（只在最后一行建完后写一次）。 */
+  var qKeepMap = new WeakMap();
+  function qKeepCapture(box, insertAt, count) {
+    var rec = null;
+    try {
+      var l = box.querySelector('.am-q-list');
+      if (l && l.scrollTop > 0) {
+        var lr = l.getBoundingClientRect(), rows = l.querySelectorAll('.am-q-row');
+        for (var i = 0; i < rows.length; i++) {
+          var rr = rows[i].getBoundingClientRect();
+          if (rr.bottom > lr.top + 4) {   // 视口内第一行（可能露出半行）
+            rec = { idx: i, off: rr.top - lr.top, at: insertAt, n: count, ts: Date.now() };
+            break;
+          }
+        }
+      }
+    } catch (e) { }
+    if (rec) qKeepMap.set(box, rec); else qKeepMap['delete'](box);
+  }
+  function qKeepTake(box) {
+    var rec = box && qKeepMap.get(box);
+    if (!rec) return null;
+    qKeepMap['delete'](box);
+    return (Date.now() - rec.ts > 5000) ? null : rec;   // 超过 5s 视为过期，不抢用户此刻的滚动
+  }
+  function qKeepApply(box, list, rec) {
+    try {
+      var rows = list.querySelectorAll('.am-q-row');
+      if (!rows.length) return;
+      var idx = rec.idx;
+      if (rec.at != null && rec.at <= idx) idx += (rec.n || 0);   // 新行落在这行上方 → 行号后移
+      if (idx < 0) idx = 0;
+      if (idx >= rows.length) idx = rows.length - 1;
+      var lr = list.getBoundingClientRect();
+      var top0 = rows[idx].getBoundingClientRect().top - lr.top;  // 此刻 scrollTop 仍为 0
+      var want = top0 - rec.off;
+      list.scrollTop = Math.max(0, Math.min(want, list.scrollHeight - list.clientHeight));
+    } catch (e) { }
+  }
+  /* 待播面板滚动：用 rAF 自己做缓动（逐帧写 scrollTop），不依赖元素的 scroll-behavior。
+     · 常规距离（≤2.5 屏）全程缓动，easeOutCubic，时长按距离伸缩；
+     · 超长距离（几百行）先瞬移到终点前 1.5 屏，再缓动滑完最后一屏——整段跨越时浏览器要逐帧
+       绘制上百个新进视口的行，实测会掉到 10fps 左右（单帧 100~200ms），反而更不流畅；
+     · 逐帧只前进 1~2 行时滚动本身稳定在 ~10ms/帧（压测无 >50ms 的帧）。 */
+  function qSmoothScroll(el, top) {
+    try {
+      if (!el) return;
+      var max = Math.max(0, el.scrollHeight - el.clientHeight);
+      var want = Math.max(0, Math.min(top, max));
+      var from = el.scrollTop;
+      var dist = want - from;
+      if (Math.abs(dist) < 4) return;
+      if (Math.abs(dist) > el.clientHeight * 4) {
+        el.scrollTop = want - (dist > 0 ? 1 : -1) * el.clientHeight * 4;
+        from = el.scrollTop;
+        dist = want - from;
+      }
+      var t0 = performance.now();
+      var dur = Math.min(520, Math.max(220, Math.abs(dist) * 0.18));
+      if (el.__qScrollRAF) cancelAnimationFrame(el.__qScrollRAF);
+      (function step(now) {
+        var k = (now - t0) / dur; if (!(k > 0)) k = 0; else if (k > 1) k = 1;   // rAF 时间戳可能早于 t0
+        var e = 1 - Math.pow(1 - k, 3);            // easeOutCubic
+        el.scrollTop = from + dist * e;
+        el.__qScrollRAF = (k < 1) ? requestAnimationFrame(step) : 0;
+      })(t0);
+    } catch (e) { try { el.scrollTop = top; } catch (e2) { } }
+  }
   function renderQueuePanel(box) {
     box.innerHTML = '';
     /* V4.3：沉浸队列抽屉收回小标签——贴在抽屉左缘外侧垂直居中（收回指引此前不明确） */
@@ -220,6 +325,8 @@ function amModeSvg(id) {
     box.appendChild(tabs);
     var list = el('div', 'am-q-list');
     box.appendChild(list);
+    /* 取出「刷新前登记的滚动位置」（仅待播清单页签），分帧渲染完成后在 pump 末尾还原 */
+    var qKeep = (S.qTab !== 'hist' && S.qTab !== 'cmt') ? qKeepTake(box) : null;
 
     /* V3.5.19：网易云热门评论——流媒体 wy 曲目直接用 songmid，其他按「歌名 歌手」搜 wy 取首条 */
     if (S.qTab === 'cmt') {
@@ -277,7 +384,7 @@ function amModeSvg(id) {
       qCoverPend.set(img, track);
       qCoverObs.observe(img);
     }
-    function addRow(coverUrl, track, title, sub, durText, cur, onclick, opts) {
+    var addRow = function (coverUrl, track, title, sub, durText, cur, onclick, opts) {
       var row = el('div', 'am-q-row' + (cur ? ' cur' : ''));
       if (track && track.path) row.dataset.path = track.path; // V4.4.9：切歌时按 path 只改高亮，不整表重建
       var img = document.createElement('img');
@@ -420,10 +527,11 @@ function amModeSvg(id) {
          面板要等好几秒才弹出来。改成先建外壳 + 每帧只干 ~8ms（超预算就交还事件循环）。 */
       /* V4.4.9：渲染完整队列（此前从 state.index 起，点选靠后的歌会让上面已播曲目从列表消失） */
       var qGen = qGenNext(box), qPut = 0, qStop = q.length;
+      var qSyncNow = _qSyncDrain && qStop <= 600;   // 队列不大：一次建完，避免多帧空白
       (function pumpQueueRows() {
       if (!qGenLive(box, qGen)) return;        // 同一容器又开了一轮渲染 → 这一轮作废
       var qT0 = performance.now();
-      while (qPut < qStop && performance.now() - qT0 < 8) {
+      while (qPut < qStop && (qSyncNow || performance.now() - qT0 < 8)) {
       var i = qPut++;
         (function (t, idx) {
           var m = trackMeta(t);
@@ -435,17 +543,23 @@ function amModeSvg(id) {
         })(q[i], i);
       }
       if (qPut < qStop) { setTimeout(pumpQueueRows, 0); return; }
-      /* 打开面板时把当前曲滚进可视区（只跳一次，避免跟随播放打断手动浏览） */
+      /* 打开面板 / 从别的列表开始播放时把当前曲滚进可视区（只跳一次，避免跟随播放打断手动浏览） */
       if (S._qJumpCur) {
         S._qJumpCur = false;
         try {
           var curRow = list.querySelector('.am-q-row.cur');
           if (curRow) {
-            var rt = curRow.offsetTop - (list.clientHeight - curRow.offsetHeight) / 2;
-            list.scrollTop = Math.max(0, rt);
+            /* 用 rect 计算：行的 offsetParent 是抽屉而不是列表，offsetTop 会把上方页签也算进去 */
+            var lrJ = list.getBoundingClientRect(), crJ = curRow.getBoundingClientRect();
+            /* 重建后直接瞬时定位：列表是从 0 开始新建的，做动画会变成“从顶上滚下来” */
+            var wantJ = list.scrollTop + (crJ.top - lrJ.top) - (list.clientHeight - curRow.offsetHeight) / 2;
+            list.scrollTop = Math.max(0, Math.min(wantJ, list.scrollHeight - list.clientHeight));
           }
         } catch (e0) { }
+      } else if (qKeep) {
+        qKeepApply(box, list, qKeep);
       }
+
       })();
       return;
     }
@@ -614,6 +728,8 @@ function amModeSvg(id) {
     vinylWriteTransform();
   }
   function vinylCrownSeek(from, to) {
+    /* 沉浸进度条点/拖之后立刻对齐歌词，不等下一次 tick */
+    setTimeout(function () { try { if (AM.lyrJumpToCur) AM.lyrJumpToCur(); } catch (e) { } }, 60);
     if (!R.immVinyl) { _crownDragBase = null; return; }
     _crownDragBase = null;
     var dir = to >= from ? 1 : -1;
@@ -717,9 +833,11 @@ function amModeSvg(id) {
         var bits = st.bitsPerSample ? st.bitsPerSample + 'bit' : '';
         var mode = st.exclusive ? '独占' : '共享';
         var tail = '（' + mode + (st.resampled ? '，系统重采样' : '') + '）';
+        /* 顺序与上面「位深 · 采样率」一致：位深在前、采样率在后 */
+        var pair = function (rate, bit) { return [bit || '?', rate].filter(Boolean).join('/'); };
         infoSet('out', (reqRate && outRate && st.requestedRate !== st.outputRate)
-          ? (reqRate + '/' + (bits || '?') + ' → ' + outRate + '/' + (bits || '?') + tail)
-          : ([outRate, bits].filter(Boolean).join('/') + tail));
+          ? (pair(reqRate, bits) + ' → ' + pair(outRate, bits) + tail)
+          : (pair(outRate, bits) + tail));
         infoSet('dac', (st.backendKind ? String(st.backendKind).toUpperCase() : '') + ' ' + mode + (st.deviceName ? ' · ' + st.deviceName : ''));
         if (typeof st.loudGain === 'number' && st.loudGain > 0) {
           var db = 20 * Math.log10(Math.max(1e-6, st.loudGain));
@@ -1829,9 +1947,31 @@ function amModeSvg(id) {
     // 弹层/右键菜单开着时不藏 chrome（💿 彩胶外观、歌词外观等正在交互）
     return !!document.querySelector('#am-root .am-pop.on');   // V4.4.8：信息面板不再阻止静止隐藏 // 信息面板展开时不藏 chrome
   }
+  /* 静默隐藏 chrome 后，进度条+控制栏虽然在视觉上消失但仍占布局位，左列可见部分会偏上。
+     这里量出被隐藏那一段（含前后 gap）的一半高度，供 CSS 把整列下移；恢复时回位。 */
+  var _immShiftT = 0;
+  function syncImmLyrShift() {
+    try {
+      var root = document.getElementById('am-root');
+      var left = root && R.imm ? R.imm.querySelector('.am-imm-left') : null;
+      if (!left) return;
+      var prog = left.querySelector('.am-imm-prog');
+      var ctl = left.querySelector('.am-imm-ctl');
+      if (!prog || !ctl) return;
+      var cs = getComputedStyle(left);
+      var gap = parseFloat(cs.rowGap || cs.gap) || 12;
+      var h = prog.offsetHeight + ctl.offsetHeight + gap * 2;
+      if (h > 0) root.style.setProperty('--am-imm-hide-shift', Math.round(h) + 'px');
+    } catch (e) { }
+  }
+  window.addEventListener('resize', function () {
+    clearTimeout(_immShiftT);
+    _immShiftT = setTimeout(syncImmLyrShift, 200);
+  }, { passive: true });
   function immGoIdle() {
     var root = immRoot();
     if (!root || !S.imm || immPopOpen() || S.immQOn) return; // 弹层/待播面板交互中不藏
+    syncImmLyrShift();
     root.classList.add('am-imm-chrome-off', 'am-imm-cursor-off');
     root.classList.remove('am-imm-dock-on');
   }
@@ -2008,6 +2148,7 @@ function amModeSvg(id) {
       if (S.immLyrOn || immMode() === 'vinyl') buildLyrInto(R.immLyrBox); // 彩胶模式歌词常驻
       if (S.immQOn) renderQueuePanel(R.immQ);
       restoreImmLayout(immMode() === 'vinyl'); // V4.4：按沉浸样式恢复面板展开/歌词滚动（buildLyrInto 之后）
+      syncImmLyrShift();
     }
   }
   function setImmLyr(on) {
@@ -2038,6 +2179,7 @@ function amModeSvg(id) {
     if (on) { S._qJumpCur = true; renderQueuePanel(R.qDrawer); }
   }
   AM.toggleMainQueue = toggleMainQueue;
+  AM.enqueueNext = enqueueNext;
   /* 队列剩余条数角标（流媒体=当前之后的曲目数；本地=当前索引之后） */
   function refreshQBadge() {
     if (!R.btnQBadge) return;
@@ -2069,14 +2211,18 @@ function amModeSvg(id) {
         var _sig = (state.currentStream ? 'S' : 'L') + _n + '|' +
           String(_n ? ((_q[0] && (_q[0].path || _q[0].id || _q[0].title || '')) || '') : '').slice(-24) + '|' +
           String(_n ? ((_q[_n - 1] && (_q[_n - 1].path || _q[_n - 1].id || _q[_n - 1].title || '')) || '') : '').slice(-24);
-        if (list.getAttribute('data-qsig') !== _sig) return false;
+        if (list.getAttribute('data-qsig') !== _sig) { S._qJumpCur = true; return false; }   // 队列被整份换掉（点了别的列表/歌单）→ 重建时定位到当前曲
       } catch (eS) { }
+      /* V4.5：高亮按「行号 == state.index」判定，不再按路径匹配——
+         队列里允许出现同一首歌的多条（下一首播放插入的重复项），按路径会让它们一起高亮 */
+      var curIdx = state.currentStream ? -1 : (state.index | 0);
       var curPath = state.currentPath || '';
+      var byIndex = (S.qTab !== 'hist');   // 历史页签的行不是队列顺序，不能按下标高亮
       var hasPath = false;
       for (var i = 0; i < rows.length; i++) {
         var rp = rows[i].dataset.path || '';
         if (rp) hasPath = true;
-        var on = !state.currentStream && rp && rp === curPath;
+        var on = byIndex ? (curIdx >= 0 && i === curIdx) : (!state.currentStream && rp && rp === curPath);
         if (on !== rows[i].classList.contains('cur')) rows[i].classList.toggle('cur', on);
       }
       return hasPath;
@@ -2483,6 +2629,8 @@ function amModeSvg(id) {
       var w = im.naturalWidth, h = im.naturalHeight;
       if (!w || !h) return;
       im.classList.toggle('am-imm-wide', (w / h) > 1.15);
+      var _g = im.parentElement && im.parentElement.querySelector('.am-imm-cov-ghost');
+      if (_g) _g.classList.toggle('am-imm-wide', im.classList.contains('am-imm-wide'));
     } catch (e) { }
   }
   function immCoverCrossfade(url) {
@@ -3144,7 +3292,41 @@ function amModeSvg(id) {
       if (R.immFmt && S.fmt) R.immFmt.textContent = S.fmt;
     });
     // state.currentPath 变化（playAt 触发后无专用事件）——轮询兜底 + 主题切换时刷新
-    var lastPath = null, lastPlaying = null;
+    var lastPath = null, lastPlaying = null, lastQIndex = -1;
+    /* 队列里同一首歌可能有多条（「下一首播放」插入的重复项）：切到第二条同曲时 currentPath 不变，
+       轮询的「路径变了」分支不会触发，高亮会停在第一条上。这里单独按 state.index 兜底刷新高亮 */
+    function syncQueueCur() {
+      if (S.qTab === 'cmt') return;
+      try { if (S.qOn && R.qDrawer && !amQueueCurUpdate(R.qDrawer)) renderQueuePanel(R.qDrawer); } catch (e1) { }
+      try { if (S.immQOn && R.immQ && S.imm && !amQueueCurUpdate(R.immQ)) renderQueuePanel(R.immQ); } catch (e2) { }
+      try { if (S.miniQOn && R.miniQ && S.mini && !amQueueCurUpdate(R.miniQ)) renderQueuePanel(R.miniQ); } catch (e3) { }
+    }
+    window.__annieQueueSync = syncQueueCur;   // 供 player.js 的 playAt 起播后立即刷新（见下）
+    /* 队列顺序整体变了（切随机播放洗牌等）→ 重建已打开的面板 */
+    window.__annieQueueRefresh = function () {
+      try { if (S.qOn && R.qDrawer) renderQueuePanel(R.qDrawer); } catch (e1) { }
+      try { if (S.immQOn && R.immQ && S.imm) renderQueuePanel(R.immQ); } catch (e2) { }
+      try { if (S.miniQOn && R.miniQ && S.mini) renderQueuePanel(R.miniQ); } catch (e3) { }
+    };
+    /* 从某个列表开始播放（点歌/歌单）→ 重建面板并定位到当前曲 */
+    window.__annieQueueJumpCur = function () {
+      S._qJumpCur = true;
+      window.__annieQueueRefresh();
+    };
+    /* 同一列表里换一首点播：不重建，只把当前行滚进可视区（已经看得见就不动） */
+    window.__annieQueueScrollCur = function () {
+      try {
+        if (!S.qOn || !R.qDrawer) return;
+        var list = R.qDrawer.querySelector('.am-q-list');
+        if (!list) return;
+        var cur = list.querySelector('.am-q-row.cur');
+        if (!cur) return;
+        var lr = list.getBoundingClientRect(), cr = cur.getBoundingClientRect();
+        if (cr.top >= lr.top - 1 && cr.bottom <= lr.bottom + 1) return;
+        var want = list.scrollTop + (cr.top - lr.top) - (list.clientHeight - cur.offsetHeight) / 2;
+        qSmoothScroll(list, want);
+      } catch (e) { }
+    };
     setInterval(function () {
       if (!window.annieTheme || annieTheme.current !== 'am' || !S.mounted) return;
       if (state.playing !== lastPlaying) { // V4.4：播放/暂停态变化即持久化（恢复时按此决定起播还是暂停）
@@ -3152,7 +3334,7 @@ function amModeSvg(id) {
         writeResumeMeta();
       }
       if (state.currentPath !== lastPath) {
-        lastPath = state.currentPath; refresh();
+        lastPath = state.currentPath; lastQIndex = state.index; refresh();
         writeResumeMeta();   // V4.4：切歌即存队列快照与索引
         resetResumePos(state.currentPath); // 新曲位置键归零（此刻 S.pos 仍是旧曲值）
         // V4.4：任何打开的队列面板随切歌刷新（评论页签不打断，历史/待播更新当前行高亮）
@@ -3176,6 +3358,10 @@ function amModeSvg(id) {
           // 这里在全部重建落定后补一次（行已可见则不打扰）
           AM.scrollStreamRowIntoView(true);
         }
+      } else if (state.index !== lastQIndex) {
+        /* 同一首歌的多条重复项之间切换：路径不变，只有 index 变 —— 只刷高亮，不做整套 refresh */
+        lastQIndex = state.index;
+        syncQueueCur();
       }
       refreshTransport();
     }, 500);

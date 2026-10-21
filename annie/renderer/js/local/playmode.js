@@ -23,10 +23,124 @@
   function mode() { return state.playMode || 'list-seq'; }
   function info() { return MODES.find(function (m) { return m.id === mode(); }) || MODES[1]; }
 
+  /* V4.5：随机播放要在待播清单里看得见——随机顺序在「再播放一首歌」时由 playList 建立
+     （见 annieShuffleQueueForPlay），切模式本身不动队列；播到末尾再洗一次继续。 */
+  function shuffleArr(a) {
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  function queueUiRefresh() {
+    try { if (window.__annieQueueRefresh) window.__annieQueueRefresh(); } catch (e) { }
+  }
+  /* 随机播到列表末尾后再洗一次牌（只发生在自然播完时，不改用户手动排的顺序） */
+  function reshuffle() {
+    var q = (state.queue || []).slice();
+    if (q.length < 2) return false;
+    var curPath = state.currentPath || (state.queue[state.index] && state.queue[state.index].path);
+    shuffleArr(q);
+    if (q[0] && q[0].path === curPath) { var t = q[0]; q[0] = q[1]; q[1] = t; }   // 别又是刚播完那首
+    state.queue = q;
+    state.index = 0;
+    return true;
+  }
+
+  /* —— 切模式时的队列语义 ——
+     · 全库随机：队列换成整个媒体库并洗牌（当前曲首位）；
+     · 列表内随机：队列回到「当前播放的那份列表」并洗牌（当前曲首位）；
+     · 其它模式（列表顺序 / 全文件顺序 / 单曲循环）：队列回到该列表的**原始顺序**；
+     · 全文件顺序保持当前列表不动（等同列表顺序，只是全文件顺序的续播语义在 nextByMode 里）。 */
+  var baseList = null;   // 当前正在播放的那份列表的原始顺序（playList 传入的那份）
+  function setBase(list) {
+    try { baseList = (list && list.length) ? list.slice() : null; } catch (e) { baseList = null; }
+  }
+  window.annieSetBaseQueue = setBase;   // 供 am.js 的 playList 调用（顺序播放时也记录列表）
+  /* 洗牌：当前曲留在第一行 */
+  function shuffledWithCur(list) {
+    var curPath = state.currentPath;
+    var curEnt = null, rest = [];
+    for (var i = 0; i < list.length; i++) {
+      if (!curEnt && list[i] && list[i].path === curPath) curEnt = list[i];
+      else rest.push(list[i]);
+    }
+    shuffleArr(rest);
+    var q = (curEnt ? [curEnt] : []).concat(rest);
+    if (!curEnt) {   // 当前曲不在这份列表里：放队首，保证清单与实际播放一致
+      var old = state.queue || [], ent = null;
+      for (var j = 0; j < old.length; j++) if (old[j] && old[j].path === curPath) { ent = old[j]; break; }
+      if (ent) q.unshift(ent);
+    }
+    return q;
+  }
+  /* 回到列表原始顺序（保留列表外多出来的歌，排在末尾） */
+  function restoreOrder() {
+    var base = baseList;
+    if (!base || !base.length) return false;
+    var pos = new Map();
+    for (var i = 0; i < base.length; i++) { var p2 = base[i] && base[i].path; if (p2 && !pos.has(p2)) pos.set(p2, i); }
+    var cur = (state.queue || []).slice();
+    if (!cur.length) return false;
+    cur.sort(function (a, b) {
+      var x = pos.has(a && a.path) ? pos.get(a && a.path) : 1e9;
+      var y = pos.has(b && b.path) ? pos.get(b && b.path) : 1e9;
+      return x - y;
+    });
+    state.queue = cur;
+    var cp = state.currentPath, at = -1;
+    for (var k = 0; k < cur.length; k++) if (cur[k] && cur[k].path === cp) { at = k; break; }
+    state.index = at >= 0 ? at : 0;
+    return true;
+  }
+  function setQueueTo(list, ctx) {
+    state.queue = list;
+    state.queueCtx = ctx || 'list';
+    var cp = state.currentPath, at = -1;
+    for (var k = 0; k < list.length; k++) if (list[k] && list[k].path === cp) { at = k; break; }
+    state.index = at >= 0 ? at : 0;
+  }
   function setMode(id) {
     state.playMode = id;
     try { localStorage.setItem(LS_MODE, id); } catch (e) { }
+    if (state.currentStream) return;                 // 流媒体不走队列
+    var q = state.queue || [];
+    if (!q.length && !(baseList && baseList.length)) return;
+    if (id === 'all-rand') {
+      var lib = (allTracks() || []).slice();
+      if (!lib.length) return;
+      setQueueTo(shuffledWithCur(lib), 'all');
+      queueUiRefresh();
+      return;
+    }
+    var src = (baseList && baseList.length) ? baseList : q;
+    if (id === 'list-rand') {
+      setQueueTo(shuffledWithCur(src), 'list');
+      queueUiRefresh();
+      return;
+    }
+    /* 列表顺序 / 全文件顺序 / 单曲循环：回到这份列表的原始顺序 */
+    if (restoreOrder()) queueUiRefresh();
   }
+
+  /* 供 am.js 的 playList 调用：随机模式下从某个列表开始播放时，把队列洗成随机顺序，
+     点的那一首排第一（顺序/单曲循环返回 null，保持原列表顺序；全库随机池子是整个媒体库） */
+  window.annieShuffleQueueForPlay = function (list, i) {
+    try {
+      var m = mode();
+      if (m !== 'list-rand' && m !== 'all-rand') return null;
+      if (state.currentStream) return null;
+      var cur = list && list[i];
+      if (!cur) return null;
+      var pool = (m === 'all-rand') ? ((allTracks() || []).slice()) : list.slice();
+      if (!pool.length) return null;
+      var rest = pool.filter(function (t) { return t && t.path !== cur.path; });
+      shuffleArr(rest);
+      state.queueCtx = (m === 'all-rand') ? 'all' : 'list';
+      return { list: [cur].concat(rest), index: 0 };
+    } catch (e) { return null; }
+  };
+
   try {
     var saved = localStorage.getItem(LS_MODE);
     if (saved && MODES.some(function (m) { return m.id === saved; })) state.playMode = saved;
@@ -101,27 +215,19 @@
     var m = mode();
     if (m === 'repeat-one') { playAt(state.index); return true; }
 
-    if (m === 'list-rand') {
-      if (state.queue.length > 1) {
-        var ri;
-        do { ri = Math.floor(Math.random() * state.queue.length); } while (ri === state.index);
-        playAt(ri);
-      } else playAt(state.index);
-      return true;
-    }
-
-    if (m === 'all-rand') {
-      var all = allTracks();
-      if (all.length) {
-        state.queue = all; state.queueCtx = 'all';
-        var ai = 0;
-        if (all.length > 1) {
-          do { ai = Math.floor(Math.random() * all.length); } while (all[ai] && all[ai].path === state.currentPath);
-        }
-        playAt(ai);
+    if (m === 'list-rand' || m === 'all-rand') {
+      /* V4.5：进入随机模式时队列已经洗好牌（见 setMode），这里按顺序走；
+         走到末尾再洗一次从头继续（「播完当前列表停止」优先） */
+      var atEndR = state.index + 1 >= state.queue.length;
+      if (!atEndR) { playAt(state.index + 1); return true; }
+      if (timer && timer.type === 'queue') {
+        window.annieSleepTimer.clear();
+        stopPlayback('当前列表已播完，已停止');
         return true;
       }
-      return false; // 全库为空，回落调用方默认
+      if (reshuffle()) queueUiRefresh();
+      playAt(0);
+      return true;
     }
 
     // 顺序类（all-seq / list-seq）。all-seq 仅在全库上下文生效，否则同 list-seq。

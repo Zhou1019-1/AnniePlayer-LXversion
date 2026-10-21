@@ -409,12 +409,61 @@
   }
 
   /* ---------------- 播放控制 ---------------- */
+  /* 两份曲目列表是不是“同一份内容”（顺序可以不同）：点同一列表里的另一首歌时不必重建待播清单 */
+  function sameTrackSet(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    if (a === b) return true;
+    /* 多重集比较：同一首歌可能在队列里有多条（「下一首播放」插入的重复项），
+       只比集合会把 [A,A,B] 和 [A,B,B] 当成同一份 */
+    var cnt = new Map();
+    for (var i = 0; i < a.length; i++) { var ka = a[i] && a[i].path; cnt.set(ka, (cnt.get(ka) || 0) + 1); }
+    for (var j = 0; j < b.length; j++) {
+      var kb = b[j] && b[j].path, c = cnt.get(kb) || 0;
+      if (!c) return false;
+      if (c === 1) cnt['delete'](kb); else cnt.set(kb, c - 1);
+    }
+    return true;
+  }
+  /* 同一份内容但顺序不同（随机模式洗过牌）时，把 list 的下标映射到队列里的下标：
+     按「该路径在此之前出现过几次」对齐到第几条，重复项也能落到正确那一行 */
+  function mapIndexSameList(list, i, queue) {
+    var p = list[i] && list[i].path;
+    if (!p) return i;
+    var k = 0;
+    for (var j = 0; j < i; j++) if (list[j] && list[j].path === p) k++;
+    var seen = 0;
+    for (var m = 0; m < queue.length; m++) {
+      if (queue[m] && queue[m].path === p) { if (seen === k) return m; seen++; }
+    }
+    return i;
+  }
   function playList(list, i) {
+    /* 同一份列表（例如在“歌曲/专辑/歌单”里换一首点播）：
+       队列不换、不重建面板，只切歌 + 高亮 + 需要时把当前行滚进可视区 */
+    if (sameTrackSet(state.queue, list)) {
+      var idx = (state.queue === list) ? i : mapIndexSameList(list, i, state.queue);
+      playAt(idx);
+      try { if (window.__annieQueueScrollCur) window.__annieQueueScrollCur(); } catch (e0) { }
+      return;
+    }
     state.queue = list;
+    try { if (window.annieSetBaseQueue) window.annieSetBaseQueue(list); } catch (e0) { }   // 记下这份列表的原始顺序，切模式时用
     // 播放模式"全文件顺序/随机"的上下文标记：队列是否就是全库（全文件顺序仅此时生效）
     var all = allTracks();
     state.queueCtx = (list.length === all.length && list[0] === all[0]) ? 'all' : 'list';
+    /* V4.5：当前若是随机播放，从列表开始播时队列就洗成随机顺序（点的那首排第一），
+       这样待播清单显示的就是真实的随机顺序；顺序/循环模式下保持原样 */
+    try {
+      var sh = window.annieShuffleQueueForPlay && window.annieShuffleQueueForPlay(list, i);
+      if (sh) {
+        state.queue = sh.list;
+        i = sh.index;
+        if (window.__annieQueueRefresh) window.__annieQueueRefresh();
+      }
+    } catch (e) { }
     playAt(i);
+    /* 换了列表：待播面板重建并定位到当前曲 */
+    try { if (window.__annieQueueJumpCur) window.__annieQueueJumpCur(); } catch (e2) { }
   }
   function togglePlay() {
     if (!state.currentPath && allTracks().length) { playList(allTracks(), 0); return; }

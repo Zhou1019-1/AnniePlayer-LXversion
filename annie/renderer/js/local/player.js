@@ -1243,8 +1243,14 @@ async function playAt(i, offsetSec = 0) {
   state.position = offsetSec;
   renderCurrentView();
   // 渲染可能重排/覆写列表：按路径回捞索引，保证"上一曲/下一曲/自动续播"跟随实际播放曲目
-  const qi = state.queue.findIndex(x => x && x.path === t.path);
-  if (qi >= 0) state.index = qi;
+  // V4.5：只有该下标已经不是这首时才回捞——队列里允许有同一首歌的多条（「下一首播放」插入的重复项），
+  // 无条件 findIndex 会把 index 归到第一首，播到第二条同曲时"下一首"会倒回去
+  if (!(state.queue[i] && state.queue[i].path === t.path)) {
+    const qi = state.queue.findIndex(x => x && x.path === t.path);
+    if (qi >= 0) state.index = qi;
+  }
+  // V4.5：起播即刷一次待播面板高亮（重复项之间切换时 currentPath 不变，轮询兜底要等 500ms）
+  try { if (window.__annieQueueSync) window.__annieQueueSync(); } catch (e) { }
 
   // Pro：响度归一化增益 + 交叉淡入（引擎内部条件不满足时自动回退普通播放）
   const loudGain = loudGainFor(t.path);
@@ -1671,7 +1677,11 @@ $('#btn-stop').onclick = () => {
       state.seekTarget = sec;
       clearTimeout(state.seekTimer);
       state.seekTimer = setTimeout(() => { state.seekPending = false; }, 10000);
-      try { await window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000); }
+      try {
+        await window.mine.engine('seek', { seconds: (state.currentCue ? state.currentCue.start : 0) + sec }, 30000);
+        /* 跳转后立刻对齐歌词（原来要等下一次 tick 并可能被 5 秒手动保护期挡住） */
+        try { if (window.__annieAMInternal && window.__annieAMInternal.lyrJumpToCur) window.__annieAMInternal.lyrJumpToCur(); } catch (e2) { }
+      }
       catch { state.seekPending = false; clearTimeout(state.seekTimer); } // V1.1.5：seek 失败立即解除冻结，避免进度条锁死 10 秒
     };
     window.addEventListener('pointermove', move);

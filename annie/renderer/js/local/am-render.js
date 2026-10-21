@@ -2485,6 +2485,9 @@ function amModeSvg(id) {
     /* 新封面以克隆层盖在上面淡入：旧图仍在下面，不会再"盖回"新图。
        （原实现把旧封面克隆到上层淡出，切歌时会看到：先新图、再闪回旧图、再回新图） */
     var host = img.parentElement;
+    /* 连续切歌（间隔 <380ms）时上一次 ghost 的移除 timer 会被下面的 clearTimeout 取消，
+       旧 ghost 再无清理路径、永久盖住封面——进函数先清掉全部残留 ghost */
+    host.querySelectorAll('.am-imm-cov-ghost').forEach(function (g) { g.remove(); });
     var ghost = img.cloneNode(false);
     ghost.removeAttribute('id');
     ghost.className += ' am-imm-cov-ghost';
@@ -2543,10 +2546,7 @@ function amModeSvg(id) {
           R.immBtnFs.classList.remove('on');
           R.immBtnFs.title = '真全屏（隐藏任务栏）';
         }
-        if (window.annieSettings && annieSettings.ui) {
-          annieSettings.ui.amImmFullscreen = false;
-          annieSettings.save();
-        }
+        /* V4.5：Esc 只退出本次全屏，不改「沉浸模式真全屏」设置——下次进沉浸仍按设置自动全屏 */
       } catch (x2) { }
     }
     document.addEventListener('keydown', function (e) {

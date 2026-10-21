@@ -1711,10 +1711,7 @@ html[data-motion="off"] #am-root::before {
   -webkit-backdrop-filter: var(--am-blur) brightness(1.06);
   box-shadow: 0 2px 10px -4px rgba(0, 0, 0, .18);
 }
-/* V4.4.8：音量条方向还原——上面 100%、下面 0%（原 rotate(90deg) 是 0 在上） */
-#am-root .am-vol input[type="range"] {
-  transform: translateX(-50%) translateY(41px) rotate(-90deg);
-}
+/* V4.4.8：音量条方向修复已并入 1396 行主规则（rotate(-90deg)），此处补丁块删除（同值冗余） */
 /* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
 #am-root .am-lyr-scroll { padding: 0 26px 40vh; }
 #am-root .am-imm-lyr { padding-top: 0; padding-bottom: 40vh; }

@@ -284,6 +284,9 @@
     };
     head.appendChild(qsel);
     c.appendChild(head);
+    /* V4.6：实验性声明横幅（用户拍板文案）——置顶常驻，不随状态消失 */
+    var expBanner = el('div', 'am-exp-banner', '⚠️ 实验性功能：开发难度大，实际效果暂时无法保证，请等待后续版本');
+    c.insertBefore(expBanner, head);
 
     /* wrapper 未运行引导 */
     if (AMV.st && !AMV.st.ok) {

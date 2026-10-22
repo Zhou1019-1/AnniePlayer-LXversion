@@ -473,5 +473,11 @@
   3. **`play.crossfade → KeyNotFound`**：Decode.cs Probe 旧实现 `root.GetProperty("streams")`，ffprobe 失败（I/O error）输出空 JSON 时抛裸 KeyNotFoundException。修复：Probe 拆 ProbeOnce + URL 一次重试、检查 ExitCode/stderr、TryGetProperty；PlayCrossfade 探测失败回退普通 Play（Engine.Playback.cs:425-431）。另 player.js:1326 AM 流（provider==='am'）直接走普通 play 不走 crossfade。
 - **播放/下载音质**：播放 aac（缓冲式全量下载+Range）/ alac（流式 P2），本机键 `annieplayer.am.playq`；下载 aac/aac128/he-aac/alac/atmos，键 `annieplayer.am.dlq`（am-amusic.js:13-32）。
 - **playlist 缓存**：downloader.js `playlistCache`（5min TTL）+ `am:prefetch` IPC，切歌预取下一首。
+- **进度卡**：渲染层 CSP（index.html `connect-src 'self'`）**禁页面直连 127.0.0.1 服务**，进度查询必须走 `am:progress` IPC 读主进程内存（am-amusic.js loadCardShow）。两阶段闩锁防「切歌秒跳加载成功」：先观察到 playing 被引擎 loading 拉低才武装，重新为真才算出声。
+
+## 十四、dev 与已装版单实例互顶（DIAG-20261022-2111 实锤）✅
+- **已装版与 dev 共用 appId（annie-player-svlx）→ 单实例锁**：已装版运行时 `npm start`，dev 实例静默 exit 0（无报错），用户看到的始终是已装版窗口。
+- **判明实例来源**：诊断包/截图先核对 info.json 的 enginePath——已装版 = `E:\AnniePlayerSVLX\resources\engine\`，dev = `工作目录\engine\publish\`。
+- **规矩**：dev 回归前先 `Get-Process AnniePlayerSVLX` 杀掉已装版；npm start 后终端仍在 Running 才算 dev 真起来了。
 
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

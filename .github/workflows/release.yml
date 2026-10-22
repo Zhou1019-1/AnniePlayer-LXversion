@@ -45,6 +45,11 @@ jobs:
       - name: 安装依赖
         run: npm ci --no-audit --no-fund
 
+      # V4.6：wrapper-lite（Apple Music 音源后端，~275MB）不入 git，
+      # 从固定 Release 资产下载；SHA256 + 落盘强校验，不过则构建直接失败（绝不静默缺包）
+      - name: 下载并校验 wrapper-lite
+        run: node scripts/setup-wrapper.js
+
       - name: 引擎启动故障分类测试
         run: node scripts/engine-client-test.js
 

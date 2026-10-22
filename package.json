@@ -42,7 +42,7 @@
     "pack:dir": "electron-builder --dir --win",
     "dist": "electron-builder --win nsis --publish never",
     "build:engine": "dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo",
-    "predist:setup": "dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo && node scripts/verify-engine-publish.js",
+    "predist:setup": "dotnet publish engine/src -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o engine/publish --nologo && node scripts/verify-engine-publish.js && node scripts/setup-wrapper.js",
     "verify:engine": "node scripts/verify-engine-publish.js",
     "test:engine-publish": "node scripts/verify-engine-publish-test.js",
     "test:engine-client": "node scripts/engine-client-test.js",

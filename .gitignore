@@ -53,3 +53,6 @@ VST实验区/
 
 # ---- am.js 拆分隔离工作区（原稿副本与切分/校验脚本，不入库）----
 amchaifenwork/
+
+# ---- wrapper-lite 运行时（~275MB 二进制，托管为 GitHub Release 资产，scripts/setup-wrapper.js 构建时下载）----
+annie/resources/wrapper-lite/

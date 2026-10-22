@@ -1669,6 +1669,7 @@
   function showSideThumb() {
     var t = ensureSideThumb();
     if (!t || t.style.display === 'none') return;
+    syncSideThumb();   // 显示前先按当前窗口/侧栏重新定位，避免用上一次的旧位置（窗口变小后滑块会停在偏左处）
     t.classList.add('on');
     clearTimeout(_sideThumbHide);
     if (!_sideThumbDrag) _sideThumbHide = setTimeout(function () { t.classList.remove('on'); }, 900);
@@ -1693,6 +1694,15 @@
     t.style.height = h + 'px';
     t.style.top = Math.round(y) + 'px';
     t.style.right = Math.max(2, Math.round(window.innerWidth - sr.right + 2)) + 'px';
+    /* 上面用的是 innerWidth/fixed 的坐标假设；一旦窗口有缩放（webFrame zoom）或 root 有变换/zoom，
+       两者坐标系就不一致，滑块会偏到左边。这里用实际渲染出来的位置做一次校正，反推出正确的 right/top。
+       校正量要除以当前缩放比（用滑块实际宽度 / 设计宽度 4px 求得），否则一次修正不收敛。 */
+    var tr0 = t.getBoundingClientRect();
+    var scale = (tr0.width ? tr0.width / 4 : 1) || 1;
+    var dRight = Math.round((tr0.right - (sr.right - 2)) / scale);
+    if (dRight) t.style.right = (parseFloat(t.style.right) + dRight) + 'px';
+    var dTop = Math.round((tr0.top - y) / scale);
+    if (dTop) t.style.top = (Math.round(y) - dTop) + 'px';
   }
   document.addEventListener('mousemove', function (e) {
     var el = e.target;
@@ -3104,6 +3114,17 @@
       document.addEventListener('mousedown', close, true);
     };
     bar.appendChild(bAddPl);
+    // V4.5：批量插到当前歌曲后面（与右键「下一首播放」同一位置，不再追加到末尾）
+    var bAddQ = el('button', 'am-btn', '⏭️ 添加到待播清单');
+    bAddQ.title = '把选中的歌曲插到当前播放曲之后';
+    bAddQ.onclick = function () {
+      if (!S.msSel || !S.msSel.size) { try { proToast('先选中歌曲'); } catch (er) { } return; }
+      var fn = window.__annieAMInternal && window.__annieAMInternal.enqueueNext;
+      var n = fn ? fn(Array.from(S.msSel), false) : 0;
+      try { if (typeof proToast === 'function') proToast(n ? ('已把 ' + n + ' 首插到当前歌曲后面') : '未能加入待播清单'); } catch (er) { }
+    };
+    bar.appendChild(bAddQ);
+
     if (S.view.indexOf('pl:') === 0) {
       // 歌单视图：批量「从本歌单移除」（复用 playlistReorder 整组替换 paths，不碰曲库/其他歌单）
       var bRm = el('button', 'am-btn am-btn-danger', '✕ 从歌单移除选中');
@@ -3219,17 +3240,35 @@
     _amColsCache = st;
     try { localStorage.setItem('annieplayer.am.cols', JSON.stringify({ order: st.order, w: st.w })); } catch (e) { }
   }
-  /* V4.4.9：按「可用宽度」把比例换成 px（calc 在 <col> 上不生效） */
+  /* V4.4.9：按「可用宽度」把比例换成 px（calc 在 <col> 上不生效）
+     V4.5：可用宽度要按**容器**算，不能按表格自身的 rect 算——列宽写回 <col> 后表格会被撑宽，
+     再读自己的 rect 就成了正反馈，窗口变窄后表格收不回来（表头白条一直顶到右边缘，右侧留白消失） */
   function layoutCols(tb) {
     if (!tb || !tb.isConnected) return;
     var st = amCols();
-    var total = tb.getBoundingClientRect().width;
+    var total = 0;
+    var host = tb.parentElement;
+    if (host && host.clientWidth) {
+      var hs = getComputedStyle(host);
+      var pl = parseFloat(hs.paddingLeft) || 0;
+      var pr = parseFloat(hs.paddingRight) || 0;
+      total = host.clientWidth - pl - pr;          // 去掉左右内边距后的可用宽度
+    }
+    if (!(total > 0)) total = tb.getBoundingClientRect().width;
     if (!total) return;
     var fixed = +(tb.dataset.colfixed || 0);
     var avail = Math.max(150, total - fixed);
-    st.order.forEach(function (k) {
+    var widths = st.order.map(function (k) { return Math.max(60, Math.round(avail * st.w[k])); });
+    /* 每列都有 60px 下限：窗口很窄时下限之和会超过可用宽度，表格就会溢出、右侧留白被吃掉。
+       这时按比例压缩（下限降到 24px），保证表格始终放得下、左右留白对称 */
+    var fixedSum = widths.reduce(function (a, b) { return a + b; }, 0);
+    if (fixedSum + fixed > total + 1) {
+      var scaleW = (total - fixed) / (fixedSum || 1);
+      widths = widths.map(function (w) { return Math.max(24, Math.floor(w * scaleW)); });
+    }
+    st.order.forEach(function (k, idx) {
       var c = tb.querySelector('colgroup col[data-col="' + k + '"]');
-      if (c) c.style.width = Math.max(60, Math.round(avail * st.w[k])) + 'px';
+      if (c) c.style.width = widths[idx] + 'px';
     });
     tb.dataset.colavail = String(Math.round(avail));
   }
@@ -3241,7 +3280,9 @@
       var t = document.querySelector('#am-root .am-table');
       if (t) layoutCols(t);
     });
-    _colRO.observe(tb);
+    /* 观察容器而不是表格本身：表格宽度是由列宽撑出来的，容器变窄时表格尺寸不一定变化，
+       观察表格就不会触发回调，列宽永远收不回来（窄窗口下表格溢出、右侧留白消失）。 */
+    try { _colRO.observe(tb.parentElement || tb); } catch (e2) { _colRO.observe(tb); }
   }
   function buildTableHead(tb, grp, opts) {
     var st = amCols(), ms = !!S.msOn;
@@ -3840,6 +3881,15 @@ renderView();
     var selPaths = (S.msSel && S.msSel.size > 1 && S.msSel.has(trackPath)) ? Array.from(S.msSel) : [trackPath];
     pop.appendChild(el('div', 'am-pop-head', selPaths.length > 1 ? '已选 ' + selPaths.length + ' 首' : '歌曲操作')); // V4.4：改不可点分组标题（原 .am-pop-item 可点样式无功能，误导点击）
     pop.appendChild(el('div', 'am-pop-sep'));
+    // V4.5：插到下一首播放（多选时整组插入，顺序与选中一致）
+    var mnx = el('button', 'am-pop-item', '▶️ 下一首播放');
+    mnx.onclick = function () {
+      pop.classList.remove('on');
+      var fn = window.__annieAMInternal && window.__annieAMInternal.enqueueNext;
+      var n = fn ? fn(selPaths, false) : 0;
+      try { if (typeof proToast === 'function') proToast(n ? ('已把 ' + n + ' 首插到下一首') : '未能插入待播清单'); } catch (e) { }
+    };
+    pop.appendChild(mnx);
     var mte = el('button', 'am-pop-item', '✏️ 编辑标签…');
     mte.onclick = function () {
       pop.classList.remove('on');
@@ -4067,8 +4117,17 @@ renderView();
     if (!p) return;
     var ir = inp.getBoundingClientRect(), pr = p.getBoundingClientRect();
     if (!ir.width || !pr.width) return;
-    btn.style.left = Math.round(ir.right - pr.left - 24) + 'px';
-    btn.style.top = Math.round(ir.top - pr.top + ir.height / 2) + 'px';
+    /* 两种搜索框要用不同锚点：
+       · 输入框几乎填满容器（侧栏底部搜索框）→ 贴容器右缘 6px；
+       · 容器比输入框宽很多（视图标题区的搜索框，父级是整行）→ 贴输入框右侧（内缩 7px），
+         否则叉会跑到整行的最右边去。 */
+    var toParentRight = pr.right - ir.right;
+    var left = (toParentRight <= 40)
+      ? (pr.width - 7 - 17)   // 与上下间隙(7px)一致
+      : (ir.right - pr.left - 24);
+    btn.style.left = Math.max(0, Math.round(left)) + 'px';
+    /* 垂直：贴容器时用 50%（容器自身垂直居中，最精确）；贴输入框时用输入框中心 */
+    btn.style.top = (toParentRight <= 40) ? '50%' : (Math.round(ir.top - pr.top + ir.height / 2) + 'px');
   }
   function sync(inp) {
     var p = inp.parentElement;
@@ -4115,6 +4174,26 @@ renderView();
   function schedule() { if (raf) return; raf = requestAnimationFrame(function () { raf = 0; reposition(); }); }
   document.addEventListener('input', function (e) { if (isSearch(e.target)) sync(e.target); }, true);
   document.addEventListener('focusin', function (e) { if (isSearch(e.target)) sync(e.target); }, true);
+  /* 窄条(rail)模式下点搜索框：展开侧栏并聚焦输入框。
+     窄条时输入框是 display:none，点它没有任何反应——搜索框等于不可用。 */
+  document.addEventListener('click', function (e) {
+    var root = document.getElementById('am-root');
+    if (!root || !root.classList.contains('am-side-rail')) return;
+    var t = e.target;
+    if (!t || !t.closest || !t.closest('.am-side > .am-search')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    root.classList.remove('am-side-rail');
+    var w = 0;
+    try { w = parseInt(localStorage.getItem('annieplayer.am.sidew'), 10) || 0; } catch (er) { }
+    if (!(w >= 160)) w = 240;
+    root.__sideWant = w;
+    root.style.setProperty('--am-side-w', w + 'px');
+    setTimeout(function () {
+      var inp = root.querySelector('.am-side > .am-search > input');
+      if (inp) { try { inp.focus(); } catch (er2) { } }
+    }, 60);
+  }, true);
   window.addEventListener('resize', schedule);
   document.addEventListener('scroll', schedule, true);
   var tmr = 0;

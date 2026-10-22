@@ -1620,7 +1620,9 @@ html[data-motion="off"] #am-root::before {
 /* 视觉对齐：左侧看起来是 28（8px 滚动条槽与内容同底色），所以上边也用 28 */
 #am-root .am-content { padding-top: 28px; }
 /* 滚动条两侧对称占位：表头/行左右留白一致（否则右侧多出滚动条宽度） */
-#am-root .am-content { scrollbar-gutter: stable both-edges; }
+/* 忽略滚动条占位：右侧内边距 = 左内边距 - 滚动条宽度（28 - 8 = 20），
+   于是可见的左右留白都是 28px；不再用 both-edges 的左侧假槽。 */
+#am-root .am-content { scrollbar-gutter: stable; padding-right: 20px; }
 /* ===== 可拖动分栏：侧栏 / 歌词面板宽度 ===== */
 #am-root { --am-side-w: 240px; --am-lyr-w: 360px; }
 #am-root .am-side { width: var(--am-side-w); }
@@ -2075,3 +2077,133 @@ body.am-row-dragging { cursor: grabbing; }
 /* 加载成功（绿勾，停留 3 秒）/ 加载失败（红叉） */
 #am-root .am-load-ok { width: 14px; height: 14px; flex: none; border-radius: 50%; background: #34c759; color: #fff; font-size: 10px; line-height: 14px; text-align: center; font-weight: 700; }
 #am-root .am-load-ok.am-load-ng { background: #ff453a; }
+
+/* ================= 沉浸歌词 / 歌词面板 打磨 ================= */
+
+/* 沉浸歌词右侧那条阴影带其实是 8px 滚动条槽，隐藏掉 */
+#am-root .am-imm-lyr::-webkit-scrollbar { width: 0 !important; }
+
+/* 非当前行的模糊是在元素盒子边界被裁掉的，裁切处会显出一条横线：
+   用 padding 把裁切边推离文字，再用负 margin 保持行高不变 */
+#am-root .am-imm-lyr .am-lyr-line.far { padding: 22px 0 !important; margin: -15px 0 !important; }
+
+/* 歌词面板封面的模糊铺底原来 scale(1.18) 会向外扩 21px 形成一圈光晕，
+   改为与封面盒重合 + clip-path 裁切，只在长方形封面的留白处透出 */
+#am-root .am-lyr-cover-bg {
+  transform: translateX(-50%) !important;
+  filter: blur(14px) saturate(1.45) brightness(1) !important;
+  clip-path: inset(0 round 12px);
+  opacity: 1;
+}
+
+/* 歌词容器不再显示抓手光标（长按拖动仍然可用，只是不再提示 grab） */
+#am-root .am-lyr-scroll, #am-root .am-imm-lyr, #am-root .am-mini-lyr { cursor: default; }
+#am-root .am-lyr-scroll.am-drag-lyr, #am-root .am-imm-lyr.am-drag-lyr, #am-root .am-mini-lyr.am-drag-lyr { cursor: default; user-select: none; }
+
+/* 沉浸宽幅封面用真实布局尺寸放大：原 transform:scale(1.15) 不占布局，下沿会压住标题约 25px */
+#am-root img.am-imm-cover.am-imm-wide:not(.am-imm-cov-ghost) {
+  transform: none !important;
+  width: 115% !important;
+  max-width: none !important;
+  margin-left: -7.5% !important;
+  margin-right: -7.5% !important;
+}
+/* 切歌转场 ghost 与封面同框（原来固定 1:1 且带 1.15 缩放，宽幅封面切歌时会先跳大再落回） */
+#am-root .am-imm-left .am-imm-cov-ghost {
+  aspect-ratio: auto !important;
+  height: auto !important;
+  transform: none !important;
+  margin: 0 !important;
+}
+#am-root .am-imm-left .am-imm-cov-ghost.am-imm-wide {
+  width: 115% !important;
+  max-width: none !important;
+  margin-left: -7.5% !important;
+  margin-right: -7.5% !important;
+}
+
+/* 沉浸主区上下内边距不对称（上 4.5vh / 下 3.2vh），左列在 padding box 里居中会整体偏低，
+   按差值的一半上移，使左列相对窗口真正垂直居中 */
+#am-root .am-imm-main > .am-imm-left { top: calc((min(3.2vh, 40px) - min(4.5vh, 56px)) / 2); }
+/* 静默隐藏 chrome 后，进度条/控制栏不可见但仍占布局位 → 左列整体下移，让可见内容居中；恢复时回位 */
+#am-root .am-imm-main > .am-imm-left { transition: transform .32s cubic-bezier(.22,.61,.36,1); }
+#am-root.am-imm-chrome-off .am-imm-main > .am-imm-left { transform: translateY(calc(var(--am-imm-hide-shift, 0px) / 2)); }
+
+/* 沉浸歌词列：原来 width:84% + max-width:560px 且居中，大屏上列宽受限、字号又随窗口放大，
+   一行反而装得更少。这里保持左缘位置不变，只把右缘往右推（与左列的间距不变）；
+   JS 会写入 --am-imm-lyr-w：手动档 = N 个字宽（行行等宽），自动档 = 左右对称 */
+#am-root .am-imm-main > .am-imm-lyr {
+  justify-self: stretch;
+  width: auto;
+  max-width: none;
+  margin-left: calc((min(42vw, 890px) - min(min(42vw, 890px) * 0.84, 560px)) / 2);
+  margin-right: calc((min(42vw, 890px) * 2 + min(3vw, 62px) - 100vw + min(1.8vw, 40px) * 2) / 2
+    + 78px * var(--am-imm-lyr-scale, 1) * var(--am-imm-fs, 1));
+}
+#am-root.am-imm-lyr-fixed .am-imm-main > .am-imm-lyr {
+  justify-self: start;
+  width: var(--am-imm-lyr-w, 560px);
+  max-width: var(--am-imm-lyr-w, 560px);
+  margin-right: 0;
+}
+
+/* 沉浸信息面板字号随窗口放大的比例与上限略收（原来全屏直接顶到 42/22/20px） */
+#am-root .am-imm-info .am-imm-info-title { font-size: clamp(22px, 2.0vw, 39px) !important; }
+#am-root .am-imm-info .am-imm-info-sub { font-size: clamp(13px, 0.97vw, 20.5px) !important; }
+#am-root .am-imm-info .am-imm-info-grid { font-size: clamp(12px, 0.9vw, 18.5px) !important; }
+
+
+/* 待播清单：关闭滚动锚定。面板封面是后台补载的，行内内容变化时浏览器会为了“保持视图稳定”
+   自行改 scrollTop（表现就是滚动/定位途中突然往回跳几千像素再弹回来） */
+#am-root .am-q-list { overflow-anchor: none; }
+
+
+/* 待播清单列表：右侧内边距扣掉滚动条宽度，可见左右留白一致（行本身还有 8px 内边距） */
+#am-root .am-q-list { padding-right: 0; }
+
+/* 侧栏滚动条：应用自己画了一条 .am-side-thumb（4px，滚动时出现、停 900ms 淡出），
+   原生那条不要——两条并排就是一半灰一半深灰。宽度归零即可，滚动能力不变；
+   原生滚动条原本在右侧占 8px 留白，去掉后右侧会贴边，这里补回 8px 保持左右留白一致。 */
+#am-root .am-side { scrollbar-width: none; padding-right: 8px; }
+#am-root .am-side::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+
+/* 侧栏（含收起成窄条时）的搜索框与吸顶条 */
+/* 1) 搜索框始终贴底：内容不足一屏时用 margin-top:auto 顶到底部，长列表时靠 sticky bottom 钉住 */
+#am-root .am-side > .am-search { margin-top: auto; }
+/* 2) 窄条(rail)模式下左右内边距一致，搜索图标才真正水平居中（原来右侧 0、左侧 8，偏左） */
+#am-root.am-side-rail .am-side { padding-right: 8px; }
+#am-root.am-side-rail .am-side > .am-search { margin: auto auto 10px; }
+/* 3) 窄条模式不做吸顶：改回 relative（保留相对定位，分组头的横线靠它的 ::before 画，删掉会连横线一起没） */
+#am-root.am-side-rail .am-side .am-side-h { position: relative; top: auto; }
+
+/* 分组头的箭头与下面图标 / 歌单封面的左缘对齐（原来按钮内居中，箭头比封面左缘偏右约 4px） */
+#am-root .am-side .am-side-caret { text-align: left; padding-left: 1px; }
+
+
+/* 表头列宽拖拽把手：bindColDrag 会给每个可排序的列插一个 .am-col-grip，
+   但一直没有样式——span 是 inline 且无内容，实际宽度 0，鼠标根本抓不到，
+   于是表头只能拖动换位、没法像 foobar2000 那样拖边界改列宽。
+   这里把它做成骑在列右侧边界上的 7px 热区，hover 时显示一条细线（封面列没有 data-col，不生成把手，保持固定）。 */
+#am-root .am-table th[data-col] { position: sticky; }   /* 保持吸顶，同时作为把手的定位参照 */
+#am-root .am-table .am-col-grip {
+  position: absolute; top: 0; right: -3px; width: 7px; height: 100%;
+  display: block; cursor: col-resize; z-index: 4;
+}
+#am-root .am-table .am-col-grip::after {
+  content: "; position: absolute; left: 3px; top: 5px; bottom: 5px; width: 1px;
+  background: var(--am-text-3); opacity: 0; transition: opacity .12s ease;
+}
+#am-root .am-table th:hover .am-col-grip::after { opacity: .35; }
+#am-root .am-table .am-col-grip:hover::after { opacity: .8; }
+/* 拖列宽期间：整窗光标变成 col-resize，且不选中文字 */
+html.am-col-resizing, html.am-col-resizing * { cursor: col-resize !important; user-select: none !important; }
+
+/* 沉浸歌词：当前行放大 3% 是从左往右长的，长行/长译文最后几个字会被 overflow-x:hidden 切掉。
+   做法是给整个歌词列统一留出 3% 的右内边距（所有行一致，所以换行位置不会因为“是否正在播放”而不同），
+   放大后的行正好落回列内；再开 text-wrap: pretty，避免最后一行只剩一个字。 */
+
+/* 沉浸歌词：译文按“原文实际宽度（N 个字）”折行，不能比原文那一行还宽。
+   --am-imm-lyr-tw 由 applyImmLyrWidth() 按 N×字宽写入；自动档没有该变量时退回 100%。 */
+#am-root .am-imm-lyr .am-lyr-line .tly { max-width: var(--am-imm-lyr-tw, 100%); }
+/* 并排显示（原文 + 译文同行）时译文还有 16px 左边距，宽度要再让出来 */
+#am-root .am-i-dual-side .am-imm-lyr .am-lyr-line .tly { max-width: calc(var(--am-imm-lyr-tw, 100%) - 16px); }

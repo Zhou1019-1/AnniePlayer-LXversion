@@ -68,8 +68,101 @@
   function karaOn() { try { return localStorage.getItem('annieplayer.karaoke') !== '0'; } catch (e) { return true; } }
   /* 构建一行歌词元素（逐字时每词一个 span 可折行），主歌词/沉浸/迷你共用。
    * wordLimit 显式指定每行词数（主面板/沉浸各自独立），未传时取主界面配置（兼容旧调用） */
+  /* V4.5：普通 LRC 行按「每行词数」折行。计数按视觉宽度折算（汉字/假名/全角 = 2 个半角单位，
+     西文字母 = 1 个半角单位），即 limit=12 ≈ 每行 12 个汉字宽 / 24 个字母宽——中日英混排断行位置一致。
+     每行填满到上限（只有自然末行较短），只在词/字边界断（不拆西文单词）；行首不留空白（含全角空格），
+     句读等禁则字符不落在行首；末行只剩一两个碎字时从上一行末尾挪一个词过去。 */
+  var LYR_CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/;
+  var LYR_NO_START_RE = /^[、。，．,.!?！？：；:;)\]）］｝\}〉》」』】〕"”’』〜～ー…‥・%‰℃]$/;
+  /* 行尾禁则：开启类符号（开引号 / 开括号）不能留在上一行末尾，必须跟着后面的文字一起换行。
+     三类符号分开对待：
+       ① 闭合类（」』】）》”" 以及 。、，；！？）：不能落行首 → 满字数时直接挂在上一行末尾；
+       ② 开启类（「『（［｛〈《【〔( [ < " “ ‘）：不能落行尾 → 换行时把它们一起带到下一行；
+       ③ 其余普通文字：按字数正常换行。 */
+  var LYR_NO_END_RE = /^[「『（［｛\{〈《【〔\(\[<"“'‘]$/;
+  function lyrTokens(s) {
+    var toks = [], cur = '', kind = '';
+    function flush() {
+      if (!cur) return;
+      var w = kind === 's' ? cur.length : Math.max(1, cur.length);
+      toks.push({ t: cur, w: w, solid: kind !== 's' });
+      cur = ''; kind = '';
+    }
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      if (/\s/.test(ch)) { if (kind !== 's') flush(); kind = 's'; cur += ch; }   // 空白优先（含全角空格）
+      else if (LYR_CJK_RE.test(ch)) { flush(); toks.push({ t: ch, w: 2, solid: true }); }
+      else { if (kind === 's') flush(); kind = 'w'; cur += ch; }
+    }
+    flush();
+    return toks;
+  }
+  /* 行宽（不含行尾空白，浏览器本来也会折叠） */
+  function lyrRowW(toks) {
+    var w = 0;
+    for (var i = 0; i < toks.length; i++) w += toks[i].w;
+    for (var z = toks.length - 1; z >= 0 && !toks[z].solid; z--) w -= toks[z].w;
+    return w;
+  }
+  /* 折行写入 node，返回最宽一行的文本（供 fitLyrLines 量宽）；未折行返回 null */
+  function appendWrappedText(node, text, limit) {
+    var s = String(text || '').replace(/^[\s\u3000]+|[\s\u3000]+$/g, '');
+    if (!s) { node.appendChild(document.createTextNode(String(text || ''))); return null; }
+    var toks = lyrTokens(s), total = 0;
+    toks.forEach(function (k) { total += k.w; });
+    /* 折行：所有歌词行共用同一个上限（= 用户设置的每行词数 N），每行正好 N 个字宽
+       —— 第 1 句的第一行与第 2 句的第一行右缘因此是对齐的。
+       列宽本身已按 N 个字宽 + 22px 富余来定，放大 3% 的当前行也放得下，不需要再收窄行宽。 */
+    var cap = Math.max(2, Math.round(limit * 2));
+    if (!(limit > 0) || total <= cap) { node.appendChild(document.createTextNode(s)); return null; }
+    /* 按「每行 n 个字」折行（禁则：句读不落行首；宽度超上限也断，防西文长词顶出去） */
+    function splitN(n) {
+      var out = [], cr = [], cw = 0, cn = 0;
+      var capW = Math.max(2, n * 2);     // 宽度上限跟着字数一起算，两个判断口径一致
+      function push() {
+        /* 换行时若上一行末尾是开引号 / 开括号，把它们摘下来带到下一行开头 */
+        var carry = [];
+        while (cr.length) {
+          var lastT = cr[cr.length - 1];
+          if (lastT.solid && LYR_NO_END_RE.test(lastT.t)) carry.unshift(cr.pop());
+          else break;
+        }
+        out.push(cr);
+        cr = carry; cw = 0; cn = 0;
+        carry.forEach(function (t) { cw += t.w; if (t.solid) cn++; });
+      }
+      toks.forEach(function (k) {
+        if (!k.solid && !cr.length) return;
+        /* 换行条件：满 n 个字，或再加就超宽。
+           例外：闭合类标点（。、」』等）不许出现在行首 → 直接挂在上一行末尾（允许超一个字），
+           不把前一个字一起挪下去，这样每行仍然是 n 个字、右缘与其它行对齐。
+           开启类符号（「（《等）可以出现在行首，正常换行即可，落行尾的情况由 push() 处理。 */
+        if (k.solid && cr.length && (cn >= n || cw + k.w > capW)) {
+          if (!LYR_NO_START_RE.test(k.t)) push();
+        }
+        cr.push(k); cw += k.w; if (k.solid) cn++;
+      });
+      if (cr.length) push();
+      return out;
+    }
+    var rows = splitN(limit);
+    var widest = '', widestW = 0;
+    rows.forEach(function (r, ri) {
+      if (ri) node.appendChild(document.createElement('br'));
+      var out = '';
+      r.forEach(function (k) {
+        if (!k.solid && !out) return;
+        node.appendChild(document.createTextNode(k.t));
+        out += k.t;
+      });
+      var w = lyrRowW(r);
+      if (w > widestW) { widestW = w; widest = out; }
+    });
+    return widest || null;
+  }
   function buildLyrLineEl(l, i, cls, wordLimit, dual) {
     var d = el('div', cls + ' far');
+    var kt = null;
     var tlyOnly = dual === 'tly' && l.tly;
     if (tlyOnly) {
       // 仅译文：译文按原文字号/字重渲染（CSS .tly-main），不插原文节点
@@ -90,7 +183,8 @@
       });
       d._karaWords = wspans;
     } else {
-      d.appendChild(document.createTextNode(l.text));
+      /* V4.5：普通行同样响应「每行词数」（此前只对逐字歌词生效） */
+      kt = appendWrappedText(d, l.text, wordLimit == null ? (S.lyrWordLimit | 0) : (wordLimit | 0));
     }
     if (l.tly && !tlyOnly && dual !== 'src') d.appendChild(el('span', 'tly', l.tly));
     d.onclick = function () {
@@ -100,7 +194,7 @@
       try { if (AM.vinylCrownSeek) AM.vinylCrownSeek(from, l.t); } catch (e) { }
     };
     d._idx = i;
-    d._kt = l.text || ''; // 自适应行宽测量用
+    d._kt = kt || l.text || ''; // 自适应行宽测量用（折行时取最宽一段）
     return d;
   }
   /* 更新容器内当前行逐词进度（每 tick 调用；行切换时重置上一行） */
@@ -352,10 +446,39 @@
   var _progScrollUntil = new WeakMap();
   function progScrollTop(box, val) {
     if (!box) return;
-    _progScrollUntil.set(box, Date.now() + 800);
+    var dist = Math.abs((box.scrollTop || 0) - val);
+    /* 大幅跳转（点进度条 / 定位播放）用瞬移：平滑动画跑过 800ms 保护窗后，
+       后续 scroll 事件会被当成「手动翻看」锁 5 秒，表现就是要等 5 秒歌词才归位 */
+    var instant = dist > (box.clientHeight || 400) * 1.2;
+    _progScrollUntil.set(box, Date.now() + (instant ? 1200 : 800));
+    if (!instant) { box.scrollTop = val; return; }
+    var prev = box.style.scrollBehavior;
+    box.style.scrollBehavior = 'auto';
     box.scrollTop = val;
+    void box.offsetHeight;
+    box.style.scrollBehavior = prev || '';
   }
   AM.progScrollTop = progScrollTop;
+  /* 点进度条 / 拖动到某个时间后：立刻把歌词跳到当前行，并清掉「手动翻看」保护期
+     （大幅跳转的平滑动画会超过程序滚动保护窗而被误判成手动滚动，表现为要等 5 秒才归位） */
+  AM.lyrJumpToCur = function () {
+    try {
+      var cur = S.lyrCur;
+      if (cur == null || cur < 0) return;
+      var specs = [
+        [R.lyrScroll, lyrPosRate(S.lyrPos, 0.42)],
+        [R.immLyrBox, lyrPosRate(S.immLyrPos, 0.35)],
+        [R.miniLyr, 0.40]
+      ];
+      specs.forEach(function (sp) {
+        var b = sp[0];
+        if (!b) return;
+        _lyrManualScrollUntil['delete'] ? _lyrManualScrollUntil['delete'](b) : _lyrManualScrollUntil.set(b, 0);
+        var n = b.children[cur];
+        if (n && n._idx === cur) progScrollTop(b, n.offsetTop - b.clientHeight * sp[1]);
+      });
+    } catch (e) { }
+  };
   /* V4.5：窗口 resize 时歌词容器 reflow、浏览器被动钳制 scrollTop 都会触发 scroll 事件——
      若距上次程序滚动超过 800ms 会被误判为「手动翻看」并锁 5 秒保护期，期间 tick 不再重定位，
      反复拖窗口边框 = 反复续满保护期，当前行就此跑偏不归位（用户实测：多次变比例后当前行跑到顶部）。
@@ -409,7 +532,7 @@
       var v;
       v = parseFloat(localStorage.getItem(prefix + 'lyrscale')); if (isFinite(v)) p.sc = Math.min(1.6, Math.max(0.7, v));
       v = parseFloat(localStorage.getItem(prefix + 'lyrlh')); if (isFinite(v)) p.lh = Math.min(2.2, Math.max(1.2, v));
-      v = parseInt(localStorage.getItem(prefix + 'lyrwordlimit'), 10); if (!isNaN(v)) p.wl = Math.min(20, Math.max(0, v));
+      v = parseInt(localStorage.getItem(prefix + 'lyrwordlimit'), 10); if (!isNaN(v)) p.wl = Math.min(17, Math.max(0, v));
       v = localStorage.getItem(prefix + 'lyrblur'); if (v !== null) p.blur = v !== '0'; // 歌词虚化默认开
       v = parseFloat(localStorage.getItem(prefix + 'tlyscale')); if (isFinite(v)) p.tly = Math.min(1.6, Math.max(0.7, v)); // 译文字号独立缩放
       v = localStorage.getItem(prefix + 'dual'); if (v === 'row' || v === 'side' || v === 'src' || v === 'tly') p.dual = v; // 双语布局
@@ -512,7 +635,7 @@
     sliderRow('行距', 'lyrlh', 120, 220, 5, Math.round(cur.lh * 100),
       function (x) { return (x / 100).toFixed(2); },
       function (x) { saveKey('lyrlh', x / 100); applyLyrStyle(); });
-    sliderRow('每行词数', 'lyrwordlimit', 0, 12, 1, cur.wl,
+    sliderRow('每行词数', 'lyrwordlimit', 0, 17, 1, cur.wl,
       function (x) { return (+x) === 0 ? '自动' : String(x); },
       function (x) {
         var n = +x;
@@ -644,7 +767,7 @@
       row4.appendChild(mkOffBtn('↺', '重置本曲偏移', function () { window.annieLyrOff.set(state.currentPath, 0); }));
       pop.appendChild(row4);
     }
-    pop.appendChild(el('div', 'am-pop-hint', '超长行自动折行显示（不再缩小字号）；每行词数仅对逐字歌词生效，中文按字计；歌词偏移按曲目记忆，对所有歌词显示生效'));
+    pop.appendChild(el('div', 'am-pop-hint', '超长行自动折行显示（不再缩小字号）；每行词数：逐字歌词按词，普通歌词按字宽（数值≈每行汉字数，西文不拆词）；歌词偏移按曲目记忆，对所有歌词显示生效'));
     document.getElementById('am-root').appendChild(pop);
     R.lyrSetPop = pop;
   }
@@ -660,14 +783,43 @@
       box.appendChild(el('div', 'am-lyr-empty', !state.currentPath ? '播放歌曲以显示歌词' : (state.currentStream ? '歌词加载中…' : '暂无歌词')));
       return;
     }
+    /* 每行 N 个字是「设置值」，但窗口变窄 / 字号变大后列宽可能装不下 N 个字，
+       那样 CSS 会在折好的行里再折一次，出现「只有一个字」的行。
+       先用一个探针量出当前字号下一个汉字的宽度，把 N 收到列宽真正能放下的字号数。 */
+    var wlUse = wordLimit;
+    try {
+      /* 先把歌词列宽度按「N 个字」定下来，再量字宽——否则量到的是上一次（可能更宽）的列宽，
+         折好的行会比最终列宽还宽，CSS 再折一次，就出现「只剩一个字」的行。 */
+      if (isImm) applyImmLyrWidth();
+    } catch (e2) { }
+    try {
+      if (wlUse > 0 && box.clientWidth > 0) {
+        /* 直接用「N 个字」的探针量：放得下就用 N，放不下就逐字减，比按单字宽度估算可靠 */
+        var bl2 = getComputedStyle(box);
+        var availW2 = box.clientWidth - (parseFloat(bl2.paddingLeft) || 0) - (parseFloat(bl2.paddingRight) || 0);
+        if (availW2 > 0) {
+          var probe2 = document.createElement('span');
+          probe2.className = 'am-lyr-line';
+          probe2.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:pre;padding:0;margin:0;';
+          box.appendChild(probe2);
+          for (var tryN = wlUse; tryN >= 1; tryN--) {
+            probe2.textContent = new Array(tryN + 1).join('あ');
+            if (probe2.getBoundingClientRect().width <= availW2) { wlUse = tryN; break; }
+            if (tryN === 1) wlUse = 1;
+          }
+          box.removeChild(probe2);
+        }
+      }
+    } catch (e3) { }
     S.lyrLines.forEach(function (l, i) {
-      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line', wordLimit, dual));
+      box.appendChild(buildLyrLineEl(l, i, 'am-lyr-line', wlUse, dual));
     });
     fitLyrLines(box);
     var initRate = isImm ? lyrPosRate(S.immLyrPos, 0.35) : 0.4;
     paintLyrBox(box, S.lyrCur, initRate);
     // V4.1：整组重建时逐行浮入（重放 class 触发动画）
     box.classList.remove('am-lyr-fresh'); void box.offsetWidth; box.classList.add('am-lyr-fresh');
+    if (isImm) { applyImmLyrWidth(); setTimeout(applyImmLyrWidth, 0); }
   }
   function paintLyrBox(box, cur, rate) {
     if (!box) return;
@@ -686,6 +838,45 @@
   }
 
 
+  /* 沉浸歌词列宽：手动档 = N 个字宽（每行等宽，首行自然对齐）；
+     自动(0) = 左右对称——歌词右缘到窗口右边的距离 = 窗口左边到封面左边的距离。 */
+  function applyImmLyrWidth() {
+    try {
+      var root = document.getElementById('am-root');
+      var box = R.immLyrBox, imm = R.imm;
+      if (!root || !box || !imm || !box.parentNode) return;
+      var left = imm.querySelector('.am-imm-left');
+      if (!left) return;
+      var bx = box.getBoundingClientRect().left;
+      var lx = left.getBoundingClientRect().left;
+      var n = S.immLyrWordLimit | 0;
+      var w = 0;
+      if (n > 0) {
+        var line = box.querySelector('.am-lyr-line');
+        var fs = line ? parseFloat(getComputedStyle(line).fontSize) : 0;
+        if (!fs) {
+          var cs = getComputedStyle(root);
+          fs = 26 * (parseFloat(cs.getPropertyValue('--am-imm-lyr-scale')) || 1) * (parseFloat(cs.getPropertyValue('--am-imm-fs')) || 1);
+        }
+        /* 列宽 = N 个字 + 左右内边距 16px + 当前行放大 3% 所需的余量（约 0.03*N*fs），
+           否则 N 个字放不下，折行会被迫少一个字、末行出现孤字 */
+        w = Math.round(n * fs * 1.03 + fs) + 18;   // N 个字 + 放大 3% 余量 + 一个可挂尾标点的宽度
+        /* 原文实际占用的宽度（N 个字）：译文按这个宽度折行，不超出原文 */
+        root.style.setProperty('--am-imm-lyr-tw', Math.round(n * fs) + 'px');
+      } else {
+        w = window.innerWidth - lx - bx;        // 右侧留白 = 左侧留白
+        root.style.removeProperty('--am-imm-lyr-tw');
+      }
+      if (!(w > 0)) return;
+      root.classList.add('am-imm-lyr-fixed');
+      root.style.setProperty('--am-imm-lyr-w', Math.round(w) + 'px');
+    } catch (e) { }
+  }
+  var _immLyrWT = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(_immLyrWT);
+    _immLyrWT = setTimeout(function () { if (S.imm) applyImmLyrWidth(); }, 160);
+  }, { passive: true });
   /* 注册到模块桥（供其他分片取用） */
   AM.loadLyrics = loadLyrics;
   AM.tickLyrics = tickLyrics;
@@ -695,4 +886,5 @@
   AM.toggleLyrSetPop = toggleLyrSetPop;
   AM.buildLyrInto = buildLyrInto;
   AM.autoHideScrollbar = autoHideScrollbar;
+  AM.applyImmLyrWidth = applyImmLyrWidth;
 })();

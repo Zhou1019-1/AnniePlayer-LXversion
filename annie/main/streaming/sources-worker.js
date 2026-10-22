@@ -21,6 +21,7 @@ const crypto = require('crypto');
 const { httpFetch } = require('./lx-http');
 
 let _dir = '';
+let _annieHs = null; // V4.6：安妮音源心跳参数（init 消息带入，挂 lxApi 供音源验证）
 const _runtimes = new Map(); // id -> {handler, info}
 
 /* ---------------- 工具（与主进程原实现一致） ---------------- */
@@ -67,6 +68,9 @@ function createSandbox(sourceId, scriptInfo) {
     env: 'desktop',
     version: '2.0.0',
     currentScriptInfo: scriptInfo,
+    /* V4.6：安妮播放器指纹——音源验证宿主身份用（洛雪无此字段） */
+    __annieHost: true,
+    __annieHs: _annieHs, // 心跳参数（端口+密钥），安妮音源 V6 启动时验证
     on(eventName, handler) {
       if (eventName === EVENT_NAMES.request) state.requestHandler = handler;
       else if (eventName === EVENT_NAMES.inited) state.initedHandler = handler;
@@ -181,6 +185,7 @@ process.on('message', (msg) => {
   switch (msg.type) {
     case 'init':
       _dir = msg.dir;
+      if (msg.annieHs) _annieHs = msg.annieHs; // V4.6：心跳参数（端口+密钥）
       for (const entry of msg.entries) {
         try {
           loadRuntime(entry);

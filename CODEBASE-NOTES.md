@@ -24,6 +24,23 @@
 - 理由：三主题共享全局 `state`、全局监听（AM 的 resize/theme-changed/local-media-updated 在 am-render.js:878-912、FB2K 的 keydown/pointerdown 在 fb2k.js bindGlobal）**模块加载即绑、永久在线**，且 AM 的 `mount()` 用 `S.mounted` 守卫（首次构建后 DOM 常驻，后续只刷新）、wrapGlobal/origRCV 是一次性包装。物理卸载需重写三模块生命周期 + 拆包装，风险极高、收益存疑。
 - 「冻结」如何实现「只有一个界面在跑」：切走的主题 DOM 经 `data-theme` + aria-hidden 隐藏不渲染；渲染循环/频谱/歌词 tick 都有 `annieTheme.current` 守卫（如 fb2k.js specLoop:1267 非 fb2k 主题不排帧、player.js:1050 `__legacyThemeHidden` 跳粒子重负载）自动停摆。DOM 休眠仅占几 MB 内存，换来切换瞬时、状态连续、架构稳定。
 
+### 主进程启动分支：SVLX 分支是唯一活路径（V4.6 实锤，2026-10-21）
+- ✅已验证：**dev（`npm start`）和打包版都走 `main.js` 的 `if (global.__svlxBoot)` 分支**（启动器 src/main.js 设置，`main.js:2409` 附近）；`else` 分支（`app.whenReady().then(...)` + 单实例锁）是**死代码**，永不执行。新 IPC/初始化必须加在 SVLX 分支；else 分支仅作对称备份。
+- 教训：V4.6 把 `amSrc.register(ipcMain)` / amWrapper IPC / annieSourceHs 加进 else 分支 → 全部静默不生效（"No handler registered"），且因日志巧合（见下）误以为 whenReady 执行过。
+- ✅已验证：`annieSourceHandshake.getHandshake()` 有**懒启动兜底**（`annieSourceHandshake.js:46`），`sources.js:84/243` 注入音源沙箱时会触发 → 「心跳端点已就绪」日志**不能**作为 `annieSourceHs.start()` 显式调用成功的证据。
+- ✅已验证：Windows GUI 子系统下 Electron 主进程 **`process.stdout.write` 是黑洞**（无附加控制台时静默丢弃）；主进程调试日志只能用 `console.log`。
+- `unhandledRejection` 只 `recordProcessError` 落盘不打印（`main.js:49`）—— Promise 链中断在终端无迹可寻，排查时先补临时打印。
+
+### Apple Music 音源 / wrapper-lite（V4.6，2026-10-22 全链路 E2E 9/9 通过）
+- 链路：渲染层 am-amusic.js → IPC `am:*`（streaming/am/index.js register）→ downloader.js（amp-api 搜索/解析 + HLS 分片下载 + temari.wasm FairPlay 解密 + tagM4A 写标签 + remux）→ wrapper-lite（密钥协商，QEMU 虚拟苹果客户端）。
+- ✅已验证：**amWrapper dev 路径是 `annie/resources/wrapper-lite`（`__dirname` 上一级，不是两级）**——曾多退一级导致状态卡恒报「未安装」、自启永不触发。
+- ✅已验证：**QEMU launcher 不支持非 ASCII 路径**（窄字符拼 qemu 命令行，中文路径 data.img 打不开；章鱼侧部署 bat 同款结论）。对策：`effectiveWrapperDir()` 检测到非 ASCII 就镜像到 `%ProgramData%\annie-player\wrapper-lite`（fs.cpSync，目标已有 data.img 则跳过——登录态不覆盖）。安装包默认路径含中文 ⇒ 几乎所有用户都会走镜像。
+- ✅已验证：**杀 wrapper 必须杀进程树**（taskkill /pid /T /F）：svcProc.kill() 只杀 launcher，qemu-system 孤儿化继续占 12340。登录流程 = stopService → killOrphans（按可执行路径匹配，只清我们目录的）→ 等端口释放 → 起登录实例 → 完事自动 startService 拉回。
+- ✅已验证：QEMU 引导 ~15s（tcg），startService 就绪轮询给 30s；登录态持久化在 ProgramData 镜像的 data.img（重启应用/系统均保留，regions:["cn"] 实测）。
+- ✅已验证：播放服务 service.js 懒启动（ensureService，wrapper 地址从 amWrapper 动态读）；AAC=缓冲式+Range（seek 瞬时，全曲解密 ~10s），ALAC=P2 流式（首 chunk ~2.7s）；下载产物含完整标签+封面(covr/mjpeg attached_pic)+内嵌歌词+旁挂 lrc。
+- ⚠️发版注意：**wrapper-lite 未入 git**（150MB，git ls-files=0），云端 release workflow 干净环境打包会缺——发版前必须入库（三大文件均 <100MB 无需 LFS，data.img 是 fresh 无登录态）或 release.yml 加下载步骤。
+- E2E 验证脚本模式：Node 侧 `Module._load` 打 electron 桩（net.fetch→全局 fetch，app.isPackaged=false）即可脱离 UI 直测 downloader/service/amWrapper。
+
 ## 一、FB2K 主题（fb2k.js 单 IIFE + fb2k.css）
 
 ### 结构
@@ -99,6 +116,14 @@
 - 在线歌单（V4.3.26 导出导入）：`splList/splCreate/splRename/splDelete/splAdd/splRemove`（preload.js:56-61）、`splExportFile/splImportFile`（.anniespl）。
 
 ## 三、流媒体（在线音乐）— ✅数据契约已摸清（2026-10-04）
+
+### 音源沙箱契约（sources-worker.js）
+- ✅已验证（2026-10-21 V6 导入事故）：音源脚本必须**同步**注册 `lx.on('request', handler)`——worker `vm.runInContext` 返回后立即检查 `state.requestHandler`（sources-worker.js:146-149），异步（如 `await` 后再注册）会被判「音源脚本未注册请求处理器」**拒绝导入**。宿主锁/初始化校验只能放请求处理器内做（懒校验 + 缓存），不能放在注册前。`lx.send('inited', …)` 同理需同步。
+
+### 音质校验与降级（lxsdk.js songUrl）
+- **双重校验**（lxsdk.js:294-304）：① 身份校验 `verifyUrlIdentity`（tx 按 URL 里的 songmid 比对，防聚合音源按歌名搜索张冠李戴）；② 格式校验 `verifyUrlFormat`（请求无损却返回 m4a/mp3 判该档失败，**身份对但格式不对时 break 直接落下一档**，不再试其他音源）。降级后徽标显示实际档位+真实容器（如「安妮音源·极高 320k · M4A」），状态栏附降级提示。
+- ✅已验证（2026-10-21 实测）：玉宁熙 tx 后端对 type 参数不敏感，128k/320k/flac/flac24bit 全返回同一 C400 .m4a（AAC 320k）→ **tx 链要无损必被格式校验打回降级**；vkeys 免费层全档位只给 RS02 试听流；真 FLAC 走 wy 链（笒鬼鬼 / GD Studio br=999）。
+- ✅已验证（2026-10-21）：**tx 真无损唯一通道 = 长青SVIP中继**（`http://175.27.166.236/kgqq1/qq.php?type=mp3&id={songmid}&level=standard|exhigh|lossless`，提取自长青SVIP音源 v1.2.0，服务端 VIP 凭证池，302 到酷我 CDN；lossless 实测 41MB fLaC 头真无损）。已接入 V6（TX_SVIP_RELAY）：无损档排最前（玉宁熙假成功会截胡），有损档排玉宁熙后。中继 URL 无扩展名 → verifyUrlFormat 走 HEAD 探测 Content-Type 放行；身份校验 txUrlMid 不匹配代理 URL 自动放行。**注意：第三方公众号运营服务，随时可能停用**；玉宁熙官方支持用户自填免费 key（api-v2.yuafeng.cn 注册）解决「音质对不上」，未接入（待需求）。
 
 ### 数据结构
 - **在线歌单** `splList()` → `[{id, name, items:[{song, addedAt}]}]`（main.js:1038 `spl:list` 返回 `loadStore().streamPlaylists`；AM 消费处 am-stream.js:146 `currentSpl().items.map(x=>x.song)`）。
@@ -436,5 +461,17 @@
 - **验证**：check-syntax 0 失败；真机显示待用户验证。
 
 ---
+
+## 十三、Apple Music 音源链路（V4.6）✅已验证（2026-10-22）
+
+- **链路**：renderer(am-amusic.js) → IPC `am:*`（main/streaming/am/index.js）→ 本地 HTTP 服务 service.js（listen(0) 动态端口）→ downloader.js（playlist 解析 + temari.wasm 分片解密）→ wrapper-lite（127.0.0.1:12340，/m3u8 /key /lyrics /status）→ Apple CDN。播放地址形态 `http://127.0.0.1:<port>/am/<adamId>?codec=alac`。
+- **wrapper-lite 生命周期**（main/amWrapper.js）：dev 用 `annie/resources/wrapper-lite/`，打包用 `resourcesPath/wrapper-lite/`；**中文路径必镜像到 `%ProgramData%\annie-player\wrapper-lite`**（QEMU launcher 窄字符拼路径，中文必 boot 失败）；镜像时已有 `qemu/data.img`（登录会话）不覆盖。登录会与服务实例抢 12340 hostfwd → login 前先 stopService + killOrphans。
+- **wrapper-lite 裁剪（671MB→275.6MB）**：可裁＝非 x86 edk2 固件（288MB）、doc/man/icons/locale（33MB）、ANGLE/SwiftShader GPU 库 7 个 dll（44MB，libGLESv2*/libEGL*/libGLESv1_CM/libvk_swiftshader）。**不可裁（qemu exe 加载时依赖，缺了 0xC0000135）**：视频编解码库（libaom/librav1e/libSvtAv1Enc-4/libdav1d-7/libjxl+libjxl_cms）、GTK 簇（libgtk/libgdk/cairo/pango/atk/gdk_pixbuf/harfbuzz/epoxy）、libspice-server、libvirglrenderer。
+- **三大坑（已修）**：
+  1. **init 段占位时长（15 秒停播根因）**：Apple init(moov) 的 mvhd 时长是占位值（不同歌恒定 ~14.95s），引擎 `TickPosition` 按 `_track.DurationSec` 判 ended（Engine.Playback.cs:724-732）→ ALAC 流播 ~15 秒就停。修复：downloader.js `patchInitDuration()` 按 playlist EXTINF 总长改写 mvhd/tkhd/mdhd/mehd（v0/v1），seek 时扣除 startOffsetSec。✅ffprobe 实测 14.95→314.25。
+  2. **service.js 先发 200 后失败**：ALAC 分支旧实现 writeHead(200) 在生成器之前，生成器早夭 → 客户端拿 200+空体 → ffprobe 探测失败。修复：首 chunk 到位才发 200，失败回 500 JSON（service.js:91-114）。
+  3. **`play.crossfade → KeyNotFound`**：Decode.cs Probe 旧实现 `root.GetProperty("streams")`，ffprobe 失败（I/O error）输出空 JSON 时抛裸 KeyNotFoundException。修复：Probe 拆 ProbeOnce + URL 一次重试、检查 ExitCode/stderr、TryGetProperty；PlayCrossfade 探测失败回退普通 Play（Engine.Playback.cs:425-431）。另 player.js:1326 AM 流（provider==='am'）直接走普通 play 不走 crossfade。
+- **播放/下载音质**：播放 aac（缓冲式全量下载+Range）/ alac（流式 P2），本机键 `annieplayer.am.playq`；下载 aac/aac128/he-aac/alac/atmos，键 `annieplayer.am.dlq`（am-amusic.js:13-32）。
+- **playlist 缓存**：downloader.js `playlistCache`（5min TTL）+ `am:prefetch` IPC，切歌预取下一首。
 
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

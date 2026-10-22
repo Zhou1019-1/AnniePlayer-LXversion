@@ -205,6 +205,7 @@
     ['tools', '曲库工具'],
     ['stats', '听歌统计'],
     ['download', '下载'],
+    ['amusic', 'Apple Music'],
     ['update', '更新与关于'],
     ['ext', '扩展'],
     ['help', '使用说明']
@@ -565,7 +566,8 @@
       pgUiAm = pageEls['ui-am'], pgUiFb2k = pageEls['ui-fb2k'],
       pgTools = pageEls.tools,
       pgStats = pageEls.stats,
-      pgDownload = pageEls.download, pgUpdate = pageEls.update, pgExt = pageEls.ext;
+      pgDownload = pageEls.download, pgUpdate = pageEls.update, pgExt = pageEls.ext,
+      pgAmusic = pageEls.amusic;
 
     /* ================= 常规 ================= */
     // —— 界面 ——
@@ -3814,6 +3816,118 @@
       s0.appendChild(r4);
     })();
 
+    /* ================= Apple Music（wrapper-lite 后端管理） ================= */
+    (function buildAmusicPage() {
+      var sSt = section(pgAmusic, '后端服务状态');
+      var stCard = el('div', 'set-row');
+      var stInfo = el('div');
+      var stTitle = el('div', '', '检测中…');
+      var stHint = el('div', 'set-hint', '正在检测 wrapper-lite 服务状态');
+      stInfo.appendChild(stTitle); stInfo.appendChild(stHint);
+      var stBtns = el('div'); stBtns.style.cssText = 'display:flex;gap:8px';
+      var bRefresh = el('button', 'am-btn', '↻ 刷新');
+      var bStart = el('button', 'am-btn', '▶ 启动服务');
+      var bStop = el('button', 'am-btn', '⏹ 停止服务');
+      stBtns.appendChild(bRefresh); stBtns.appendChild(bStart); stBtns.appendChild(bStop);
+      stCard.appendChild(stInfo); stCard.appendChild(stBtns);
+      sSt.appendChild(stCard);
+
+      function refreshSt() {
+        stTitle.textContent = '检测中…'; stHint.textContent = '';
+        window.mine.amWrapperStatus().then(function (st) {
+          if (st.ok) {
+            stTitle.textContent = '✅ 服务运行中';
+            stHint.textContent = '区域：' + (st.regions || []).join('、') + ' · 端口 12340';
+            stTitle.style.color = '';
+          } else if (st.stage === 'starting') {
+            stTitle.textContent = '⏳ 服务启动中…';
+            stHint.textContent = 'QEMU 虚拟机启动需要几秒，请稍候';
+            stTitle.style.color = '';
+          } else if (st.stage === 'stopped') {
+            stTitle.textContent = '⏹ 服务未运行';
+            stHint.textContent = '点「启动服务」或重启播放器自动启动';
+            stTitle.style.color = '#e11d48';
+          } else {
+            stTitle.textContent = '❌ ' + (st.error || '异常');
+            stHint.textContent = st.stage === 'missing' ? 'wrapper-lite 未安装（安装包可能损坏）' : '';
+            stTitle.style.color = '#e11d48';
+          }
+        }).catch(function (e) {
+          stTitle.textContent = '❌ 检测失败';
+          stHint.textContent = String(e && e.message || e);
+          stTitle.style.color = '#e11d48';
+        });
+      }
+      bRefresh.onclick = refreshSt;
+      bStart.onclick = function () {
+        stTitle.textContent = '⏳ 启动中…';
+        window.mine.amWrapperStart().then(function (r) {
+          if (r.ok) { stTitle.textContent = '✅ 服务运行中'; stHint.textContent = ''; stTitle.style.color = ''; }
+          else { stTitle.textContent = '❌ 启动失败'; stHint.textContent = r.error || ''; stTitle.style.color = '#e11d48'; }
+          setTimeout(refreshSt, 1500);
+        });
+      };
+      bStop.onclick = function () {
+        window.mine.amWrapperStop().then(function () { setTimeout(refreshSt, 500); });
+      };
+      refreshSt();
+      // 停留该页时每 5 秒自动刷新状态
+      var stTimer = setInterval(function () {
+        if (!pgAmusic.classList.contains('active')) { clearInterval(stTimer); return; }
+        refreshSt();
+      }, 5000);
+
+      /* ---- 登录 ---- */
+      var sLg = section(pgAmusic, '首次登录（只需一次）');
+      var lgHint = el('div', 'set-hint', '⚠️ 请使用【专用小号】登录，不要用主力 Apple ID！登录态永久缓存（存于 wrapper 数据目录），之后启动服务无需再登录。开启两步验证的账号需填 6 位验证码。');
+      sLg.appendChild(lgHint);
+      var fUser = el('div', 'set-row');
+      var lUser = el('div'); lUser.appendChild(el('div', '', 'Apple ID（邮箱）'));
+      var iUser = document.createElement('input'); iUser.className = 'am-st-input'; iUser.placeholder = 'you@example.com'; iUser.style.cssText = 'width:260px;user-select:text';
+      fUser.appendChild(lUser); fUser.appendChild(iUser);
+      sLg.appendChild(fUser);
+      var fPass = el('div', 'set-row');
+      var lPass = el('div'); lPass.appendChild(el('div', '', '密码'));
+      var iPass = document.createElement('input'); iPass.className = 'am-st-input'; iPass.type = 'password'; iPass.placeholder = '••••••••'; iPass.style.cssText = 'width:260px;user-select:text';
+      fPass.appendChild(lPass); fPass.appendChild(iPass);
+      sLg.appendChild(fPass);
+      var fCode = el('div', 'set-row');
+      var lCode = el('div'); lCode.appendChild(el('div', '', '两步验证码（可选）')); lCode.appendChild(el('div', 'set-hint', '开启两步验证的账号才需要填（6 位数字）'));
+      var iCode = document.createElement('input'); iCode.className = 'am-st-input'; iCode.placeholder = '123456'; iCode.maxLength = 6; iCode.style.cssText = 'width:120px;user-select:text';
+      fCode.appendChild(lCode); fCode.appendChild(iCode);
+      sLg.appendChild(fCode);
+      var fBtn = el('div', 'set-row');
+      var bLogin = el('button', 'am-btn am-btn-accent', '🔐 登录');
+      var lgStatus = el('span', 'set-hint', '');
+      lgStatus.style.marginLeft = '10px';
+      bLogin.onclick = function () {
+        var u = iUser.value.trim(), p = iPass.value;
+        if (!u || !p) { lgStatus.textContent = '请填写账号和密码'; lgStatus.style.color = '#e11d48'; return; }
+        bLogin.disabled = true; lgStatus.textContent = '登录中（可能需要几十秒）…'; lgStatus.style.color = '';
+        window.mine.amWrapperLogin({ user: u, pass: p, code2fa: iCode.value.trim() }).then(function (r) {
+          bLogin.disabled = false;
+          if (r.ok) {
+            lgStatus.textContent = '✅ 登录成功！启动服务…'; lgStatus.style.color = '';
+            window.mine.amWrapperStart().then(function () { setTimeout(refreshSt, 1500); });
+          } else {
+            lgStatus.textContent = '❌ 登录失败：' + (r.output || '请检查账号密码'); lgStatus.style.color = '#e11d48';
+          }
+        }).catch(function (e) {
+          bLogin.disabled = false;
+          lgStatus.textContent = '❌ ' + String(e && e.message || e); lgStatus.style.color = '#e11d48';
+        });
+      };
+      fBtn.appendChild(bLogin); fBtn.appendChild(lgStatus);
+      sLg.appendChild(fBtn);
+
+      /* ---- 手动操作引导 ---- */
+      var sMan = section(pgAmusic, '手动操作（自动方式失败时）');
+      sMan.appendChild(el('div', 'set-hint',
+        '如果上方自动登录/启动失败（QEMU 权限或安全软件拦截），可手动操作：' +
+        '安装目录下 resources\\wrapper-lite\\ 里，双击「1-首次登录.bat」按提示登录（只需一次），' +
+        '之后双击「2-启动服务.bat」即可。播放器每次启动也会自动拉起服务。'));
+    })();
+
     /* ================= 更新与关于 ================= */
     var sUp = section(pgUpdate, '更新');
     // V4.3.19：联系渠道（QQ 群二维码，与首启引导/更新播报同一组）
@@ -3992,9 +4106,10 @@
         }
         list.forEach(function (s) {
           var row = el('div', 'set-lib-item');
+          row.style.cssText = 'flex-direction:column;align-items:stretch;gap:2px';
+          var topRow = el('div'); topRow.style.cssText = 'display:flex;align-items:center;gap:8px';
           var name = el('span', 'set-lib-path', (s.enabled ? '🟢 ' : '⚪ ') + s.name + (s.version ? ' v' + s.version : ''));
-          name.title = (s.description || '') + (s.author ? '\n作者：' + s.author : '') +
-            ((s.enabled && !s.loaded) ? '\n（加载失败，请重新导入）' : '');
+          name.title = (s.author ? '作者：' + s.author : '') + ((s.enabled && !s.loaded) ? '\n（加载失败，请重新导入）' : '');
           var tgl = el('button', 'btn-ghost', s.enabled ? '停用' : '启用');
           tgl.onclick = async function () {
             try { await window.mine.streamSourcesSetEnabled({ id: s.id, enabled: !s.enabled }); }
@@ -4007,7 +4122,14 @@
             try { await window.mine.streamSourcesRemove({ id: s.id }); } catch (e) { }
             renderExtSources();
           };
-          row.appendChild(name); row.appendChild(tgl); row.appendChild(del);
+          topRow.appendChild(name); topRow.appendChild(tgl); topRow.appendChild(del);
+          row.appendChild(topRow);
+          /* 音源描述直接显示（不再藏 title 悬停里） */
+          if (s.description) {
+            var desc = el('div', 'set-hint', s.description);
+            desc.style.cssText = 'font-size:12px;opacity:.75;margin-top:2px;line-height:1.5';
+            row.appendChild(desc);
+          }
           extList.appendChild(row);
         });
       }).catch(function () { extStat.textContent = '音源服务不可用'; });

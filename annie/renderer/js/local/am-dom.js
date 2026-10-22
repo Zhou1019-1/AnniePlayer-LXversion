@@ -1742,6 +1742,7 @@
     sb.appendChild(nav('🔍', '在线音乐', 'stream'));
     sb.appendChild(nav('⬇', '下载情况', 'downloads')); // V4.3.22：下载任务管理（洛雪式五标签）
     sb.appendChild(nav('🔷', 'Qobuz', 'qobuz')); // V4.3.6：Qobuz 在线播放/下载（登录自己的付费账号）
+    sb.appendChild(nav('🍎', 'Apple Music', 'amusic')); // V4.6：Apple Music 音源（章鱼解密链路，需 wrapper-lite）
     // 添加文件夹：只作入口，文件夹列表不外显在 AM 界面（与粒子舞台/FB2K 不同）
     var addFolder = el('button', 'am-nav am-new');
     addFolder.appendChild(navIcoSpan('＋'));
@@ -2444,6 +2445,7 @@
     if (S.view === 'stream') { renderStreamView(c); return; }
     if (S.view === 'downloads') { if (window.annieAMDownload) window.annieAMDownload.render(c); return; } // V4.3.22：下载情况
     if (S.view === 'qobuz') { if (AM.renderQobuzView) AM.renderQobuzView(c); return; } // V4.3.6：Qobuz 视图
+    if (S.view === 'amusic') { if (AM.amEnter) AM.amEnter(); if (AM.renderAmusicView) AM.renderAmusicView(c); return; } // V4.6：Apple Music 视图
     if (S.view.indexOf('spl:') === 0) { renderSplView(c); return; } // V4.3.5：在线歌单
 
     var tracks = currentTracks();

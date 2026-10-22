@@ -145,6 +145,12 @@ function baseNameFor(song, fmt) {
   return `${artist} - ${name}`;
 }
 async function download(params, onProgress) {
+  /* V4.6：Apple Music 音源走章鱼解密链路（downloadTrack 直接拿 Buffer，含标签/封面/歌词全套），
+     不走「songUrl → 拉 URL 流式写盘」通用路径 */
+  if (params.provider === 'am') {
+    const am = require('./am');
+    return am.downloadTrackWithTags(params, onProgress);
+  }
   const r = await songUrl(params);
   if (!r || !r.playable || !r.url) throw new Error((r && r.message) || '无法获取下载地址');
   const song = params.song || {};

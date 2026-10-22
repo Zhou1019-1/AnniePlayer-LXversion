@@ -108,6 +108,20 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "annie/main/streaming/am/temari.wasm",
+        "to": "am",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "annie/resources/wrapper-lite",
+        "to": "wrapper-lite",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

@@ -3099,8 +3099,10 @@ function amModeSvg(id) {
           else return;
         }
         S.pos = Math.max(0, (data.seconds || 0) - (state.currentCue ? state.currentCue.start : 0));
+        // V4.6：流媒体（AM ALAC P2 分片流等）引擎探测 duration 不可靠，优先平台元数据 state.duration；
+        // 本地文件才信任引擎 data.duration（否则 IF YOU 4:24 会显示成引擎探到的分片时长 14.95）
         S.dur = state.currentCue ? (state.currentCue.end - state.currentCue.start)
-          : (data.duration || (state.currentStream && state.duration) || 0);
+          : (state.currentStream ? (state.duration || data.duration || 0) : (data.duration || 0));
         refreshTimes();
         tickLyrics();
         resumeHandlePosition();   // V4.4：流媒体重启恢复的补 seek

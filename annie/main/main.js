@@ -20,6 +20,9 @@ const onlineMatch = require('./onlineMatch');
 const analyzer = require('./analyzer');
 const tagWriter = require('./tagWriter'); // V3.5.9：曲库标签编辑（与下载写标签同一实现）
 const qobuz = require('./qobuz'); // V4.3.6：Qobuz 在线播放/下载（用户登录自己的付费账号）
+const amSrc = require('./streaming/am'); // V4.6：Apple Music 音源（章鱼解密链路）
+const amWrapper = require('./amWrapper'); // V4.6：wrapper-lite 生命周期管理（登录/服务启停/状态）
+const annieSourceHs = require('./annieSourceHandshake'); // V4.6：安妮音源心跳端点（音源仅可在安妮内运行）
 const streamCache = require('./streamCache'); // V4.4：流媒体播放缓存（边播边存 + LRU 上限）
 const dlManager = require('./dlManager'); // V4.3.22：下载任务管理器（下载情况视图）
 const remote = require('./remote'); // V4.3.12：局域网手机遥控（脑暴 9.1）
@@ -2408,6 +2411,16 @@ if (global.__svlxBoot) {
   setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
   streaming.init(app);
   qobuz.init({ loadStore, flushStore, touchStore });
+  amSrc.register(ipcMain); // V4.6：Apple Music 音源 IPC（am:* 通道族）
+  // V4.6：wrapper-lite 静默自启（后台，不阻塞启动；已运行则跳过）
+  amWrapper.status().then(function (st) { if (!st.ok && st.stage === 'stopped') amWrapper.startService().catch(function () { }); }).catch(function () { });
+  ipcMain.handle('amWrapper:status', () => amWrapper.status());
+  ipcMain.handle('amWrapper:login', (_e, p) => amWrapper.login(p.user, p.pass, p.code2fa || ''));
+  ipcMain.handle('amWrapper:start', () => amWrapper.startService());
+  ipcMain.handle('amWrapper:stop', () => { amWrapper.stopService(); return { ok: true }; });
+  // V4.6：安妮音源心跳端点（音源沙箱验证宿主身份用）
+  annieSourceHs.start();
+  ipcMain.handle('annieSource:handshake', () => annieSourceHs.getHandshake());
   streamCache.init({ loadStore, flushStore, touchStore }); // V4.4：两分支共用，勿漏
   initRemote(); // V4.3.12：手机遥控（两分支共用，勿漏——漏了就是"配对码显示正常但永远不对"）
   setupImageReferer();
@@ -2446,6 +2459,16 @@ if (!gotLock) {
     setupLibraryWatch(); // V3.5.8：媒体库文件夹监听
     streaming.init(app); // 恢复流媒体登录态（userData/stream-cookies.json）
     qobuz.init({ loadStore, flushStore, touchStore });
+    amSrc.register(ipcMain); // V4.6：Apple Music 音源 IPC（am:* 通道族）
+    // V4.6：wrapper-lite 静默自启（后台，不阻塞启动；已运行则跳过）
+    amWrapper.status().then(function (st) { if (!st.ok && st.stage === 'stopped') amWrapper.startService().catch(function () { }); }).catch(function () { });
+    ipcMain.handle('amWrapper:status', () => amWrapper.status());
+    ipcMain.handle('amWrapper:login', (_e, p) => amWrapper.login(p.user, p.pass, p.code2fa || ''));
+    ipcMain.handle('amWrapper:start', () => amWrapper.startService());
+    ipcMain.handle('amWrapper:stop', () => { amWrapper.stopService(); return { ok: true }; });
+    // V4.6：安妮音源心跳端点（音源沙箱验证宿主身份用）
+    annieSourceHs.start();
+    ipcMain.handle('annieSource:handshake', () => annieSourceHs.getHandshake());
     streamCache.init({ loadStore, flushStore, touchStore }); // V4.4：流媒体播放缓存
     initRemote(); // V4.3.12：手机遥控
     setupImageReferer(); // 流媒体封面 CDN 防盗链 Referer 注入

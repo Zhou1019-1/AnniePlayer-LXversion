@@ -80,7 +80,9 @@ function scheduleRestart() {
       waitForReady()
         .then(() => {
           // 重建后重新加载所有启用音源（init 消息驱动 loaded 回执）
-          postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled) });
+          // V4.6：带安妮音源心跳参数（仅安妮音源 V6 用，其他音源无感）
+          const hs = require('../annieSourceHandshake').getHandshake();
+          postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled), annieHs: hs });
           return reloadAll();
         })
         .then(() => {
@@ -237,7 +239,9 @@ function init(app) {
   } catch { _registry = []; }
   // 启动沙箱 Worker 并异步加载所有启用的音源（不再阻塞主进程）
   startWorker();
-  postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled) });
+  // V4.6：带安妮音源心跳参数
+  const hs = require('../annieSourceHandshake').getHandshake();
+  postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled), annieHs: hs });
 }
 
 function list() {

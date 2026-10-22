@@ -144,8 +144,18 @@ public sealed class FfmpegPcmStream : IDisposable
         catch (InvalidOperationException) { return null; } // CompleteAdding 后空队列
     }
 
-    /// <summary>探测曲目信息。headers 为可选 HTTP 头，仅对 URL 生效。</summary>
+    /// <summary>探测曲目信息。headers 为可选 HTTP 头，仅对 URL 生效。网络流允许一次重试（本地解密服务冷启动首连不稳）。</summary>
     public static TrackInfo Probe(string path, string? headers = null)
+    {
+        try { return ProbeOnce(path, headers); }
+        catch (Exception) when (IsUrl(path))
+        {
+            System.Threading.Thread.Sleep(800);
+            return ProbeOnce(path, headers);
+        }
+    }
+
+    private static TrackInfo ProbeOnce(string path, string? headers = null)
     {
         var argList = new List<string> { "-v", "error" };
         if (IsUrl(path))
@@ -173,10 +183,18 @@ public sealed class FfmpegPcmStream : IDisposable
             throw new InvalidOperationException("ffprobe 超时: " + path);
         }
         var json = proc.StandardOutput.ReadToEnd();
+        var err = proc.StandardError.ReadToEnd();
+        // V4.6：ffprobe 失败时退出码非 0 且可能输出无 streams 的空 JSON——旧实现直接
+        // GetProperty("streams") 抛 KeyNotFoundException（"The given key was not present in the dictionary"），
+        // 把真实原因（I/O error 等）抹得一干二净（AM 流式切歌排障实锤）。统一转成带 stderr 的可读错误。
+        if (proc.ExitCode != 0 || string.IsNullOrWhiteSpace(json))
+            throw new InvalidOperationException("ffprobe 无法解析: " + path + (string.IsNullOrWhiteSpace(err) ? "" : "（" + err.Trim() + "）"));
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
-        var stream = root.GetProperty("streams").EnumerateArray()
+        if (!root.TryGetProperty("streams", out var streamsEl))
+            throw new InvalidOperationException("ffprobe 未找到音频流: " + path);
+        var stream = streamsEl.EnumerateArray()
             .FirstOrDefault(s => s.TryGetProperty("sample_rate", out _));
         if (stream.ValueKind == JsonValueKind.Undefined) throw new InvalidOperationException("ffprobe 未找到音频流: " + path);
 

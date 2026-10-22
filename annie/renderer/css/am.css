@@ -604,9 +604,11 @@ html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-radius: 10px; padding: 9px 14px; font: 13px var(--am-font);
   transition: border-color .15s;
+  /* 全局 * { user-select:none }（app.css:2）会让输入框点击不聚焦——输入框必须允许选择 */
+  user-select: text;
 }
 .am-st-input:focus { border-color: var(--am-accent); }
-.am-st-input::placeholder { color: var(--am-text-3); }
+.am-st-input::placeholder { color: var(--am-text-3); opacity: .45; }
 /* V4.4.3：搜索历史自绘下拉弹层（输入行内绝对定位；复用玻璃风） */
 .am-st-histpop {
   position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60;
@@ -2051,3 +2053,25 @@ body.am-row-dragging { cursor: grabbing; }
 
 /* B 方案：歌词面板不画左边线（连 1px 边带一起去掉，否则会显出一条白线） */
 #am-root .am-lyrics { border-left-color: transparent !important; border-left-width: 0 !important; }
+
+/* ================= Apple Music 播放加载进度卡（V4.6） ================= */
+@keyframes amLoadSpin { to { transform: rotate(360deg); } }
+#am-root .am-load-card {
+  position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 4000;
+  display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 999px;
+  background: var(--am-pop-bg, rgba(28, 28, 32, .88)); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  color: var(--am-fg, #fff); font-size: 13px; white-space: nowrap;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .38), inset 0 0 0 1px rgba(255, 255, 255, .08);
+  animation: amPopIn .18s ease-out;
+}
+#am-root .am-load-spin {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  border: 2px solid rgba(255, 255, 255, .22); border-top-color: var(--am-accent);
+  animation: amLoadSpin .8s linear infinite;
+}
+#am-root .am-load-text { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+#am-root .am-load-bar { width: 110px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .14); overflow: hidden; flex: none; }
+#am-root .am-load-bar > i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--am-accent); transition: width .25s ease; }
+/* 加载成功（绿勾，停留 3 秒）/ 加载失败（红叉） */
+#am-root .am-load-ok { width: 14px; height: 14px; flex: none; border-radius: 50%; background: #34c759; color: #fff; font-size: 10px; line-height: 14px; text-align: center; font-weight: 700; }
+#am-root .am-load-ok.am-load-ng { background: #ff453a; }

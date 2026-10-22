@@ -421,7 +421,14 @@ public sealed partial class Engine
         //（流媒体 44.1k → 本地 96k 等跨采样率切歌会触发）
         // V1.1.9：回退必须带 quickStart（150ms 预缓冲边播边缓冲）——旧实现走完整预缓冲
         //（≥0.3s 起步，网络流更久），跨格式切歌"不跟手"的元凶之一。
-        var info = FfmpegPcmStream.Probe(path, headers);
+        TrackInfo info;
+        try { info = FfmpegPcmStream.Probe(path, headers); }
+        catch (Exception probeEx)
+        {
+            // V4.6：crossfade 探测失败（本地解密流冷启动等）不再把异常甩给前端，回退普通播放（内部会重试探测）
+            Console.Error.WriteLine($"[engine] crossfade 探测失败（{probeEx.Message}），回退普通播放");
+            return Play(path, 0, headers, loudGain, quickStart: true);
+        }
         if (info.SampleRate != _mixer!.WaveFormat.SampleRate || info.Channels != _mixer.Channels)
         {
             Console.Error.WriteLine($"[engine] crossfade 格式不匹配({info.SampleRate}/{info.Channels} vs {_mixer.WaveFormat.SampleRate}/{_mixer.Channels})，回退快速播放");

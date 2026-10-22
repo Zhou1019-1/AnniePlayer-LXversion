@@ -168,6 +168,22 @@ contextBridge.exposeInMainWorld('mine', {
   qobuzDlCancel: () => ipcRenderer.invoke('qobuz:dlCancel'),
   qobuzPickDlDir: (reset) => ipcRenderer.invoke('qobuz:pickDlDir', reset),
   onQobuzDlEvent: (cb) => { const h = (_e, ev) => cb(ev); ipcRenderer.on('qobuz:dl:event', h); return () => ipcRenderer.removeListener('qobuz:dl:event', h); },
+  // V4.6：Apple Music 音源（章鱼解密链路；播放走本地 HTTP 服务）
+  amStatus: () => ipcRenderer.invoke('am:status'),
+  amSearch: (p) => ipcRenderer.invoke('am:search', p),
+  amResolve: (text) => ipcRenderer.invoke('am:resolve', text),
+  amProbeCodecs: (adamId) => ipcRenderer.invoke('am:probeCodecs', adamId),
+  amLyric: (p) => ipcRenderer.invoke('am:lyric', p),
+  amGetPic: (p) => ipcRenderer.invoke('am:getPic', p),
+  amSongUrl: (p) => ipcRenderer.invoke('am:songUrl', p),
+  amEnsureService: () => ipcRenderer.invoke('am:ensureService'),
+  amPrefetch: (p) => ipcRenderer.invoke('am:prefetch', p),
+  amProgress: (p) => ipcRenderer.invoke('am:progress', p),
+  // V4.6：wrapper-lite 生命周期（设置页 Apple Music 页签）
+  amWrapperStatus: () => ipcRenderer.invoke('amWrapper:status'),
+  amWrapperLogin: (p) => ipcRenderer.invoke('amWrapper:login', p),
+  amWrapperStart: () => ipcRenderer.invoke('amWrapper:start'),
+  amWrapperStop: () => ipcRenderer.invoke('amWrapper:stop'),
   streamSourcesRemove: (params) => ipcRenderer.invoke('stream:sources:remove', params),
   streamSourcesSetEnabled: (params) => ipcRenderer.invoke('stream:sources:setEnabled', params),
 

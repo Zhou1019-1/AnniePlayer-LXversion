@@ -1321,7 +1321,9 @@ window.annieStreamPlay = async function (track) {
   try {
     // V1.1.4：流媒体切歌同样走 crossfade（设备保持）——与本地 playAt 一致，避免高频设备开关
     const cf = window.annieSettings ? (annieSettings.ui.crossfadeSec || 0) : 0;
-    const method = (cf > 0 || gaplessOn()) ? 'play.crossfade' : 'play';
+    // V4.6：Apple Music 本地解密流不走 crossfade——切歌时引擎 ffprobe 探测的是冷启动的
+    // 127.0.0.1 流（首 chunk 要等 playlist/密钥），探测不稳定；AM 切歌已有 playlist 缓存+预取加速
+    const method = (track.provider !== 'am' && (cf > 0 || gaplessOn())) ? 'play.crossfade' : 'play';
     // V4.4：流媒体播放缓存——命中则引擎直接解码本地缓存文件（track.url 身份不变，歌词/统计/收藏链路不受影响）；
     // 未命中后台边播边存（失败静默）。仅洛雪五平台（载荷带 song 原始对象）；Qobuz 不带 song 天然跳过
     let playPath = track.url, playHeaders = track.headers;
@@ -1422,11 +1424,18 @@ window.mine.onEngineEvent((event, d) => {
         }
       } else {
         state.position = d.seconds;
-        if (d.duration) state.duration = d.duration;
-        else if (state.currentStream && window.annieStream) {
-          // 流媒体引擎探测不到时长时，用平台元数据兜底
-          const fb = window.annieStream.currentFallbackDuration();
-          if (fb) state.duration = fb;
+        if (!state.currentStream && d.duration) {
+          // 本地文件：以引擎探测时长为准
+          state.duration = d.duration;
+        } else if (state.currentStream && !state.duration) {
+          // 流媒体：引擎对分片网络流（AM ALAC P2 分片无完整 moov）时长探测不可靠且随缓冲波动，
+          // 会覆盖 annieStreamPlay 已写入的平台元数据时长（IF YOU 4:24 曾显示成 2:35 / 0:14）。
+          // 故 duration 以平台元数据为准，仅缺席时才用 fallback 兜底。
+          if (window.annieStream) {
+            const fb = window.annieStream.currentFallbackDuration();
+            if (fb) state.duration = fb;
+          }
+          if (!state.duration && state.currentStream.duration) state.duration = state.currentStream.duration;
         }
       }
       // V1.1.4：seek 保护——引擎 seek 期间（ffprobe 探测/重缓冲）旧 position 事件持续到达，

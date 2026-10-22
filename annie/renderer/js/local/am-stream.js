@@ -98,6 +98,7 @@
     if (ni < 0 || ni === S.stIndex) return;
     var song = list[ni];
     if (!song) return;
+    if (song.provider === 'am') return; // V4.6：AM 音源走本地解密服务（URL 无时效），不预解析
     var key = preKeyOf(song, S.stQuality);
     if (_preLoading || (_preKey === key && (_preUrl || Date.now() - _preAt2 < 8000))) return; // 已取到/8s 内刚试过
     if (Date.now() - _preAt2 < 4000) return; // 全局节流：至少间隔 4s 才发起一次预解析
@@ -124,8 +125,11 @@
     renderStreamStatus('正在获取播放地址：' + song.name + '…');
     // V4.4：命中下一首预解析则跳过 IPC 请求（promise 链统一走同一个 then/catch）
     var preHit = consumePreload(song);
+    /* V4.6：Apple Music（provider 'am'）走自己的 songUrl（本地解密服务），不进洛雪 SDK */
     var urlP = preHit ? Promise.resolve(preHit)
-      : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song });
+      : (song.provider === 'am'
+        ? window.mine.amSongUrl({ song: song, codec: (localStorage.getItem('annieplayer.am.playq') === 'alac' ? 'alac' : 'aac') })
+        : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }));
     urlP.then(function (r) {
       if (S.stIndex !== i || S._playList !== list) return;
       if (!r || !r.playable || !r.url) { renderStreamStatus(song.name + '：' + ((r && r.message) || '无法播放'), true); return; }
@@ -150,8 +154,11 @@
           AM.refreshCacheBadge && AM.refreshCacheBadge();
           if (S.cacheHit) renderStreamStatus(PLATFORMS[song.provider] + ' · ' + (r.quality || '') + ' · 本地缓存秒开');
           // 播放确认后取歌词：注入缓存 + 广播给 AM 歌词面板 + 同步粒子舞台
-          if (window.mine.streamLyric) {
-            window.mine.streamLyric({ provider: song.provider, song: song }).then(function (ly) {
+          /* V4.6：AM 音源歌词走 amLyric（三轨：正文/翻译/罗马音），不进洛雪 SDK */
+          var lyricP = song.provider === 'am'
+            ? window.mine.amLyric({ id: String(song.id || ''), lang: 'zh-Hans' }).then(function (r2) { return r2 ? { lrc: r2.lrc || '', tlyric: r2.tlyric || '' } : null; })
+            : (window.mine.streamLyric ? window.mine.streamLyric({ provider: song.provider, song: song }) : Promise.resolve(null));
+          lyricP.then(function (ly) {
               if (!ly || !ly.lrc) return;
               if (S.stIndex !== i || S._playList !== list || !state.currentStream || !state.currentPath) return;
               window.__annieStreamLrcByPath = window.__annieStreamLrcByPath || {};
@@ -162,7 +169,6 @@
               if (window.annieStage && window.annieStage.setLyricText) window.annieStage.setLyricText(ly.lrc, ly.tlyric); // V4.4：译文轨一并注入舞台
               try { document.dispatchEvent(new CustomEvent('annie-stream-lyric', { detail: { path: state.currentPath } })); } catch (e) { }
             }).catch(function () { });
-          }
         });
       }
       if (!song.cover && window.mine.streamGetPic) {

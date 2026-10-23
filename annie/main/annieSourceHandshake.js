@@ -8,6 +8,11 @@ const crypto = require('crypto');
 let server = null;
 let boundPort = 0;
 let secret = ''; // 本次启动的握手密钥（随机生成，重启即变）
+/* V4.6.1：监听就绪信号——音源沙箱加载前必须等端点真正 listen 完成，
+ * 否则「插件心跳」会跑在「端点已就绪」之前 → ECONNREFUSED → 心跳假失败（已踩）。 */
+let listening = false;
+let readyPromise = null;
+let resolveReady = null;
 
 /* 同步随机选端口（20000-60000）：listen(0) 异步回调才出端口，
  * 而 getHandshake() 同步返回——沙箱 init 时会拿到 port:0 导致心跳永远失败（已踩） */
@@ -19,6 +24,8 @@ function pickPort() {
 function start() {
   if (server) return { port: boundPort };
   secret = crypto.randomBytes(16).toString('hex'); // 每次启动随机密钥
+  listening = false;
+  readyPromise = new Promise((resolve) => { resolveReady = resolve; });
   server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*'); // 音源沙箱子进程跨域
@@ -49,9 +56,18 @@ function start() {
   server.listen(boundPort, '127.0.0.1', () => {
     server.removeListener('error', onErr);
     server.on('error', () => { }); // 监听成功后兜底吞掉运行期 error（无监听者的 error 事件会崩主进程）
+    listening = true;
+    if (resolveReady) { resolveReady(); resolveReady = null; }
     console.log('[annie-source] 心跳端点已就绪：127.0.0.1:' + boundPort);
   });
   return { port: boundPort };
+}
+
+/* 等待端点真正进入 listen 状态（音源沙箱加载前调用；已就绪则立即 resolve） */
+function ready() {
+  if (listening) return Promise.resolve();
+  if (!server) start();
+  return readyPromise || Promise.resolve();
 }
 
 /* 音源沙箱取握手参数（IPC 调用，仅主进程内可调） */
@@ -63,6 +79,7 @@ function getHandshake() {
 function shutdown() {
   try { if (server) server.close(); } catch { }
   server = null; boundPort = 0; secret = '';
+  listening = false; readyPromise = null; resolveReady = null;
 }
 
-module.exports = { start, getHandshake, shutdown };
+module.exports = { start, ready, getHandshake, shutdown };

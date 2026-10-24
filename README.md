@@ -1,22 +1,43 @@
+<div align="center">
+
 # 安妮播放器融合版（AnniePlayer SVLX）
 
-> Windows HiFi 桌面音乐播放器
-> 自研 AnnieEngine 音频引擎 × WASAPI / ASIO × VST3 × 本地无损曲库 × 洛雪音乐生态 × 三套界面主题
->
-> 无敌章鱼哥出品 · 交流 Q 群：**1023637098**（更多 HiFi 资源群公告获取）
+**Windows HiFi 桌面音乐播放器**
+自研 AnnieEngine 音频引擎 × WASAPI / ASIO × VST3 × 本地无损曲库 × 洛雪音乐生态 × 三套界面主题
 
-[![release](https://img.shields.io/github/v/release/Zhou1019-1/AnniePlayer-LXversion?display_name=tag&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)
+[![最新版本](https://img.shields.io/github/v/release/Zhou1019-1/AnniePlayer-LXversion?display_name=tag&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)
+[![总下载](https://img.shields.io/github/downloads/Zhou1019-1/AnniePlayer-LXversion/total?label=%E6%80%BB%E4%B8%8B%E8%BD%BD)](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases)
+[![发布流水线](https://img.shields.io/github/actions/workflow/status/Zhou1019-1/AnniePlayer-LXversion/release.yml?label=%E5%8F%91%E5%B8%83%E6%B5%81%E6%B0%B4%E7%BA%BF)](https://github.com/Zhou1019-1/AnniePlayer-LXversion/actions/workflows/release.yml)
+[![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%2064--bit-0078d4)](#下载安装)
+[![引擎](https://img.shields.io/badge/%E5%BC%95%E6%93%8E-.NET%209%20%E7%8B%AC%E7%AB%8B%E8%BF%9B%E7%A8%8B-512bd4)](#annieengine独立音频引擎)
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-AnniePlayer 将 Electron UI、独立 .NET 9 音频引擎、FFmpeg 解码与 VST3 DSP 链组合成完整的桌面音频系统：UI 负责人机交互，音频实时处理全部交给独立引擎进程，两端经 JSON-RPC（stdio）通信。
+**[下载安装](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest) · [界面截图](#界面截图) · [核心卖点](#核心卖点) · [更新日志](更新日志.md) · [全功能说明书](#全功能说明书)**
 
-**[下载安装](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest) · [界面截图](#界面截图) · [架构](#架构) · [性能实测](#性能实测) · [音频正确性测试](#音频正确性测试) · [更新日志](更新日志.md) · [全功能说明书](#全功能说明书)**
+无敌章鱼哥出品 · 交流 Q 群 **1023637098**（更多 HiFi 资源群公告获取）
+
+</div>
+
+> 🔥 **最新动态 · V4.6.0（2026-10-22）**：新增 **Apple Music 音源**（实验性）——登录自己的 Apple 账号，ALAC 无损流式播放 + 五档下载带全套标签封面歌词；另含待播清单插队 / 随机播放可见化 / 歌词折行（社区协作者秋野奈 PR #20）。
+>
+> 📢 **本版是年前的最后一个版本**：开发者小组暂停常规更新（重大问题仍会修复），请期待年后的**大版本更新与更多平台适配**——macOS 版已在路上（社区成员 numb 开发中）。
+
+## 核心卖点
+
+- 🎧 **独立音频引擎 AnnieEngine**：.NET 9 独立进程承担解码 / DSP / 输出，UI 崩溃不影响播放，引擎异常自动恢复
+- 🎯 **Bit-perfect 可验证**：WASAPI 独占 / ASIO 直通，输出健康链路图 11 个环节逐段显示真实参数
+- 🎛️ **完整 DSP 链**：15 段 EQ + 8 段参量 EQ + 声道矩阵 + 响度均衡（ReplayGain 直读）+ VST3 效果器，全部热更新不破音
+- 🌐 **在线音源三生态**：洛雪五平台（酷狗/酷我/咪咕/QQ/网易）+ Qobuz 直连 + Apple Music（实验性），搜索/播放/歌单/下载全套
+- ⬇️ **下载即成品**：落盘自动写入全套标签 + 封面 + 歌词（GBK 编码兼容老设备/车载）
+- 🎨 **三套界面主题**：Apple Music（磨砂玻璃）/ FB2K（效率）/ 粒子舞台（3D 可视化），彩胶唱片沉浸模式
+- 🧰 **曲库工具链**：媒体库体检 / 备份迁移换机 / 无损鉴别 / 听歌统计热力图 / 诊断包导出
+- ✅ **工程化可信**：27 项音频正确性断言 CI 双闸门 + 8 小时长稳实测 2909 轨零错误
 
 ## 下载安装
 
-**[→ 前往 Releases 下载最新安装包](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)**（`annie-player-svlx-setup-x.y.z.exe`，约 160MB）
+**[→ 前往 Releases 下载最新安装包](https://github.com/Zhou1019-1/AnniePlayer-LXversion/releases/latest)**（`annie-player-svlx-setup-x.y.z.exe`，约 386MB，含 Apple Music 音源运行时）
 
-- 系统要求：**Windows 10 / 11 64 位**（内置全部运行库，无需装 .NET / VLC / 任何依赖）
+- 系统要求：**Windows 10 / 11 64 位**（1607+；不支持 Windows 7/8——Electron 与 .NET 9 均已不再支持）；内置全部运行库，无需装 .NET / VLC / 任何依赖
 - 安装包未购买代码签名，SmartScreen 提示时点 **「更多信息 → 仍要运行」** 即可
 - **在线更新**：V3.3.1 之后的版本支持差量自动更新，打开软件即静默下载、下次启动生效（每次只需下载几 MB）
 - 覆盖安装 / 升级不会丢失曲库、歌单与设置（数据在 `%APPDATA%\annie-player-svlx`）
@@ -132,6 +153,9 @@ FLAC 24/96
   ✗ 非 bit-perfect（原因：响度 / EQ / 重采样，浮层逐项列出）
 ```
 
+<details>
+<summary><strong>📈 性能实测（曲库 Benchmark + 8 小时长稳，点击展开）</strong></summary>
+
 ## 性能实测
 
 曲库性能 Benchmark（`npm run bench:library` 可自行复现；扫描列为真实文件实测，启动/排序/搜索/内存为合成数据层实测，**排序直接执行生产代码 listWorker.js**）：
@@ -156,6 +180,11 @@ FLAC 24/96
 
 24h/48h 长稳数据积累中，跑完补到这里。
 
+</details>
+
+<details>
+<summary><strong>🔬 音频正确性测试（27 项断言 CI 双闸门，点击展开）</strong></summary>
+
 ## 音频正确性测试
 
 引擎内置 `test.decode` 自检接口（不依赖声卡，拉取整条 DSP 链返回实测指标），每次提交由 CI 自动执行（ci.yml 与 release.yml 双闸门）：
@@ -169,6 +198,8 @@ FLAC 24/96
 - ✓ 响度增益　✓ 削波恢复　✓ 边界用例（空文件 / 极端音量 / 声道探测 / 循环受控 / 快速播放）
 
 复现：`npm run test:audio`
+
+</details>
 
 ## 三套界面主题（设置中心 → 常规，随时切换）
 
@@ -195,7 +226,9 @@ FLAC 24/96
 
 ## 项目状态
 
-当前版本：**V4.1.0**（AM 主打界面动效体系：启动序列/入场错峰/切歌过渡/微交互，三档可调）
+当前版本：**V4.6.0**（Apple Music 音源 + 社区协作打磨批次）
+
+> 📢 **年前冻结公告**：V4.6.0 是年前（2027 年元旦前）的最后一个版本，开发者小组暂停常规更新（重大问题仍会修复）。年后将带来大版本更新与更多平台适配——**macOS 版由社区成员 numb 开发中**（见 `macos/` 目录）。
 
 **已完成**
 
@@ -212,10 +245,16 @@ FLAC 24/96
 - [x] 长稳测试脚本（`npm run test:soak`：循环播放 + 内存/句柄/欠载采样，Markdown 报告）——**8 小时实测 PASS**：2909 轨零错误，内存 53–64MB 收敛，零欠载
 - [x] 曲库性能 Benchmark 工具（`npm run bench:library`：1k~20 万级，排序直测生产 listWorker 代码）
 - [x] am.js UI 层拆分（2448 行单 IIFE → 核心数据/在线音乐/歌词/界面构建/状态刷新 5 片，内部模块桥接，切片拼接与原稿逐字节一致 + 引用审计 + 沙箱烟测三重校验，零行为变更）
+- [x] Apple Music 音源（实验性）：登录自己的 Apple 账号，ALAC 流式 / AAC 缓冲双档播放、五档下载全套标签、播放加载进度卡（V4.6.0）
+- [x] 社区协作：秋野奈四批 PR（可拖分栏 / SVG 图标 / 拖动保护 / 内存优化 / 歌词折行 / 待播插队 / 随机可见化等数十项）全部评审合入
 
-**进行中（V4 路线）**
+**进行中**
 
+- [ ] macOS 版（社区成员 numb 开发中，`macos/` 目录，独立 `mac-v*` 发版线）
 - [ ] 长稳与曲库实测数据积累（24h/48h 连续播放、20 万级真实曲库）
+
+<details>
+<summary><strong>📦 核心能力全清单（音质链路 / 曲库管理 / 在线与下载 / 交互体验，点击展开）</strong></summary>
 
 ## 核心能力
 
@@ -251,6 +290,8 @@ FLAC 24/96
 - 全局快捷键（媒体键 + Ctrl+Alt 组合）、播放模式五种、播放定时三种
 - VST3 效果器链（原生编辑器界面 / 湿声平滑过渡 / 每插件耗时 / 方案导入导出 / A-B 对比）
 - 设置中心内置「**使用说明**」（说明书应用内版，全功能可搜索）
+
+</details>
 
 ## 为什么做这个项目
 
@@ -463,6 +504,9 @@ A：安装包未签名 + 内含 ffmpeg 子进程调用，属误报，添加信�
 **Q：Apple Music 浅色模式背景刺眼？**
 A：V3.5.12 起已改为柔和暖白，文字对比度同步加深。右上角 ☀ 可切回深色。
 
+<details>
+<summary><strong>🛠️ 工程模块 / 开发与构建（二次开发入口，点击展开）</strong></summary>
+
 ## 工程模块与目录结构
 
 | 模块 | 职责 |
@@ -495,8 +539,16 @@ npm run gen:help      # 从 helpContent.js 重新生成本 README 的「全功�
 
 引擎源码：`engine/src/`（.NET 9，`dotnet publish engine/src -c Release -o engine/publish`）。
 
+**Apple Music 音源运行时（wrapper-lite）**：~276MB 二进制不入 git，托管为 Release 资产（`wrapper-lite-v1`），打包前由 `scripts/setup-wrapper.js` 自动下载并 SHA256 强校验（`npm run dist:setup` 已内置，首次克隆打包前会自动拉取）。
+
+**macOS 线**：`macos/` 目录（社区成员 numb），独立 `mac-v*` tag 触发 `release-mac.yml` 发版，规范见 `macos/AGENTS.md`。
+
+</details>
+
 ## 致谢
 
+- **秋野奈（[@milesapieree246891-jpg](https://github.com/milesapieree246891-jpg)）**：四批共 10+ 个 PR 的社区协作——可拖分栏、顶栏 SVG 图标统一、内存大涨修复、拖动保护、待播清单完整队列、歌词折行、待播插队、随机播放可见化等（PR #17–#20，全部评审合入）
+- **numb**：macOS 版开发者（进行中）
 - **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：三主题逐字歌词（PR #2）；音源沙箱 Worker 化、下载写标签、WASAPI 独占/共享、QQ 免签搜索与纯 JS QRC 解密、AnnieEngine 引擎源码入库（PR #1）
 - [洛雪音乐 lx-music-desktop](https://github.com/lyswhut/lx-music-desktop)（Apache-2.0）：流媒体 SDK 与歌词解密方案
 - [QobuzDownloaderX](https://github.com/ImAiiR/QobuzDownloaderX)（[@ImAiiR](https://github.com/ImAiiR)）：Qobuz 下载器先驱，V4.3.6 Qobuz 在线播放/下载的功能清单与交互设计参考对象（API 层为本项目 JS 重写，未使用其代码与二进制）

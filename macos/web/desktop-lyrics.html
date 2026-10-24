@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+<title>桌面歌词</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: transparent; overflow: hidden;
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    user-select: none; -webkit-user-select: none; cursor: default; }
+  /* ⚠️ 2026-10-24（用户要求）：拖动时不能选中文字 */
+  * { user-select: none !important; -webkit-user-select: none !important; }
+  #bar { cursor: grab; }
+  #bar:active { cursor: grabbing; }
+  #bar { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    gap: 6px; padding: 10px 24px; border-radius: 14px; background: rgba(8, 10, 16, .55);
+    -webkit-app-region: drag; position: relative; }
+  #bar:hover { background: rgba(8, 10, 16, .75); }
+  #bar.align-left { align-items: flex-start; }
+  #bar.align-right { align-items: flex-end; }
+  #cur { font-size: 26px; font-weight: 700; color: #ffd23f; text-align: center; line-height: 1.3;
+    text-shadow: 0 2px 10px rgba(0,0,0,.8); }
+  #bar.align-left #cur, #bar.align-left #next { text-align: left; }
+  #bar.align-right #cur, #bar.align-right #next { text-align: right; }
+  /* 逐字 karaoke：每个词独立填充，未唱部分半透明（颜色由 JS 按配置生成渐变） */
+  #cur .w { -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  #next { font-size: 15px; color: rgba(232, 234, 240, .65); text-align: center; }
+  #idle { font-size: 14px; color: rgba(232, 234, 240, .5); }
+  #tools { position: absolute; top: 6px; right: 10px; display: none; gap: 6px; -webkit-app-region: no-drag; }
+  /* 透明窗已知问题：DOM 事件正常但 CSS :hover 样式不触发 → 悬停改用 JS 加 .hover 类驱动 */
+  /* ⚠️ 2026-10-24（用户反馈「退出锁定后工具条消失不起效」）：
+     不能依赖 CSS :hover —— 透明 WKWebView 里 :hover 状态常常残留，
+     鼠标移开后工具条一直显示。改为**只由 .hover 类控制**（Swift 轮询 + JS 事件共同维护）。 */
+  #bar.hover #tools { display: flex; }
+
+  /* ⚠️ 2026-10-24（用户要求，第 2 版）：
+     锁定态 → 全透明底、控件隐藏、点击不产生任何操作。
+     点击穿透由 Swift 动态控制：
+       · 光标不在区域 → 窗口 ignoresMouseEvents=true（完全穿透到后面 App）
+       · 光标在区域   → 窗口接收鼠标（浮现的 🔒 可点），但 #bar 其余区域
+         pointer-events:none → 点击被窗口吃掉，不会激活主播放器窗口 */
+  #bar.locked { background: transparent !important; pointer-events: none; }
+  /* ⚠️ 2026-10-24：锁定后的解锁按钮改由原生小窗口提供（独立 NSPanel），
+     网页内的 #unlock-float 隐藏，避免两个锁图标重叠。 */
+  #bar.locked #unlock-float, #bar.locked.show-unlock #unlock-float { display: none !important; }
+  #bar.locked #tools,
+  #bar.locked #panel,
+  #bar.locked.hover #tools { display: none !important; }
+
+  /* 锁定后鼠标悬停时，居中正上方浮现的解锁按钮 */
+  #unlock-float {
+    /* ⚠️ 2026-10-24：原来 top:4px 贴窗口顶边，点击容易触发窗口边缘拖动/激活 App。
+       挪到窗口内部垂直居中，点击更稳。 */
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(.9);
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.28);
+    background: rgba(20,23,34,.92); color: #ffd23f; font-size: 14px;
+    cursor: pointer; opacity: 0; pointer-events: none;
+    transition: opacity .22s ease, transform .22s ease;
+    -webkit-app-region: no-drag; z-index: 12;
+  }
+  #bar.show-unlock #unlock-float { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+  #unlock-float:hover { border-color: #ffd23f; }
+  #tools button { width: 26px; height: 26px; border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    background: rgba(20,23,34,.9); color: #e8eaf0; font-size: 13px; cursor: pointer; }
+  #tools button:hover { border-color: #ffd23f; color: #ffd23f; }
+  #tools .sep { width: 1px; align-self: stretch; margin: 3px 2px; background: rgba(255,255,255,.18); }
+  /* 自定义面板（悬停 ⚙ 弹出） */
+  #panel { position: absolute; top: 38px; right: 10px; width: 220px; padding: 12px;
+    border: 1px solid rgba(255,255,255,.18); border-radius: 10px; background: rgba(16,19,29,.96);
+    display: none; flex-direction: column; gap: 10px; -webkit-app-region: no-drag; z-index: 9;
+    font-size: 12px; color: #e8eaf0; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+  #panel.on { display: flex; }
+  #panel .p-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #panel .p-label { color: rgba(232,234,240,.75); flex: none; }
+  .swatches { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .swatches i { width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; }
+  .swatches i.on { border-color: #fff; }
+  #panel input[type=range] { width: 110px; accent-color: #ffd23f; }
+  .seg { display: flex; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; overflow: hidden; }
+  .seg b { padding: 2px 10px; cursor: pointer; font-weight: 400; color: rgba(232,234,240,.7); }
+  .seg b.on { background: rgba(255,210,63,.25); color: #ffd23f; }
+  #p-reset { align-self: center; padding: 3px 14px; border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px; background: none; color: rgba(232,234,240,.8); cursor: pointer; font-size: 12px; }
+  #p-reset:hover { border-color: #ffd23f; color: #ffd23f; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div id="tools">
+    <button id="t-prev" title="上一首">⏮</button>
+    <button id="t-play" title="播放 / 暂停">⏯</button>
+    <button id="t-next" title="下一首">⏭</button>
+    <span class="sep"></span>
+    <button id="t-lock" title="锁定位置（鼠标穿透）">🔓</button>
+    <button id="t-minus" title="缩小字号">A-</button>
+    <button id="t-plus" title="放大字号">A+</button>
+    <button id="t-op" title="透明度">◐</button>
+    <!-- 深浅色跟随主窗口「亮色/暗色」按钮（Swift 通过 __dlyricsThemeSet 推送） -->
+    <button id="t-cfg" title="自定义">⚙</button>
+    <button id="t-close" title="关闭">✕</button>
+  </div>
+  <div id="panel">
+    <div class="p-row"><span class="p-label">当前行颜色</span><span class="swatches" id="p-color"></span></div>
+    <div class="p-row"><span class="p-label">未唱/下一行</span><span class="swatches" id="p-next"></span></div>
+    <div class="p-row"><span class="p-label">对齐</span>
+      <span class="seg" id="p-align"><b data-v="left">左</b><b data-v="center">中</b><b data-v="right">右</b></span></div>
+    <div class="p-row"><span class="p-label">行数</span>
+      <span class="seg" id="p-single"><b data-v="0">双行</b><b data-v="1">单行</b></span></div>
+    <div class="p-row"><span class="p-label">背景深浅</span><input type="range" id="p-bg" min="0" max="85" step="5"></div>
+    <button id="p-reset">恢复默认</button>
+  </div>
+  <!-- ⚠️ 2026-10-24：锁定后鼠标悬停时，居中正上方浮现的解锁按钮 -->
+  <button id="unlock-float" title="点击解锁">🔒</button>
+  <div id="cur"></div>
+  <div id="next"></div>
+  <div id="idle">♪ 桌面歌词已开启 ♪</div>
+</div>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const LS = 'annieplayer.pro.dlyrics';
+const DEFAULTS = { scale: 1, opacity: 1, locked: false,
+  color: '#ffd23f', nextColor: 'rgba(232,234,240,.65)',
+  align: 'center', single: false, bg: 55, theme: 'dark' };
+let cfg = Object.assign({}, DEFAULTS);
+try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS) || '{}')); } catch { }
+
+const COLORS = ['#ffd23f', '#ff5f7e', '#4fc3f7', '#7ee787', '#c792ea', '#ffffff'];
+const NEXTCOLORS = ['rgba(232,234,240,.65)', 'rgba(255,255,255,.9)', 'rgba(255,210,63,.6)', 'rgba(138,144,165,.8)'];
+
+/* 颜色转 rgba（hex / rgba 字符串都接受），供 karaoke 渐变未唱部分使用 */
+function withAlpha(c, a) {
+  const m = /^#([0-9a-f]{6})$/i.exec(c);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  const r = /^rgba?\(([^)]+)\)$/.exec(c);
+  if (r) { const p = r[1].split(',').map(s => s.trim()); return `rgba(${p[0]},${p[1]},${p[2]},${a})`; }
+  return c;
+}
+
+function apply() {
+  const bar = $('#bar');
+  $('#cur').style.fontSize = Math.round(26 * cfg.scale) + 'px';
+  $('#next').style.fontSize = Math.round(15 * cfg.scale) + 'px';
+  $('#cur').style.color = cfg.color;
+  $('#next').style.color = cfg.nextColor;
+  $('#next').style.display = cfg.single ? 'none' : '';
+  bar.classList.toggle('align-left', cfg.align === 'left');
+  bar.classList.toggle('align-right', cfg.align === 'right');
+  // ⚠️ 2026-10-24（用户要求）：锁定后 → 背景全透明、所有控件隐藏，
+  //   只在鼠标悬停时于「居中正上方」浮现锁图标。
+  bar.classList.toggle('locked', !!cfg.locked);
+  // 浅色 / 深色（文字与未唱部分跟着变）
+  var isLight = cfg.theme === 'light';
+  bar.classList.toggle('theme-light', isLight);
+  if (isLight) {
+    if (cfg.color === '#ffd23f' || cfg.color === '#ffffff') cfg.color = '#c0392b';
+    if (cfg.nextColor === 'rgba(232,234,240,.65)') cfg.nextColor = 'rgba(60,60,70,.55)';
+    bar.style.textShadow = '0 2px 10px rgba(255,255,255,.75)';
+  } else {
+    bar.style.textShadow = '0 2px 10px rgba(0,0,0,.8)';
+  }
+  bar.style.background = cfg.locked ? 'transparent' : `rgba(8,10,16,${cfg.bg / 100})`;
+  window.mine.dlyricsCtl({ opacity: cfg.opacity });
+  if (!window.__dlyricsSyncing) window.mine.dlyricsCtl({ lock: !!cfg.locked });
+  localStorage.setItem(LS, JSON.stringify(cfg));
+  karaLineKey = ''; // 换色/换行模式后强制重建词片，渐变立刻用新色
+  syncPanel();
+}
+
+/* ---------- 自定义面板 ---------- */
+function buildSwatches(el, list, key) {
+  el.innerHTML = '';
+  list.forEach((c) => {
+    const i = document.createElement('i');
+    i.style.background = c;
+    i.dataset.v = c;
+    i.onclick = () => { cfg[key] = c; apply(); };
+    el.appendChild(i);
+  });
+}
+function syncPanel() {
+  document.querySelectorAll('#p-color i').forEach(i => i.classList.toggle('on', i.dataset.v === cfg.color));
+  document.querySelectorAll('#p-next i').forEach(i => i.classList.toggle('on', i.dataset.v === cfg.nextColor));
+  document.querySelectorAll('#p-align b').forEach(b => b.classList.toggle('on', b.dataset.v === cfg.align));
+  document.querySelectorAll('#p-single b').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!cfg.single));
+  $('#p-bg').value = cfg.bg;
+}
+buildSwatches($('#p-color'), COLORS, 'color');
+buildSwatches($('#p-next'), NEXTCOLORS, 'nextColor');
+document.querySelectorAll('#p-align b').forEach(b => b.onclick = () => { cfg.align = b.dataset.v; apply(); });
+document.querySelectorAll('#p-single b').forEach(b => b.onclick = () => { cfg.single = b.dataset.v === '1'; apply(); });
+$('#p-bg').oninput = () => { cfg.bg = +$('#p-bg').value; apply(); };
+$('#p-reset').onclick = () => { cfg = Object.assign({}, DEFAULTS, { locked: cfg.locked }); apply(); };
+$('#t-cfg').onclick = () => $('#panel').classList.toggle('on');
+
+/* ---------- 逐字 karaoke（V3.5.5+） ---------- */
+// 全局逐字开关与主窗口同源（localStorage 同分区共享）；words 为空时退回整行显示
+let karaWords = null, karaLineKey = '';
+function karaOn() {
+  try { return localStorage.getItem('annieplayer.karaoke') !== '0'; } catch { return true; }
+}
+function renderKaraoke(d) {
+  const cur = $('#cur');
+  const key = d.cur + '|' + (d.lineT || 0) + '|' + cfg.color + '|' + cfg.nextColor;
+  if (key !== karaLineKey) { // 换行才重建词片，避免每 350ms 重排
+    karaLineKey = key;
+    karaWords = d.words;
+    cur.innerHTML = '';
+    d.words.forEach((wd) => {
+      const s = document.createElement('span');
+      s.className = 'w';
+      s.textContent = wd.w;
+      cur.appendChild(s);
+    });
+  }
+  // 按位置逐词填充：词内线性进度 → 渐变百分比
+  const spans = cur.querySelectorAll('.w');
+  const pos = d.pos || 0;
+  const unsung = withAlpha(cfg.nextColor, 0.55);
+  d.words.forEach((wd, i) => {
+    const end = (i + 1 < d.words.length) ? d.words[i + 1].t : (d.nextT || wd.t + 2);
+    const p = Math.max(0, Math.min(1, (pos - wd.t) / Math.max(0.05, end - wd.t)));
+    const pct = Math.round(p * 100);
+    spans[i].style.backgroundImage =
+      `linear-gradient(90deg, ${cfg.color} ${pct}%, ${unsung} ${pct}%)`;
+  });
+}
+
+window.mine.onDlyricsLine((d) => {
+  $('#idle').style.display = (d.cur || d.next) ? 'none' : '';
+  if (d.words && d.words.length && karaOn()) {
+    renderKaraoke(d);
+  } else {
+    karaLineKey = ''; karaWords = null;
+    $('#cur').textContent = d.cur || '';
+  }
+  $('#next').textContent = d.next || '';
+});
+
+function syncLockBtn() { $('#t-lock').textContent = cfg.locked ? '🔒' : '🔓'; }
+function setLocked(on) {
+  cfg.locked = !!on;
+  syncLockBtn();
+  // ⚠️ 2026-10-24 修复「点解锁后锁图标不消失」：
+  //   show-unlock 是悬停浮现用的 class，解锁后必须清掉，
+  //   否则 CSS `#bar.show-unlock #unlock-float {opacity:1}` 继续生效。
+  if (!cfg.locked) barEl.classList.remove('show-unlock');
+  apply();
+}
+$('#t-lock').onclick = () => setLocked(!cfg.locked);
+$('#unlock-float').onclick = (e) => { e.stopPropagation(); setLocked(false); };
+
+/* ⚠️ 2026-10-24：锁定态下鼠标移入 → 浮现解锁按钮（2.5 秒后自动收起） */
+const barEl = $('#bar');
+let unlockTimer = 0;
+function pokeUnlock() {
+  if (!cfg.locked) return;
+  clearTimeout(unlockTimer);
+  barEl.classList.add('show-unlock');
+  unlockTimer = setTimeout(() => barEl.classList.remove('show-unlock'), 2500);
+}
+/* ⚠️ 2026-10-24（用户反馈）：锁定时窗口鼠标穿透 → 收不到 mousemove，
+   改由 Swift 侧全局轮询鼠标位置，通过 window.__dlyricsHover(on) 通知。 */
+/* ⚠️ 2026-10-24 修复：主窗口调用锁定（mine.dlyricsCtl({locked})）时，
+   Swift 只改了窗口层穿透，桌面歌词页面不知道 → 背景没透明、控件没隐藏。
+   这里补一个状态入口，由 Swift 推送。 */
+window.__dlyricsLockSet = function(on) {
+  // ⚠️ 防循环：Swift 同步状态 → apply → 又发 dlyricsCtl → Swift → ...
+  window.__dlyricsSyncing = true;
+  try {
+    cfg.locked = !!on;
+    if (cfg.locked) barEl.classList.add('locked');
+    else barEl.classList.remove('locked', 'show-unlock');
+    syncLockBtn();
+    apply();
+  } finally { window.__dlyricsSyncing = false; }
+};
+
+window.__dlyricsHover = function(inside) {
+  if (cfg.locked) {
+    // 锁定态：网页内不显示任何控件（解锁按钮由原生小窗口提供）
+    barEl.classList.remove('hover', 'show-unlock');
+    return;
+  }
+  // ⚠️ 2026-10-24（用户要求）：未锁定状态下，鼠标扫过歌词区域就直接显示工具条
+  //   ——由 Swift 全局轮询驱动（透明窗里 :hover / mouseenter 不可靠）。
+  clearTimeout(unlockTimer);
+  barEl.classList.toggle('hover', !!inside);
+};
+/* 未锁定时仍用本地 mousemove（解锁状态窗口正常接收事件） */
+barEl.addEventListener('mousemove', () => { if (!cfg.locked) return; pokeUnlock(); });
+
+/* ⚠️ 2026-10-24（用户要求，彩蛋）：解锁状态下点任意空白处 → 收起设置面板/自定义面板 */
+document.addEventListener('click', (e) => {
+  const panel = $('#panel');
+  if (panel && panel.classList.contains('on')
+      && !panel.contains(e.target) && !e.target.closest('#t-cfg')) {
+    panel.classList.remove('on');
+  }
+}, true);
+$('#t-minus').onclick = () => { cfg.scale = Math.max(0.6, cfg.scale - 0.15); apply(); };
+$('#t-plus').onclick = () => { cfg.scale = Math.min(2.2, cfg.scale + 0.15); apply(); };
+$('#t-op').onclick = () => { cfg.opacity = cfg.opacity > 0.55 ? cfg.opacity - 0.25 : 1; apply(); };
+/* ⚠️ 2026-10-24（用户要求）：桌面歌词深浅色跟随主窗口「亮色/暗色」按钮，
+   由 Swift 推送 window.__dlyricsThemeSet('light'|'dark')，不再单独占用工具条按钮。 */
+window.__dlyricsThemeSet = function(theme) {
+  cfg.theme = theme === 'light' ? 'light' : 'dark';
+  apply();
+};
+$('#t-close').onclick = () => window.mine.dlyricsToggle();
+// V4.3.13：工具栏播放控制（洛雪同款）——经主进程 remote:cmd 通道转给主窗口执行
+$('#t-prev').onclick = () => window.mine.dlyricsCtl({ cmd: 'prev' });
+$('#t-play').onclick = () => window.mine.dlyricsCtl({ cmd: 'playpause' });
+$('#t-next').onclick = () => window.mine.dlyricsCtl({ cmd: 'next' });
+
+// 设置中心「桌面歌词外观」与 ⚙ 面板共用同一 LS key；跨窗口 storage 事件实时套用
+// （部分机器透明窗不响应悬停/鼠标，设置页是唯一可达入口，必须即时生效）
+window.addEventListener('storage', (e) => {
+  if (e.key !== LS || !e.newValue) return;
+  try { Object.assign(cfg, JSON.parse(e.newValue)); } catch { }
+  $('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
+  apply();
+  window.mine.dlyricsCtl({ lock: cfg.locked }); // 设置页可远程解锁/锁定（悬停失灵时的逃生通道）
+});
+
+$('#t-lock').textContent = cfg.locked ? '🔒' : '🔓';
+apply();
+// 启动即恢复持久化的锁定状态（图标与实际行为一致；解锁走设置 → 歌词 → 桌面歌词外观）
+if (cfg.locked) window.mine.dlyricsCtl({ lock: true });
+// 悬停显隐工具栏（JS 驱动，不依赖透明窗不可靠的 :hover）；面板打开期间保持显示
+$('#bar').addEventListener('mouseenter', () => $('#bar').classList.add('hover'));
+$('#bar').addEventListener('mouseleave', () => { if (!$('#panel').classList.contains('on')) $('#bar').classList.remove('hover'); });
+// 保险丝：鼠标移动落在 #bar 上也补 hover 类（mouseenter 在某些透明窗状态下不派发）
+document.addEventListener('mousemove', (e) => {
+  const r = $('#bar').getBoundingClientRect();
+  const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  if (inside) $('#bar').classList.add('hover');
+  else if (!$('#panel').classList.contains('on')) $('#bar').classList.remove('hover');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script>
+// ⚠️ 预设引导已完成（2026-10-21）：
+//    每次重启 App 时 WebKit 的 localStorage 可能被清，
+//    导致反复弹引导页。这里在页面最早期就写入标记。
+try {
+  localStorage.setItem('annieplayer.onboarded', '1');
+  localStorage.setItem('annieplayer.theme', 'am');
+} catch (e) {}
+</script>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; connect-src 'self' blob: data: https: http:; worker-src 'self' blob:; font-src 'self' data:;">
+<title>安妮播放器Plus Pro</title>
+<script>
+// 主题早标记：首帧前确定界面主题，避免旧主题闪屏（localStorage key: annieplayer.theme）
+// V3.5.2：新装默认 AM 界面（老用户 LS 已有值，不受影响）
+try { document.documentElement.dataset.theme = localStorage.getItem('annieplayer.theme') || 'am'; }
+catch (e) { document.documentElement.dataset.theme = 'am'; }
+// ⚠️ 深浅色早标记（2026-10-21）：开屏界面在首帧就要用对配色。
+//    优先级：用户手动设的 LIGHT_KEY > 系统 prefers-color-scheme。
+try {
+  var _lk = localStorage.getItem('annieplayer.am.light');
+  var _light;
+  if (_lk === '1') _light = true;
+  else if (_lk === '0') _light = false;
+  else _light = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+  var _h = document.documentElement;
+  if (_light) { _h.classList.add('am-light'); _h.dataset.light = '1'; }
+  else _h.dataset.light = '0';
+} catch (e) {}
+// Plus：配色早标记（localStorage key: annieplayer.palette）
+try { document.documentElement.dataset.palette = localStorage.getItem('annieplayer.palette') || 'gold'; }
+catch (e) { document.documentElement.dataset.palette = 'gold'; }
+// 界面动效早标记（V4.1）：full 完整 / reduced 精简 / off 关闭（localStorage key: annieplayer.ui.motion）
+try { document.documentElement.dataset.motion = localStorage.getItem('annieplayer.ui.motion') || 'full'; }
+catch (e) { document.documentElement.dataset.motion = 'full'; }
+</script>
+<style>
+/* ⚠️ 2026-10-23：html/body 首帧底色 —— 在外部 CSS 加载完成前就跟随深浅色，
+ *   避免「白屏 → 深色」的闪白。色值与 Swift 侧 window/underPageBackgroundColor 一致。 */
+html, body {
+  margin: 0;
+  background: #16181d;
+}
+@media (prefers-color-scheme: light) {
+  html:not(.am-light):not([data-light="1"]), body { background: #f6f4ef; }
+}
+html.am-light, html[data-light="1"],
+html.am-light body, html[data-light="1"] body { background: #f6f4ef; }
+html:not(.am-light):not([data-light="1"]) body { background: #16181d; }
+
+/* 启动序列开屏（V4.1 仪式感版）：内联保证首帧即显，不依赖外部 CSS 加载。
+ * boot.js 在主界面首帧就绪后加 .bs-out 淡出并移除；8s 兜底强制退场。 */
+#boot-splash, #theme-splash { position: fixed; inset: 0; z-index: 9999;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  transition: opacity .5s ease;
+  font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  /* ⚠️ 深浅色适配（2026-10-21）：用 CSS 变量，跟随系统 prefers-color-scheme。
+     之前 background 硬编码 #16181d，浅色模式下开屏还是黑的。 */
+  background: var(--bs-bg);
+  color: var(--bs-fg); }
+
+/* 开屏配色（默认深色） */
+:root {
+  --bs-bg: #16181d;
+  --bs-fg: #f5f5f7;
+  --bs-fg-dim: rgba(245, 245, 247, .45);
+  --bs-logo-from: #fa2d55;
+  --bs-logo-to: #ff5c7a;
+  --bs-logo-shadow: rgba(250, 45, 85, .35);
+}
+/* 浅色模式：跟随系统 */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bs-bg: #f6f4ef;
+    --bs-fg: #1e1e1e;
+    --bs-fg-dim: rgba(30, 30, 30, .5);
+    --bs-logo-from: #fa2d55;
+    --bs-logo-to: #ff5c7a;
+    --bs-logo-shadow: rgba(250, 45, 85, .28);
+  }
+}
+/* 用户手动切主题时（html[data-theme] 或 .am-light）优先 */
+html.am-light, html[data-light="1"] {
+  --bs-bg: #f6f4ef;
+  --bs-fg: #1e1e1e;
+  --bs-fg-dim: rgba(30, 30, 30, .5);
+}
+#boot-splash.bs-out, #theme-splash.bs-out { opacity: 0; pointer-events: none; }
+.bs-logo { display: flex; gap: 5px; align-items: flex-end; height: 34px;
+  padding: 18px 22px; box-sizing: content-box;
+  background: linear-gradient(135deg, var(--bs-logo-from), var(--bs-logo-to));
+  border-radius: 22px;
+  box-shadow: 0 14px 44px var(--bs-logo-shadow);
+  animation: bsLogoIn .7s cubic-bezier(.22, 1, .36, 1) backwards; }
+.bs-logo i { width: 5px; height: 100%; background: #fff; border-radius: 3px;
+  transform-origin: bottom; animation: bsBar 1s ease-in-out infinite; }
+.bs-logo i:nth-child(1) { animation-delay: 0s; } .bs-logo i:nth-child(2) { animation-delay: .12s; }
+.bs-logo i:nth-child(3) { animation-delay: .24s; } .bs-logo i:nth-child(4) { animation-delay: .36s; }
+.bs-logo i:nth-child(5) { animation-delay: .48s; }
+.bs-name { color: var(--bs-fg); font-size: 20px; font-weight: 700; letter-spacing: .35em; text-indent: .35em;
+  animation: bsFadeUp .6s .22s cubic-bezier(.22, 1, .36, 1) backwards; }
+.bs-credit {
+  color: var(--bs-fg-dim); font-size: 11px; letter-spacing: .06em;
+  opacity: .75; margin-top: -6px;
+  animation: bsFadeUp .6s .5s cubic-bezier(.22, 1, .36, 1) backwards;
+}
+.bs-status { color: var(--bs-fg-dim); font-size: 12px;
+  animation: bsFadeUp .6s .38s cubic-bezier(.22, 1, .36, 1) backwards; }
+/* 主题切换过渡屏：进入时立即不透明（无入场延迟，快速盖住旧界面） */
+#theme-splash { opacity: 0; pointer-events: none; }
+#theme-splash.ts-on { opacity: 1; pointer-events: auto; }
+#theme-splash.ts-on .bs-logo { animation: bsLogoIn .5s cubic-bezier(.22, 1, .36, 1) backwards; }
+@keyframes bsBar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+@keyframes bsLogoIn { from { opacity: 0; transform: scale(.78); } }
+@keyframes bsFadeUp { from { opacity: 0; transform: translateY(10px); } }
+html[data-motion="off"] #boot-splash, html[data-motion="off"] #theme-splash { transition: none; }
+html[data-motion="off"] #boot-splash *, html[data-motion="off"] #theme-splash * { animation: none !important; }
+/* 主题切换后「续播」提示条（手动恢复断点播放） */
+#theme-resume { position: fixed; top: 46px; left: 50%; transform: translateX(-50%) translateY(-8px);
+  z-index: 9998; display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+  background: rgba(28, 30, 36, .92); color: #eef0f5; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px; box-shadow: 0 10px 32px rgba(0,0,0,.5); font-size: 13px;
+  opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease;
+  backdrop-filter: blur(10px); cursor: default; max-width: 72vw; }
+#theme-resume.tr-on { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+#theme-resume .tr-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#theme-resume .tr-txt b { color: #ff7d97; font-weight: 600; }
+#theme-resume button { border: none; border-radius: 999px; padding: 4px 14px; font-size: 12px;
+  cursor: pointer; background: #fa2d55; color: #fff; flex: none; }
+#theme-resume button.tr-x { background: transparent; color: rgba(238,240,245,.55); padding: 4px 8px; }
+#theme-resume button.tr-x:hover { color: #fff; }
+</style>
+<script>
+// 渲染层 JS 错误监控：上报主进程环形缓冲，随诊断包导出（V3.5.15）
+// 注意：script-src 已含 'unsafe-inline'；同消息 3s 内去重，避免错误风暴刷屏
+(function () {
+  var lastMsg = '', lastAt = 0;
+  function report(kind, msg, src, line, col) {
+    try {
+      var now = Date.now();
+      if (msg === lastMsg && now - lastAt < 3000) return;
+      lastMsg = msg; lastAt = now;
+      if (window.mine && window.mine.reportError) window.mine.reportError({ kind: kind, msg: msg, src: src, line: line, col: col });
+    } catch (e) { }
+  }
+  window.addEventListener('error', function (ev) {
+    report('error', String(ev.message || 'unknown'), String(ev.filename || ''), ev.lineno | 0, ev.colno | 0);
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev.reason;
+    report('rejection', String((r && (r.stack || r.message)) || r || 'unhandled rejection'), '', 0, 0);
+  });
+})();
+</script>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/fb2k.css">
+<link rel="stylesheet" href="css/am.css">
+</head>
+<body>
+
+<!-- 启动序列开屏（V4.1 仪式感版；boot.js 在主界面就绪后淡出移除） -->
+<div id="boot-splash">
+  <div class="bs-logo"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="bs-name">安妮播放器</div>
+  <div class="bs-status">引擎点火中…</div>
+  <!-- ⚠️ 2026-10-22：macOS 适配署名 -->
+  <div class="bs-credit">macOS 适配 · 苏沐绫羽</div>
+</div>
+
+<!-- 标题栏 -->
+<header id="titlebar">
+  <div class="tb-drag">
+    <span class="tb-logo">安妮播放器 <em>SVLX</em> <span class="tb-ver"></span></span><!-- V4.4：版本号由 player.js boot 动态填充（原写死 1.2.0 与实际版本脱节） -->
+    <span id="tb-backend" class="tb-badge" title="输出后端">未连接</span>
+  </div>
+  <div class="tb-btns">
+    <!-- V4.4：SVG 图标由 player.js boot 按 data-ico 填充（Unicode 字符图标已全部退役） -->
+    <!-- ⚠️ 2026-10-24（用户反馈「找不到粒子舞台切换模式的按钮」）：加一个显式主题切换按钮 -->
+    <button id="btn-theme-switch" title="切换界面（粒子舞台 → FB2K → Apple Music）" data-ico="palette" data-ico-size="15"></button>
+    <button id="btn-settings" title="设置" data-ico="settings" data-ico-size="15"></button>
+    <!-- ⚠️ macOS 适配（2026-10-21）：删掉 Windows 风格的 *— □ × 三个按钮，
+         macOS 用系统左上角红绿灯。CSS display:none 被主题覆盖过，直接删 DOM 最稳。 -->
+  </div>
+</header>
+
+<!-- ⚠️ 2026-10-24：macOS 版用 AVFoundation 解码，不需要 ffmpeg。原 Windows 版提示条已移除。 -->
+<div id="tool-banner" class="hidden" style="display:none"></div>
+
+<!-- V4.4.1：音频引擎启动故障持久提示条（缺 .NET / exe 被隔离等；三主题 body 级常驻） -->
+<div id="engine-banner" class="hidden" role="alert">
+  <div class="eb-body">
+    <div class="eb-text">
+      <div class="eb-title" id="eb-title"></div>
+      <div class="eb-hint" id="eb-hint"></div>
+    </div>
+    <div class="eb-actions">
+      <button id="eb-retry" class="eb-btn eb-primary">重新检测</button>
+      <button id="eb-dotnet" class="eb-btn hidden">下载 .NET 9</button>
+      <button id="eb-av" class="eb-btn hidden">杀软隔离说明</button>
+      <button id="eb-diag" class="eb-btn">导出诊断</button>
+    </div>
+  </div>
+  <div id="eb-av-help" class="eb-av-help hidden">
+    请打开安全软件的「隔离区 / 恢复区」（火绒：安全工具 → 隔离区；360：木马查杀 → 恢复区；Windows 安全中心：保护历史记录），
+    恢复 <b>AnnieEngine.exe</b> 并加入信任区/白名单，然后点「重新检测」。若文件无法恢复，请重新安装完整安装包（约 179MB，自带运行时）。
+  </div>
+</div>
+
+<main id="layout">
+  <!-- 左：曲库 / 流媒体 -->
+  <aside id="sidebar">
+    <div id="side-tabs">
+      <button class="side-tab active" data-tab="local">本地曲库</button>
+      <button class="side-tab" data-tab="stream">流媒体</button>
+    </div>
+
+    <!-- 本地曲库面板 -->
+    <div id="panel-local" class="side-panel active">
+      <div class="side-actions">
+        <button id="btn-add-folder" class="btn-accent">+ 添加音乐文件夹</button>
+        <button id="btn-rescan" class="btn-ghost" title="重新扫描" data-ico="rescan" data-ico-size="14"></button>
+      </div>
+      <div id="folder-list"></div>
+      <!-- V1.1.0：平铺文件夹导航（原 #folder-tree 移除；曲目区在文件夹视图/曲目视图间切换） -->
+      <div id="sidebar-resizer" title="拖拽调整曲库宽度"></div>
+      <input id="search" type="search" placeholder="搜索曲库…" spellcheck="false">
+      <div class="side-bar2">
+        <select id="sort-select" title="曲库排序">
+          <option value="name">按名称</option>
+          <option value="folder">按文件夹</option>
+          <option value="mtime">按修改时间（新→旧）</option>
+          <option value="mtimeAsc">按修改时间（旧→新）</option>
+          <option value="artist">按艺术家</option>
+          <option value="album">按专辑</option>
+          <option value="genre">按流派</option>
+          <option value="year">按年份</option>
+        </select>
+        <button id="btn-view-toggle" class="btn-ghost" title="切换文件夹图标视图" data-ico="grid" data-ico-size="14"></button>
+        <button id="btn-collapse" title="收起曲库" data-ico="chevsLeft" data-ico-size="14"></button>
+      </div>
+      <div id="lib-nav" class="hidden">
+        <button id="btn-lib-back" title="返回文件夹列表" data-ico="arrowLeft" data-ico-size="14"></button>
+        <span id="lib-nav-name"></span>
+      </div>
+      <div id="track-list"></div>
+      <!-- 文件夹图标网格视图（默认隐藏，🗂 按钮切换） -->
+      <div id="grid-view" class="hidden">
+        <div id="grid-nav">
+          <button id="grid-back" title="返回上级文件夹" data-ico="arrowLeft" data-ico-size="14"></button>
+          <span id="grid-crumb">全部文件夹</span>
+        </div>
+        <div id="folder-grid"></div>
+      </div>
+    </div>
+
+    <!-- 流媒体面板 -->
+    <div id="panel-stream" class="side-panel">
+      <!-- 洛雪式音源管理 -->
+      <div class="stream-bar src-bar">
+        <button id="btn-source-import" class="btn-accent" title="导入洛雪音源脚本(.js)">导入音源</button>
+        <span id="source-status">未导入音源（使用内置解析）</span>
+      </div>
+      <div id="source-list"></div>
+      <!-- 下载目录 -->
+      <div class="stream-bar dl-bar">
+        <span id="dl-dir" title="">下载目录：…</span>
+        <button id="btn-dl-dir" title="更改下载目录">更改</button>
+        <button id="btn-dl-dir-reset" title="恢复默认目录">默认</button>
+      </div>
+      <!-- 平台标签 + 音质（洛雪五大平台） -->
+      <div class="stream-bar pf-bar">
+        <div class="pf-tabs">
+          <!-- ⚠️ 2026-10-23：默认平台从「酷狗」改为「酷我」。
+               酷狗版权歌（晴天等）以 status=0 拒绝返回地址（需要 VIP），
+               而酷我/网易/咪咕的官方接口对普通歌可以直接拿到播放地址。 -->
+          <button class="pf-tab" data-pf="kg">酷狗</button>
+          <button class="pf-tab active" data-pf="kw">酷我</button>
+          <button class="pf-tab" data-pf="mg">咪咕</button>
+          <button class="pf-tab" data-pf="tx">QQ</button>
+          <button class="pf-tab" data-pf="wy">网易</button>
+        </div>
+        <!-- ⚠️ 2026-10-23 修复「下载不能选音质」：
+             原来 option 的 value 是 hires/lossless/exhigh/standard，
+             但各音源（酷狗/酷我/咪咕/网易云）实际识别的音质标识是
+             128k / 320k / flac / flac24bit（见 index.html 底部的 source 定义），
+             值不匹配 → 无论选什么，后端都拿不到有效音质 → 选择不生效。
+             这里改成平台标准标识。 -->
+        <select id="stream-quality" title="播放/下载音质">
+          <option value="flac24bit">Hi-Res 无损</option>
+          <option value="flac" selected>无损 FLAC</option>
+          <option value="320k">320K</option>
+          <option value="128k">128K</option>
+        </select>
+      </div>
+      <div class="stream-bar">
+        <input id="stream-search" type="search" placeholder="搜索在线音乐，回车确认…" spellcheck="false">
+        <button id="btn-stream-search" class="btn-accent" title="搜索">搜索</button>
+      </div>
+      <div id="stream-status"></div>
+      <div id="stream-list"></div>
+      <div class="side-bar2">
+        <span class="stream-hint">在线音源以独占模式解码输出</span>
+        <button id="btn-collapse2" title="收起曲库" data-ico="chevsLeft" data-ico-size="14"></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 右：视觉舞台（three.js 画布 + 悬浮信息层） -->
+  <section id="stage-wrap">
+    <div id="album-bg"></div>
+    <div id="album-bg-next" aria-hidden="true"></div>
+    <div id="canvas-container"></div>
+
+    <!-- 节拍分析状态（视觉模块会写入文本并控制显隐） -->
+    <div id="beat-chip"><span id="beat-text">节奏分析中…</span></div>
+
+    <!-- 悬浮：当前曲目 -->
+    <div id="np-overlay">
+      <img id="thumb-cover" alt="" draggable="false">
+      <div id="np-texts">
+        <div id="thumb-title">未在播放</div>
+        <div id="thumb-artist">从左侧曲库选择一首歌开始</div>
+        <div id="np-format"></div>
+      </div>
+    </div>
+
+    <!-- 悬浮：右上角槽位（视觉模块引用） -->
+    <div id="top-right"></div>
+
+    <!-- 曲库收起后的展开把手 -->
+    <button id="btn-expand" class="hidden" title="展开曲库" data-ico="chevsRight" data-ico-size="15"></button>
+    <!-- 可视化面板关闭后的恢复把手 -->
+    <button id="btn-viz-restore" class="hidden" title="展开可视化面板" data-ico="chevUp" data-ico-size="13"><span>波形 / 频谱</span></button>
+  </section>
+
+  <!-- 右：双声道电平停靠栏（独立于其他功能区） -->
+  <aside id="level-dock" title="实时输出电平（左 / 右声道）">
+    <div class="lvl-title">电平</div>
+    <canvas id="level-canvas"></canvas>
+    <div class="lvl-ch-labels"><span>L</span><span>R</span></div>
+  </aside>
+</main>
+
+<!-- 可视化面板：波形 / 频谱 / 无损检测（标签页切换，可整体关闭） -->
+<section id="viz-bar">
+  <div id="viz-tabs">
+    <button class="viz-tab active" data-vtab="wave">波形</button>
+    <button class="viz-tab" data-vtab="spec">频谱</button>
+    <button class="viz-tab" data-vtab="lossless">无损检测</button>
+    <span id="viz-status"></span>
+    <button id="btn-viz-close" title="关闭可视化面板" data-ico="close" data-ico-size="12"></button>
+  </div>
+  <div id="viz-body">
+    <canvas id="wave-canvas" class="viz-page active"></canvas>
+    <canvas id="spec-canvas" class="viz-page"></canvas>
+    <div id="spec-progress"><div class="line"></div></div>
+    <div id="lossless-page" class="viz-page">
+      <div id="lossless-summary">播放任意曲目后自动生成无损检测报告</div>
+      <div id="lossless-reasons"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 底部传输条（id 沿用视觉模块引用的 bottom-bar） -->
+<footer id="bottom-bar">
+  <div id="progress-wrap">
+    <span id="t-cur">0:00</span>
+    <div id="progress"><div id="progress-fill"></div><div id="progress-knob"></div></div>
+    <span id="t-total">0:00</span>
+  </div>
+  <!-- Plus 方案A：传输条三段分层（高频播放 / 中频音频工具 / 低频系统） -->
+  <div id="controls">
+    <div class="ctl-group transport">
+      <button id="btn-prev" class="ctl" title="上一首" data-ico="prev" data-ico-size="17"></button>
+      <button id="btn-play" class="ctl big" title="播放/暂停" data-ico="play" data-ico-size="20"></button>
+      <button id="btn-next" class="ctl" title="下一首" data-ico="next" data-ico-size="17"></button>
+      <button id="btn-stop" class="ctl" title="停止" data-ico="stop" data-ico-size="15"></button>
+    </div>
+    <div class="ctl-group tools">
+      <button id="btn-fav-cur" class="ctl" title="收藏当前曲目" data-ico="heart" data-ico-size="16"></button>
+      <button id="btn-mode" class="ctl" title="播放模式（仅本地播放生效，点击切换）" data-ico="modeListSeq" data-ico-size="16"></button>
+      <button id="btn-locate" class="ctl" title="定位当前播放文件（滚动到列表位置并高亮）" data-ico="locate" data-ico-size="16"></button>
+      <button id="btn-viz-toggle" class="ctl" title="波形 / 频谱面板" data-ico="chart" data-ico-size="16"></button>
+      <!-- EQ 按钮由 eq.js 注入本组 -->
+    </div>
+    <div class="ctl-group sys">
+      <!-- Pro beat0.0.1：Bit-perfect 直通状态（绿点=直通 / 黄点+原因） -->
+      <span id="bp-chip" class="hidden"><i class="bp-dot"></i><span id="bp-text"></span></span>
+      <div id="volume-wrap" title="数字音量（独占模式下系统音量无效）">
+        <span class="vol-ico" data-ico="volume" data-ico-size="15"></span><input id="volume" type="range" min="0" max="100" value="100">
+      </div>
+      <button id="btn-device" class="ctl" title="输出设备（CoreAudio 独占）" data-ico="headphones" data-ico-size="16"></button>
+      <!-- Pro beat0.0.1：Now Playing 全屏（N 键）与迷你模式（Ctrl+M）；V4.4：内联 onclick 已清除，绑定在 player.js boot -->
+      <button id="btn-npf" class="ctl" title="Now Playing 全屏（N）" data-ico="expand" data-ico-size="16"></button>
+      <button id="btn-mini" class="ctl" title="迷你模式（Ctrl+M）" data-ico="mini" data-ico-size="16"></button>
+    </div>
+  </div>
+</footer>
+
+<!-- Plus：设备选择弹层（从底栏移除常驻下拉，低频操作不占用黄金位置） -->
+<div id="device-pop" class="hidden">
+  <div class="dp-head"><span>输出设备</span><button id="btn-device-close" title="关闭">×</button></div>
+  <select id="device-select" title="输出设备（CoreAudio 独占）"></select>
+</div>
+
+<!-- 流媒体登录弹窗已随洛雪化改造移除（洛雪无需平台登录） -->
+
+<!-- 仿 foobar2000 主题根容器（内容由 fb2k.js 构建；默认隐藏，由 html[data-theme] 控制） -->
+<div id="fb2k-root" aria-hidden="true"></div>
+
+<!-- Apple Music 风格主题根容器（内容由 am.js 构建；默认隐藏，由 html[data-theme] 控制） -->
+<div id="am-root" aria-hidden="true"></div>
+
+<!-- 主题切换淡入淡出遮罩 -->
+<div id="theme-fade"></div>
+
+<!-- 主题切换过渡屏（「两个世界」仪式感：logo 动画 + 离开/进入文案；复用启动屏样式） -->
+<div id="theme-splash">
+  <div class="bs-logo"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="bs-name">安妮播放器</div>
+  <div class="bs-status" id="theme-splash-status">正在切换…</div>
+</div>
+
+<!-- 主题切换后「续播」手动恢复条（停止但可恢复；点 ⏵ 从断点续播） -->
+<div id="theme-resume">
+  <span class="tr-txt" id="theme-resume-txt"></span>
+  <button id="theme-resume-play">⏵ 续播</button>
+  <button class="tr-x" id="theme-resume-x" title="不再提示">✕</button>
+</div>
+
+<script src="vendor/three.r128.min.js"></script>
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/music-tempo.min.js"></script>
+<!-- ⚠️ 2026-10-22 补加载 stage-stubs.js（用户反馈「进度条交互无反应」的根因）：
+     stage-adapter.js 引用了 trackSwitchToken 等全局变量，但那些变量
+     定义在 stage-stubs.js 里，而这个文件**从未被 index.html 加载** →
+     playTrack 抛 ReferenceError: Can't find variable: trackSwitchToken
+     → 整个流媒体播放链路中断（引擎收到 play.crossfade 但状态不更新）。
+     必须在 stage-loader / stage-adapter 之前加载。 -->
+<script src="js/local/stage-stubs.js"></script>
+<script src="js/local/stage-loader.js"></script>
+<script src="js/local/stage-adapter.js"></script>
+<script src="js/local/fx.js"></script>
+<script src="js/local/tagEditor.js"></script>
+<script src="js/local/wallpaper.js"></script><!-- V4.4：全局自定义壁纸（三主题共用，IndexedDB 存图） -->
+<script src="js/local/settings.js"></script>
+<script src="js/local/viz.js"></script>
+<script src="js/local/streaming.js"></script>
+  <script src="js/local/eq.js"></script>
+  <script src="js/local/exclusive.js"></script>
+  <script src="js/local/player.js"></script>
+<script src="js/local/playmode.js"></script>
+<script src="js/local/lyrOffset.js"></script>
+<script src="js/local/listenStats.js"></script>
+<script src="js/local/mediaSession.js"></script>
+<script src="js/local/ambient.js"></script>
+<script src="js/local/helpContent.js"></script>
+<script src="js/local/smartLists.js"></script>
+<script src="js/local/rhythmBatch.js"></script>
+<script src="js/local/similar.js"></script>
+<script src="js/local/shareLink.js"></script>
+<script src="js/local/poster.js"></script> <!-- V4.3.19：歌词海报 -->
+<script src="js/local/am-vizcolor.js"></script><!-- V4.3.17：AM 频谱条封面取色 -->
+<script src="js/local/onlineMatch.js"></script>
+<script src="js/local/remote.js"></script>
+<script src="js/local/pro.js"></script>
+<script src="js/local/proUi.js"></script>
+<script src="js/local/theme.js"></script>
+<script src="js/local/fb2k.js"></script>
+<!-- Apple Music 主题拆分片（加载顺序即依赖顺序：核心 → 在线 → 歌词 → 界面 → 刷新/挂载） -->
+<script src="js/local/pyinitial.js"></script><!-- V4.3.8：拼音首字母表（歌曲视图 A–Z 排序/索引） -->
+<script src="js/local/am.js"></script>
+<script src="js/local/am-stream.js"></script>
+<script src="js/local/am-download.js"></script><!-- V4.3.22：下载情况视图（下载任务管理） -->
+<script src="js/local/am-qobuz.js"></script><!-- V4.3.6：Qobuz 在线播放/下载 -->
+<script src="js/local/am-apple.js"></script><!-- 2026-10-22：Apple Music 独立板块（登录 + 搜索 + ALAC 播放） -->
+<script src="js/local/am-lyrics.js"></script>
+<script src="js/local/am-dom.js"></script>
+<script src="js/local/am-render.js"></script>
+<script src="js/local/onboard.js"></script>
+<!-- ⚠️ 2026-10-23 白屏修复 v2（用户建议「必须识别到开屏动画真正出现之后，遮罩才开始淡出」）：
+     之前的版本在 <div id="boot-splash"> 解析出来时就通知原生 → 但 DOM 解析 ≠ 已绘制，
+     WKWebView 首帧可能还没画出来，遮罩淡出的 0.28s 里就会露白。
+     现在：等**开屏 logo 的 CSS 动画真正开始**（animationstart 事件 = 已完成首次布局+paint）
+     才通知；另用双 requestAnimationFrame + 80ms 兜底（动画被禁用场景）。 -->
+<script>
+(function(){
+  var notified = false;
+  function notify() {
+    if (notified) return;
+    notified = true;
+    try {
+      if (window.mine && window.mine.bootSplashShown) {
+        window.mine.bootSplashShown().catch(function(){});
+      }
+    } catch(e) {}
+  }
+  function rafTwoFrames() {
+    // 双 rAF：第二帧回调时第一帧一定已经绘制到屏幕
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        // 再等 80ms 让 WKWebView 真正合成上屏（WebKit 的提交帧比 rAF 稍晚）
+        setTimeout(notify, 80);
+      });
+    });
+  }
+  function arm() {
+    var splash = document.getElementById('boot-splash');
+    var logo = splash && splash.querySelector('.bs-logo');
+    if (logo) {
+      // animationstart 只在元素真正开始播放 CSS 动画时触发（说明已完成布局并绘制）
+      logo.addEventListener('animationstart', function(){ setTimeout(notify, 40); }, { once: true });
+    }
+    rafTwoFrames();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', arm, { once: true });
+  } else {
+    arm();
+  }
+})();
+</script>
+<script src="js/local/boot.js"></script>
+<div id="am-login-panel" style="display:none;position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);align-items:center;justify-content:center">
+  <div style="background:#1c1c1e;border-radius:14px;padding:26px 28px;width:min(460px,90vw);box-shadow:0 20px 60px rgba(0,0,0,.6);color:#eee;font:14px/1.6 -apple-system,'PingFang SC',sans-serif">
+    <div style="font-size:17px;font-weight:600;margin-bottom:6px">登录 Apple Music</div>
+    <div style="color:#999;font-size:12.5px;margin-bottom:16px">
+      用你自己的 Apple Music 订阅账号登录，下载会走你自己的账号
+    </div>
+    <input id="am-login-email" placeholder="Apple ID（邮箱）" style="width:100%;background:#2c2c2e;border:1px solid #3a3a3c;border-radius:8px;color:#eee;padding:10px 12px;box-sizing:border-box;margin-bottom:10px;font-size:13px">
+    <input id="am-login-password" type="password" placeholder="密码" style="width:100%;background:#2c2c2e;border:1px solid #3a3a3c;border-radius:8px;color:#eee;padding:10px 12px;box-sizing:border-box;margin-bottom:10px;font-size:13px">
+    <input id="am-login-code" placeholder="两步验证码（如果需要）" style="display:none;width:100%;background:#2c2c2e;border:1px solid #3a3a3c;border-radius:8px;color:#eee;padding:10px 12px;box-sizing:border-box;margin-bottom:10px;font-size:13px">
+    <div id="am-login-status" style="font-size:12px;color:#888;margin-top:8px;min-height:36px;white-space:pre-wrap"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button id="am-login-cancel" style="background:#3a3a3c;color:#ddd;border:0;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px">取消</button>
+      <button id="am-login-go" style="background:#fa2d48;color:#fff;border:0;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:600">登录</button>
+    </div>
+  </div>
+</div>
+<div id="am-token-panel" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);align-items:center;justify-content:center">
+  <div style="background:#1c1c1e;border-radius:14px;padding:26px 28px;width:min(560px,90vw);box-shadow:0 20px 60px rgba(0,0,0,.6);color:#eee;font:14px/1.6 -apple-system,'PingFang SC',sans-serif">
+    <div style="font-size:17px;font-weight:600;margin-bottom:6px">Apple Music Token</div>
+    <div style="color:#999;font-size:12.5px;margin-bottom:14px">
+      填自己的 developer token 后，搜索会优先用它（不填则自动从 Apple 官网抓，6 小时过期）
+    </div>
+    <textarea id="am-token-input" placeholder="eyJhbGciOiJFUzI1NiIsImtpZCI6..." style="width:100%;height:110px;background:#2c2c2e;border:1px solid #3a3a3c;border-radius:8px;color:#eee;padding:10px;font:12px ui-monospace,Menlo,monospace;resize:vertical;box-sizing:border-box"></textarea>
+    <div id="am-token-status" style="font-size:12px;color:#888;margin-top:8px;min-height:18px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button id="am-token-clear" style="background:#3a3a3c;color:#ddd;border:0;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px">清除</button>
+      <button id="am-token-cancel" style="background:#3a3a3c;color:#ddd;border:0;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px">取消</button>
+      <button id="am-token-save" style="background:#fa2d48;color:#fff;border:0;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:600">保存</button>
+    </div>
+  </div>
+</div>
+<script>
+// Buffer polyfill（Node 特有，浏览器没有）
+(function(){
+  if (typeof window.Buffer !== 'undefined') return;
+  function BufferPoly(arr) {
+    if (typeof arr === 'number') return new Uint8Array(arr);
+    if (typeof arr === 'string') return new TextEncoder().encode(arr);
+    return new Uint8Array(arr);
+  }
+  BufferPoly.from = function(src, enc) {
+    const __r = (function(){
+    if (typeof src === 'string') {
+      if (enc === 'base64') {
+        const bin = atob(src);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+      if (enc === 'hex') {
+        const out = new Uint8Array(src.length / 2);
+        for (let i = 0; i < out.length; i++) out[i] = parseInt(src.substr(i*2, 2), 16);
+        return out;
+      }
+      return new TextEncoder().encode(src);
+    }
+    if (src instanceof ArrayBuffer) return new Uint8Array(src);
+    if (ArrayBuffer.isView(src)) return new Uint8Array(src.buffer, src.byteOffset, src.byteLength);
+    return Uint8Array.from(src);
+    })();
+    return BufferPoly.__wrap(__r);
+  };
+  BufferPoly.alloc = n => new Uint8Array(n);
+  BufferPoly.concat = arrs => {
+    const total = arrs.reduce((n, a) => n + a.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const a of arrs) { out.set(a, off); off += a.length; }
+    return __wrap(out);
+  };
+
+  // 给 Uint8Array 挂 toString('hex'|'base64')
+  function __wrap(u8) {
+    if (u8.__wrapped) return u8;
+    const origToString = Uint8Array.prototype.toString;
+    Object.defineProperty(u8, 'toString', {
+      value: function(enc) {
+        if (enc === 'hex') {
+          return Array.from(this).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+        if (enc === 'base64') {
+          let s = '';
+          for (let i = 0; i < this.length; i++) s += String.fromCharCode(this[i]);
+          return btoa(s);
+        }
+        return origToString.call(this);
+      },
+      writable: true, configurable: true,
+    });
+    u8.__wrapped = true;
+    return u8;
+  }
+  BufferPoly.__wrap = __wrap;
+  BufferPoly.isBuffer = x => x instanceof Uint8Array;
+  BufferPoly.allocUnsafe = n => new Uint8Array(n);
+  // Uint8Array 转 hex 字符串（Buffer.concat 之后经常用）
+  BufferPoly.from('', 'utf8');
+  BufferPoly.byteLength = s => (typeof s === 'string' ? new TextEncoder().encode(s).length : s.byteLength);
+  window.Buffer = BufferPoly;
+})();
+</script>
+<script>
+// ⚠️ 2026-10-22 窗口拖动（用户反馈「顶部播放器控件无法交互」后改为网页驱动）：
+//    原生 DragBarView 盖住了整个顶栏导致控件全不可点，已移除。
+//    现在：只有按在「顶栏空白区域」（不是按钮/进度条/输入框）才触发窗口拖动。
+(function() {
+  var DRAG_EXCLUDE = '.am-tbtn, button, input, select, textarea, a, ' +
+                     '.am-np-prog, .am-np-progrow, .am-np, .am-transport, ' +
+                     '.am-tb-right, .am-winbtns, .am-side, [contenteditable]';
+  function isBlankArea(el) {
+    while (el) {
+      if (el.closest && el.closest(DRAG_EXCLUDE)) return false;
+      el = el.parentElement;
+      if (!el || el.id === 'am-root') break;
+    }
+    return true;
+  }
+  document.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    if (e.clientY > 84) return;
+    if (e.clientX < 80) return;
+    if (!isBlankArea(e.target)) return;
+    e.preventDefault();
+    try { if (window.mine && window.mine.winDrag) window.mine.winDrag(); } catch (err) {}
+  }, true);
+  document.addEventListener('dblclick', function(e) {
+    if (e.clientY > 84 || e.clientX < 80) return;
+    if (!isBlankArea(e.target)) return;
+    try { if (window.mine && window.mine.winMax) window.mine.winMax(); } catch (err) {}
+  }, true);
+})();
+
+// ⚠️ 系统外观变化跟随（2026-10-21）：
+//    Mac 切换深色/浅色时，如果没有手动设置过主题（LIGHT_KEY 未固化），
+//    自动跟着切。同时同步窗口底色（BackgroundBridge）。
+(function() {
+  var LIGHT_KEY = 'annieplayer.am.light';
+  function applySystemTheme() {
+    try {
+      var v = localStorage.getItem(LIGHT_KEY);
+      // 用户手动设过就不自动改（'1'/'0' 是手动值）
+      if (v === '1' || v === '0') return;
+      var isLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+      var root = document.getElementById('am-root');
+      if (root) root.classList.toggle('am-light', isLight);
+      // ⚠️ 同步 html 级标记（2026-10-21）：app.css 的浅色覆盖靠这个
+      var h = document.documentElement;
+      h.classList.toggle('am-light', isLight);
+      h.dataset.light = isLight ? '1' : '0';
+      // 同步窗口底色
+      if (window.mine && window.mine.setWindowBg) {
+        window.mine.setWindowBg(isLight ? '#f6f4ef' : '#1e1e1e').catch(function(){});
+      }
+      // 更新顶栏主题按钮图标
+      var btn = document.querySelector('.am-tbtn[title="亮色/暗色"]');
+      if (btn && window.amIcoTop) btn.innerHTML = window.amIcoTop(isLight ? 'moon' : 'sun', 16);
+    } catch (e) {}
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', function() { setTimeout(applySystemTheme, 100); });
+    else if (mq.addListener) mq.addListener(function() { setTimeout(applySystemTheme, 100); });
+  }
+  // 页面就绪后应用一次
+  document.addEventListener('DOMContentLoaded', function() { setTimeout(applySystemTheme, 300); });
+  setTimeout(applySystemTheme, 1200);
+  window.__amApplySystemTheme = applySystemTheme;
+})();
+
+// 下载队列事件（2026-10-21，2026-10-23 修）：
+// Swift 推的事件有两种格式：
+//   {type:'tasks', tasks:[...]}           —— 全量任务列表
+//   {type:'progress', id, received, total} —— 单任务进度
+// 处理逻辑统一放在 am-download.js 的 handleDlEvent 里（window.__amDlHandle），
+// 这里只做转发 —— 原来这里自己解析 payload.items，但后端发的是 payload.tasks /
+// progress 事件，字段对不上 → 所有推送都被静默丢弃（下载进度条永远不动）。
+window.__amDlEvent = function(payload) {
+  // 新逻辑：交给 am-download.js
+  if (window.__amDlHandle) {
+    try { window.__amDlHandle(payload); } catch (e) {}
+    return;
+  }
+  try {
+    var list = (payload && payload.items) || [];
+    // 1) 通知 onDlEvent 注册的回调
+    if (window.__amDlCbs && window.__amDlCbs.length) {
+      window.__amDlCbs.forEach(function(cb) { try { cb({ type: 'update', items: list }); } catch (e) {} });
+    }
+    // 2) 通知 onStreamDownloadProgress 注册的回调（单曲按钮进度）
+    if (window.__amDlProgressCbs && window.__amDlProgressCbs.length) {
+      list.forEach(function(it) {
+        if (it.status === 'downloading') {
+          window.__amDlProgressCbs.forEach(function(cb) {
+            try { cb({ key: it.id, received: it.received, total: it.total }); } catch (e) {}
+          });
+        }
+      });
+    }
+    // 3) 如果「下载情况」视图正开着，刷新
+    var AM = window.__annieAMInternal;
+    if (AM && AM.S && AM.S.view === 'downloads' && AM.renderView) {
+      clearTimeout(window.__amDlRefreshT);
+      window.__amDlRefreshT = setTimeout(function() { try { AM.renderView(); } catch (e) {} }, 200);
+    }
+  } catch (e) {}
+};
+
+// ⚠️ 2026-10-24（用户反馈「桌面歌词的播放控件没反应」）：
+//   桌面歌词窗口的工具条 ⏮⏯⏭ → Swift 转发到主窗口 → 调 window.__dlyricsCmd(cmd)。
+//   但主窗口从来没有定义这个函数 → 调用被静默丢弃。
+//   这里统一接到现有播放控制：
+//     prev/next   → 流媒体走 annieStream，本地走 AM
+//     playpause   → AM 的 togglePlay
+window.__dlyricsCmd = function (cmd) {
+  try {
+    var isStream = !!(window.state && window.state.currentStream);
+    if (cmd === 'prev') {
+      if (isStream && window.annieStream && window.annieStream.playPrev) window.annieStream.playPrev();
+      else if (window.__annieAMInternal && window.__annieAMInternal.prev) window.__annieAMInternal.prev();
+      return;
+    }
+    if (cmd === 'next') {
+      if (isStream && window.annieStream && window.annieStream.playNext) window.annieStream.playNext();
+      else if (window.__annieAMInternal && window.__annieAMInternal.next) window.__annieAMInternal.next();
+      return;
+    }
+    if (cmd === 'playpause') {
+      if (window.__annieAMInternal && window.__annieAMInternal.togglePlay) window.__annieAMInternal.togglePlay();
+      else if (window.mine) window.mine.engine(window.state && window.state.playing ? 'pause' : 'resume');
+      return;
+    }
+  } catch (e) {}
+};
+
+// ⚠️ 2026-10-24：桌面歌词「浅色/深色」切换（跟随主窗口主题）
+window.__dlyricsTheme = function () {
+  try {
+    var html = document.documentElement;
+    var light = html.classList.contains('am-light')
+      || html.dataset.light === '1'
+      || html.dataset.theme === 'light';
+    return light ? 'light' : 'dark';
+  } catch (e) { return 'dark'; }
+};
+
+// ⚠️ 2026-10-24：频谱分析事件（analyzeStart → SpectrumAnalyzer → window.__analyzeEmit）
+//   后端 SpectrumAnalyzer 分批发 {type:'frames'|'done'|'lossless'|'error'}，
+//   前端 viz.js 用 window.mine.onAnalyzeEvent(cb) 注册回调接收。
+window.__analyzeCbs = window.__analyzeCbs || [];
+window.__analyzeEmit = function(m) {
+  (window.__analyzeCbs || []).forEach(function(cb) { try { cb(m); } catch (e) {} });
+};
+(function() {
+  var n = 0;
+  var iv = setInterval(function() {
+    if (!window.mine) return;
+    if (window.mine.onAnalyzeEvent && !window.__analyzePatched) {
+      window.__analyzePatched = true;
+      window.mine.onAnalyzeEvent = function(cb) {
+        if (typeof cb === 'function') window.__analyzeCbs.push(cb);
+      };
+    }
+    if (window.__analyzePatched || ++n > 100) clearInterval(iv);
+  }, 50);
+})();
+
+// ⚠️ 2026-10-23：媒体库扫描事件（scanStart → 后端 pushScanEvent → window.__scanEvent）
+window.__scanCbs = window.__scanCbs || [];
+window.__scanEvent = function(m) {
+  (window.__scanCbs || []).forEach(function(cb) { try { cb(m); } catch (e) {} });
+};
+(function() {
+  var n = 0;
+  var iv = setInterval(function() {
+    if (!window.mine) return;
+    if (window.mine.onScanEvent && !window.__scanPatched) {
+      window.__scanPatched = true;
+      window.mine.onScanEvent = function(cb) {
+        if (typeof cb === 'function') window.__scanCbs.push(cb);
+      };
+    }
+    if (window.__scanPatched || ++n > 100) clearInterval(iv);
+  }, 50);
+})();
+
+// 注册回调的入口（window.mine.onDlEvent / onStreamDownloadProgress 会被桥接层调用）
+window.__amDlCbs = window.__amDlCbs || [];
+window.__amDlProgressCbs = window.__amDlProgressCbs || [];
+
+// ⚠️ 拦截 window.mine 的 on* 注册（2026-10-21）：
+//    Swift 那边这些是桩方法（返回 nil），真正的回调存在 JS 数组里。
+(function() {
+  function patch() {
+    if (!window.mine || window.__amDlPatched) return;
+    window.__amDlPatched = true;
+    var orig = window.mine.onDlEvent;
+    window.mine.onDlEvent = function(cb) {
+      if (typeof cb === 'function') window.__amDlCbs.push(cb);
+      else if (typeof orig === 'function') return orig.apply(window.mine, arguments);
+    };
+    var orig2 = window.mine.onStreamDownloadProgress;
+    window.mine.onStreamDownloadProgress = function(cb) {
+      if (typeof cb === 'function') window.__amDlProgressCbs.push(cb);
+      else if (typeof orig2 === 'function') return orig2.apply(window.mine, arguments);
+    };
+  }
+  // mine 可能还没注入，轮询等它
+  var n = 0;
+  var iv = setInterval(function() {
+    patch();
+    if (window.__amDlPatched || ++n > 100) clearInterval(iv);
+  }, 50);
+})();
+
+// 下载进度接收（2026-10-21）
+window.__amDownloadProgress = function(dlKey, percent, received, total) {
+  try {
+    if (!dlKey) return;
+    // am-stream.js 里下载按钮的状态表
+    var btn = null;
+    if (window.__amDlState && window.__amDlState[dlKey]) {
+      btn = window.__amDlState[dlKey];
+    }
+    if (!btn) {
+      // 退化：找所有正在下载的按钮
+      btn = document.querySelector("[data-dlkey='" + dlKey + "']");
+    }
+    if (btn) {
+      btn.textContent = percent > 0 ? percent + '%' : Math.floor(received / 1048576) + 'M';
+    }
+  } catch (e) {}
+};
+
+// 封面异步补齐（2026-10-21）：
+//   搜索结果先返回（快），封面后到，按 songmid 匹配后原位更新 <img>。
+window.__amApplyCovers = function(list) {
+  try {
+    if (!Array.isArray(list)) return;
+    var map = {};
+    list.forEach(function(x) { if (x && x.id && x.url) map[String(x.id)] = x.url; });
+    // 找到当前搜索结果里的 song 对象（S.stResults）
+    var AM = window.__annieAMInternal;
+    if (!AM || !AM.S || !AM.S.stResults) return;
+    var changed = 0;
+    AM.S.stResults.forEach(function(s) {
+      if (!s || s.cover) return;
+      var u = map[String(s.songmid)];
+      if (u) { s.cover = u; if (!s.img) s.img = u; changed++; }
+    });
+    if (changed > 0) {
+      // ⚠️ 用 songmid → URL 直接匹配 DOM（2026-10-21 修封面不显示）：
+      //    之前按 rows[i] ↔ stResults[i] 下标对齐，但表格里有表头行，
+      //    下标必然错位，导致封面永远不更新。改成给每行打 data-sm 标记后精确匹配。
+      // 各平台唯一标识字段不同（酷狗用 hash），前端要和服务端一致
+      function songId(s) {
+        if (!s) return "";
+        var keys = ["songmid", "hash", "id", "rid", "songId"];
+        for (var i = 0; i < keys.length; i++) {
+          var v = s[keys[i]];
+          if (v != null && v !== "") return String(v);
+        }
+        return "";
+      }
+      var pending = {};
+      AM.S.stResults.forEach(function(s) {
+        if (s && s.cover) { var k = songId(s); if (k) pending[k] = s.cover; }
+      });
+      var rows2 = document.querySelectorAll("#am-root tr");
+      for (var k = 0; k < rows2.length; k++) {
+        var row = rows2[k];
+        var img = row.querySelector(".am-c-cover");
+        if (!img || !img.style.visibility || img.style.visibility !== "hidden") continue;
+        // 用行内已有的 songmid 标记，或按行内歌名反向找
+        var sm = row.getAttribute("data-sm");
+        var url = sm != null ? pending[String(sm)] : null;
+        if (!url) continue;
+        img.onload = function() { this.style.visibility = ""; };
+        img.src = url;
+        img.style.visibility = "";
+      }
+    }
+  } catch (e) {}
+};
+
+// 窗口背景色跟随主题（日夜模式）
+(function() {
+  function readBg() {
+    try {
+      var root = document.getElementById('am-root') || document.documentElement;
+      var cs = getComputedStyle(root);
+      var bg = cs.getPropertyValue('--am-bg').trim();
+      if (bg) return bg;
+      // 退化：读 body 实际背景
+      var b = getComputedStyle(document.body).backgroundColor;
+      var m = b.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (m) {
+        return '#' + [1,2,3].map(function(i){ return ('0' + (+m[i]).toString(16)).slice(-2); }).join('');
+      }
+    } catch (e) {}
+    return '';
+  }
+  function sync() {
+    var bg = readBg();
+    if (bg && bg.charAt(0) === '#' && window.mine && window.mine.setWindowBg) {
+      window.mine.setWindowBg(bg).catch(function(){});
+    }
+  }
+  // 首次 + 主题切换时同步
+  setTimeout(sync, 500);
+  setTimeout(sync, 1500);
+  // 监听 html/body 的 data-theme 属性和 class 变化
+  var mo = new MutationObserver(function() { setTimeout(sync, 50); });
+  document.addEventListener('DOMContentLoaded', function() {
+    if (document.documentElement) {
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style', 'data-palette'] });
+    }
+    if (document.body) {
+      mo.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
+    }
+    sync();
+  });
+  // 也监听系统外观变化（用户切深色/浅色）
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() { setTimeout(sync, 100); });
+  window.__amSyncWindowBg = sync;
+})();
+</script>
+<script type="module">
+// 延迟加载洛雪 SDK（等页面就绪）
+// ⚠️ 桥接 fetch（2026-10-21）：
+//    WKWebView 的网络进程不走系统代理，导致所有外网请求失败。
+//    解法：把 fetch 重定向到 Swift 的 URLSession（它走系统代理）。
+(function() {
+  const origFetch = window.fetch;
+  window.__nativeFetch = async function(url, opts = {}) {
+    const reqId = 'nf_' + Math.random().toString(36).slice(2);
+    return new Promise((resolve, reject) => {
+      window.__nfPending = window.__nfPending || {};
+      window.__nfPending[reqId] = { resolve, reject };
+      const body = opts.body ? String(opts.body) : null;
+      window.webkit.messageHandlers.mine.postMessage({
+        id: -1,
+        method: 'nativeFetch',
+        args: [{ reqId, url: String(url), method: opts.method || 'GET',
+                 headers: opts.headers || {}, body }],
+      });
+      setTimeout(() => {
+        if (window.__nfPending[reqId]) {
+          delete window.__nfPending[reqId];
+          reject(new Error('timeout'));
+        }
+      }, 30000);
+    });
+  };
+  // Swift 回调
+  window.__nfResolve = function(reqId, ok, payload) {
+    const p = (window.__nfPending || {})[reqId];
+    if (!p) return;
+    delete window.__nfPending[reqId];
+    if (!ok) { p.reject(new Error(payload || 'fetch failed')); return; }
+    // 模拟 Response 对象
+    p.resolve({
+      ok: payload.status >= 200 && payload.status < 300,
+      status: payload.status,
+      headers: { get: k => payload.headers?.[k] ?? null, forEach: cb => Object.entries(payload.headers||{}).forEach(([k,v]) => cb(v,k)) },
+      text: async () => payload.body,
+      json: async () => JSON.parse(payload.body),
+      arrayBuffer: async () => {
+        // ⚠️ 文本响应在 body 里，二进制在 bodyB64 里（2026-10-21 修）
+        if (payload.bodyB64) {
+          const bin = atob(payload.bodyB64);
+          const out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out.buffer;
+        }
+        return new TextEncoder().encode(payload.body || '').buffer;
+      },
+    });
+  };
+  // ⚠️ 只把外网请求转给 Swift（2026-10-21）：
+  //    本地相对路径（/lx-sources/xxx.js 等）走原生 fetch，
+  //    否则 Swift 的 URL(string:) 解析不了，报 unsupported URL。
+  window.fetch = function(input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isExternal = /^https?:\/\//i.test(url);
+    if (isExternal) return window.__nativeFetch(input, init);
+    return origFetch(input, init);
+  };
+})();
+
+// 洛雪 SDK 封装 —— 供 Swift 桥接调用
+window.__lxSearch = async function(provider, keywords, page, limit) {
+  for (let i = 0; i < 75 && !window.__lxSdk; i++) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  if (!window.__lxSdk) throw new Error('音源服务未就绪');
+  const sdk = window.__lxSdk;
+  const src = sdk[provider];
+  if (!src || !src.musicSearch) throw new Error('平台 ' + provider + ' 不支持搜索');
+  const r = await src.musicSearch.search(keywords, page || 1, limit || 30);
+  return r;
+};
+window.__lxSongUrl = async function(provider, songInfo, quality) {
+  // 等 SDK 就绪（最多 15 秒）
+  for (let i = 0; i < 75 && !window.__lxSdk; i++) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  if (!window.__lxSdk) throw new Error('音源服务未就绪');
+  const sdk = window.__lxSdk;
+  const src = sdk[provider];
+  if (!src || !src.getMusicUrl) throw new Error('平台 ' + provider + ' 不支持播放');
+  return await src.getMusicUrl(songInfo, quality || '320k');
+};
+window.__lxLyric = async function(provider, songInfo) {
+  if (!window.__lxSdk) throw new Error('SDK 未加载');
+  const src = window.__lxSdk[provider];
+  if (!src || !src.getLyric) return null;
+  return await src.getLyric(songInfo);
+};
+
+(async () => {
+  try {
+    // 先加载 crypto-js（crypto shim 依赖它）
+    const cjs = await import('/lx-gen/shims/crypto-js.js');
+    window.CryptoJS = cjs.default;
+    console.log('CRYPTOJS ready: ' + (cjs.default && cjs.default.MD5 ? 'yes' : 'no'));
+
+    const mod = await import('/lx-gen/index.js');
+    const sdk = mod.default || mod;
+    window.__lxSdk = sdk;
+    if (sdk.init) sdk.init({});
+
+    // ---- 加载自定义音源脚本（洛雪格式）----
+    try {
+      const { createSandbox } = await import('/lx-runtime/lx-sandbox.js');
+      const sb = createSandbox();
+      globalThis.lx = sb.lx;
+      window.__lxSandbox = sb;
+
+      const srcCode = await (await fetch('/lx-sources/xinghai.js')).text();
+      // 脚本用 globalThis.lx，直接在函数作用域里求值
+      const fn = new Function('globalThis', srcCode);
+      fn(globalThis);
+      console.log('LX_SOURCE: 已加载，handlers=' + Object.keys(sb.handlers).join(','));
+
+      // 告诉脚本初始化完成
+      sb.lx.send(sb.EVENT_NAMES.inited, {
+        status: true,
+        openDevTools: false,
+        sources: {
+          kw: { name: '酷我音乐', type: 'music', actions: ['musicUrl'], qualitys: ['128k','320k','flac','flac24bit'] },
+          kg: { name: '酷狗音乐', type: 'music', actions: ['musicUrl'], qualitys: ['128k','320k','flac','flac24bit'] },
+          tx: { name: 'QQ音乐', type: 'music', actions: ['musicUrl'], qualitys: ['128k','320k','flac','flac24bit'] },
+          wy: { name: '网易云', type: 'music', actions: ['musicUrl'], qualitys: ['128k','320k','flac','flac24bit'] },
+          mg: { name: '咪咕音乐', type: 'music', actions: ['musicUrl'], qualitys: ['128k','320k','flac'] },
+        },
+      });
+
+      // 对外接口：拿封面
+      window.__sourcePic = async function(provider, info) {
+        try {
+          return await sb.invoke('pic', provider, { musicInfo: info });
+        } catch(e) { return ''; }
+      };
+      // 对外接口：拿歌词
+      window.__sourceLyric = async function(provider, info) {
+        try {
+          return await sb.invoke('lyric', provider, { musicInfo: info });
+        } catch(e) { return null; }
+      };
+
+      // 对外接口：拿播放地址
+      window.__sourceUrl = async function(provider, info, quality) {
+        return await sb.invoke('musicUrl', provider, {
+          type: quality || '320k',
+          musicInfo: info,
+        });
+      };
+      console.log('LX_SOURCE: 就绪');
+    } catch (e) {
+      console.error('LX_SOURCE_ERR: ' + e.message);
+    }
+    console.log('SDK_OK: ' + Object.keys(sdk).join(','));
+    if (sdk.sources?.sources) {
+      console.log('SOURCES: ' + sdk.sources.sources.map(s => s.name + '(' + s.id + ')').join(', '));
+    }
+  } catch (e) {
+    console.error('SDK_ERR: ' + e.message);
+  }
+})();
+</script>
+<script>
+(function(){
+  var panel = document.getElementById('am-token-panel');
+  var input = document.getElementById('am-token-input');
+  var status = document.getElementById('am-token-status');
+
+  function open() {
+    if (!window.mine || !window.mine.amGetToken) {
+      alert('桥接未就绪，请重启应用');
+      return;
+    }
+    panel.style.display = 'flex';
+    window.mine.amGetToken().then(function(r){
+      input.value = (r && r.token) || '';
+      status.textContent = input.value ? '当前已设置 ' + input.value.length + ' 字符' : '当前未设置（用自动抓取的 token）';
+    }).catch(function(){ input.value = ''; });
+  }
+  function close() { panel.style.display = 'none'; }
+
+  document.getElementById('am-token-cancel').onclick = close;
+  document.getElementById('am-token-save').onclick = function(){
+    var v = (input.value || '').trim();
+    window.mine.amSetToken(v).then(function(){
+      status.textContent = v ? '✅ 已保存 ' + v.length + ' 字符' : '✅ 已清空';
+      setTimeout(close, 700);
+    }).catch(function(e){ status.textContent = '❌ ' + e.message; });
+  };
+  document.getElementById('am-token-clear').onclick = function(){
+    input.value = '';
+    window.mine.amClearToken().then(function(){ status.textContent = '✅ 已清空'; });
+  };
+
+  // 快捷键：⌘⇧T 打开
+  document.addEventListener('keydown', function(e){
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+      e.preventDefault(); open();
+    }
+  });
+  window.__amOpenTokenPanel = open;
+
+  // ---- 登录面板 ----
+  var lp = document.getElementById('am-login-panel');
+  var le = document.getElementById('am-login-email');
+  var lpw = document.getElementById('am-login-password');
+  var lc = document.getElementById('am-login-code');
+  var ls = document.getElementById('am-login-status');
+  var lg = document.getElementById('am-login-go');
+
+  window.__amOpenLoginPanel = function(){
+    lp.style.display = 'flex';
+    ls.textContent = '';
+    window.mine.amLoginStatus().then(function(r){
+      if (r && r.loggedIn) {
+        ls.textContent = '✅ 当前已登录（店铺：' + (r.regions||[]).join(', ') + '）';
+      }
+    }).catch(function(){});
+  };
+  document.getElementById('am-login-cancel').onclick = function(){ lp.style.display = 'none'; };
+  lg.onclick = function(){
+    if (lc.style.display !== 'none' && lc.value.trim()) {
+      ls.textContent = '正在提交验证码…';
+      window.mine.amLoginCode({code: lc.value.trim()}).then(function(){});
+      return;
+    }
+    var e = (le.value||'').trim(), p = (lpw.value||'');
+    if (!e || !p) { ls.textContent = '请填 Apple ID 和密码'; return; }
+    ls.textContent = '正在登录（首次要起虚拟机，可能要 1-2 分钟）…';
+    lg.disabled = true;
+    window.mine.amLogin({email: e, password: p}).then(function(r){
+      lg.disabled = false;
+      if (r && r.ok) {
+        ls.textContent = '✅ 登录成功！';
+        setTimeout(function(){ lp.style.display = 'none'; }, 1200);
+      } else if (r && r.needCode) {
+        lc.style.display = 'block';
+        ls.textContent = '⚠️ 需要两步验证码，请输入后点「登录」';
+      } else {
+        ls.textContent = '❌ ' + ((r && (r.error||r.message)) || '登录失败');
+      }
+    }).catch(function(err){
+      lg.disabled = false;
+      ls.textContent = '❌ ' + err.message;
+    });
+  };
+
+  // 快捷键：⌘⇧L 打开登录
+  document.addEventListener('keydown', function(e){
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'L' || e.key === 'l')) {
+      e.preventDefault(); window.__amOpenLoginPanel();
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -2,7 +2,8 @@
 # 安妮播放器 · macOS 版云端构建发布（macOS 线专用）
 # 触发：push 一个 mac-v* 标签（如 git tag mac-v1.0.0 && git push origin mac-v1.0.0）
 #       或在 GitHub Actions 页面手动 Run workflow
-# 流程：安装依赖 → electron-builder 打 dmg/zip → 发布 Release（prerelease，见下）
+# 工程：原生 Swift（AppKit 外壳 + WKWebView + 原生音频引擎），非 Electron。
+# 流程：swiftc 编译 → build-dmg.sh 打 DMG/ZIP → 发布 Release（prerelease，见下）
 # 维护边界：本 workflow 只许动 macOS 线；Windows 主线是 release.yml，禁止混改。
 # ⚠️ prerelease: true 是硬规则（防止抢走 releases/latest 指针打断 Windows 用户
 #    自动更新），mac 自动更新通道方案落地前不得移除。详见 macos/AGENTS.md 第二节。
@@ -23,31 +24,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      # ===== 以下为脚手架，numb 侧按 macos/ 工程实际结构适配（只允许改本文件） =====
-      # 假设 macos/ 是一个 electron-builder 工程（含自己的 package.json）。
-      # 若不是（如原生 SwiftPM / Xcode 工程），把构建步骤换成对应命令即可，
+      # ===== Swift 工程构建（按 numb 提供的构建方式，只允许改本文件） =====
+      # macos/ 目录结构：src/*.swift + build-dmg.sh（打 DMG/ZIP 的脚本）
+      # 若工程结构调整（如改 SwiftPM / Xcode 工程），改这里对应命令即可，
       # 但「产物流向 GitHub Release + prerelease」的规矩不变。
 
-      - name: 安装依赖（macos/ 工程）
+      - name: 编译 Swift 工程（arm64，release）
         working-directory: macos
-        run: npm ci --no-audit --no-fund
+        run: |
+          mkdir -p build
+          swiftc -O -parse-as-library -target arm64-apple-macosx15.0 \
+            -o build/annie src/*.swift
 
-      - name: 打包 macOS（dmg + zip，x64+arm64）
+      - name: 打包 DMG / ZIP
         working-directory: macos
-        run: npx electron-builder --mac dmg zip --publish never
-        env:
-          # 一期无 Apple 证书：不签名不公证（用户首次右键打开）；
-          # 二期配证书后由维护者在仓库 Secrets 配置以下变量并去掉 CSC_IDENTITY_AUTO_DISCOVERY=false
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          # CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          # CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ver="${GITHUB_REF_NAME#mac-v}"
+          [ -n "$ver" ] || ver="0.0.0-dev"
+          chmod +x build-dmg.sh
+          ./build-dmg.sh "$ver"
 
       - name: 提取本版 release notes（macos/更新日志-mac.md）
         shell: bash
@@ -56,6 +51,11 @@ jobs:
           echo "RELVER=$ver" >> "$GITHUB_ENV"
           awk -v v="## V$ver" 'BEGIN{f=0} index($0,v)==1{f=1;next} /^## V/&&f{exit} f' macos/更新日志-mac.md > release-notes-mac.md || true
           [ -s release-notes-mac.md ] || echo "安妮播放器 macOS 版 V$ver" > release-notes-mac.md
+
+      - name: 列出产物（核对用）
+        shell: bash
+        run: |
+          find macos -maxdepth 3 \( -name '*.dmg' -o -name '*.zip' \) -exec ls -lh {} \;
 
       - name: 发布到 GitHub Release（prerelease，勿改）
         uses: softprops/action-gh-release@v2
@@ -67,4 +67,11 @@ jobs:
           files: |
             macos/dist/*.dmg
             macos/dist/*.zip
-            macos/dist/latest-mac.yml
+            macos/build/*.dmg
+            macos/build/*.zip
+
+# ============================================================================
+# 备注：ubuntu.img（588MB）与 limactl（31MB）是 AM 解密 VM 的运行时依赖，
+# 不随每次发版重复上传——仿照 wrapper-lite 的做法，单独打一个固定 tag 的
+# 资产 Release（同样必须 prerelease），VMInstaller.swift 里写死该下载地址。
+# ============================================================================

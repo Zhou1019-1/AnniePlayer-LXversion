@@ -1,0 +1,70 @@
+# ============================================================================
+# 安妮播放器 · macOS 版云端构建发布（macOS 线专用）
+# 触发：push 一个 mac-v* 标签（如 git tag mac-v1.0.0 && git push origin mac-v1.0.0）
+#       或在 GitHub Actions 页面手动 Run workflow
+# 流程：安装依赖 → electron-builder 打 dmg/zip → 发布 Release（prerelease，见下）
+# 维护边界：本 workflow 只许动 macOS 线；Windows 主线是 release.yml，禁止混改。
+# ⚠️ prerelease: true 是硬规则（防止抢走 releases/latest 指针打断 Windows 用户
+#    自动更新），mac 自动更新通道方案落地前不得移除。详见 macos/AGENTS.md 第二节。
+# ============================================================================
+name: release-mac
+
+on:
+  push:
+    tags: ['mac-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # ===== 以下为脚手架，numb 侧按 macos/ 工程实际结构适配（只允许改本文件） =====
+      # 假设 macos/ 是一个 electron-builder 工程（含自己的 package.json）。
+      # 若不是（如原生 SwiftPM / Xcode 工程），把构建步骤换成对应命令即可，
+      # 但「产物流向 GitHub Release + prerelease」的规矩不变。
+
+      - name: 安装依赖（macos/ 工程）
+        working-directory: macos
+        run: npm ci --no-audit --no-fund
+
+      - name: 打包 macOS（dmg + zip，x64+arm64）
+        working-directory: macos
+        run: npx electron-builder --mac dmg zip --publish never
+        env:
+          # 一期无 Apple 证书：不签名不公证（用户首次右键打开）；
+          # 二期配证书后由维护者在仓库 Secrets 配置以下变量并去掉 CSC_IDENTITY_AUTO_DISCOVERY=false
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          # CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: 提取本版 release notes（macos/更新日志-mac.md）
+        shell: bash
+        run: |
+          ver="${GITHUB_REF_NAME#mac-v}"
+          echo "RELVER=$ver" >> "$GITHUB_ENV"
+          awk -v v="## V$ver" 'BEGIN{f=0} index($0,v)==1{f=1;next} /^## V/&&f{exit} f' macos/更新日志-mac.md > release-notes-mac.md || true
+          [ -s release-notes-mac.md ] || echo "安妮播放器 macOS 版 V$ver" > release-notes-mac.md
+
+      - name: 发布到 GitHub Release（prerelease，勿改）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: 安妮播放器 macOS 版 V${{ env.RELVER }}
+          body_path: release-notes-mac.md
+          prerelease: true   # ⚠️ 硬规则：防止抢 releases/latest 指针（见顶部注释）
+          files: |
+            macos/dist/*.dmg
+            macos/dist/*.zip
+            macos/dist/latest-mac.yml

@@ -59,8 +59,12 @@ swiftc -O -parse-as-library -target arm64-apple-macosx15.0 -o /tmp/annie src/*.s
 
 | 文件 | 大小 | 用途 |
 |---|---|---|
-| `ubuntu.img` | 588MB | Lima 登录虚拟机的 Ubuntu 根文件系统 |
-| `limactl` | 31MB | Lima 命令行工具 |
+| `ubuntu.img` | 588MB | Lima 登录虚拟机的 Ubuntu 根文件系统（中科大镜像） |
+| `limactl` | 31MB | Lima 命令行工具（lima 官方 Release） |
+| `wrapper-lite-slim.zip` | 71MB | QEMU 运行时（`wrapper-lite-v2`，含 27 个 dylib） |
+| `wrapper-pkg` | 49MB | am-login 部署包（已打包进 App，`assets/wrapper-pkg.zip`） |
+
+**所有依赖都从官方源或仓库已有 Release 下载，无需手动上传大文件。**
 
 ## 已实现功能
 

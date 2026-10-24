@@ -50,13 +50,23 @@ final class VMInstaller {
     ///     · limactl       → lima 官方 GitHub Release
     ///     · wrapper-lite  → 本仓库已有的 wrapper-lite-v1 Release
     ///     · wrapper-pkg   → 已打包进 App（assets/wrapper-pkg.zip，49MB）
-    static let ubuntuURL = "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    /// ⚠️ 2026-10-24：Ubuntu 官方源经常超时，改用中科大镜像（实测 12MB/s），
+    ///   多源按顺序回退。
+    static let ubuntuMirrors = [
+        "https://mirrors.ustc.edu.cn/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img",
+        "https://mirrors.aliyun.com/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img",
+        "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img",
+    ]
+    static var ubuntuURL: String { ubuntuMirrors[0] }
     static let limaVersion = "2.2.1"
     static var limaURL: String {
         "https://github.com/lima-vm/lima/releases/download/v\(limaVersion)/lima-\(limaVersion)-Darwin-arm64.tar.gz"
     }
+    /// ⚠️ 2026-10-25：改用 wrapper-lite-v2（精简版 71MB）
+    ///   相比 v1：删 315MB 无用固件 + 补齐 27 个 Homebrew dylib（用户无需装 Homebrew）
+    ///   + 补上原先缺失的 data.img.template
     static var wrapperLiteURL: String {
-        "https://github.com/\(runtimeRepo)/releases/download/wrapper-lite-v1/wrapper-lite.zip"
+        "https://github.com/\(runtimeRepo)/releases/download/wrapper-lite-v2/wrapper-lite-slim.zip"
     }
 
     /// 下载单个运行时资产到指定路径（失败返回 false，不抛错）

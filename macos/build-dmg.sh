@@ -89,10 +89,23 @@ echo "=== 3. 下载运行时依赖 ==="
 RUNTIME_TAG="${MAC_RUNTIME_TAG:-mac-runtime-v1}"
 REPO="${GITHUB_REPOSITORY:-Zhou1019-1/AnniePlayer-LXversion}"
 RUNTIME_BASE="${MAC_RUNTIME_BASE:-https://github.com/$REPO/releases/download/$RUNTIME_TAG}"
-UBUNTU_URL="${MAC_UBUNTU_URL:-https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img}"
+# ⚠️ 2026-10-24：Ubuntu 官方源经常超时（实测 30s ×4 次全超时）。
+#   改用中科大镜像（实测 12MB/s），多源按顺序回退。
+UBUNTU_MIRRORS=(
+  "https://mirrors.ustc.edu.cn/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img"
+  "https://mirrors.aliyun.com/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img"
+  "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+)
+UBUNTU_URL="${MAC_UBUNTU_URL:-}"
 LIMA_VER="${MAC_LIMA_VER:-2.2.1}"
 LIMA_URL="https://github.com/lima-vm/lima/releases/download/v${LIMA_VER}/lima-${LIMA_VER}-Darwin-arm64.tar.gz"
-WRAPPER_LITE_URL="https://github.com/${REPO}/releases/download/wrapper-lite-v1/wrapper-lite.zip"
+# ⚠️ 2026-10-25：wrapper-lite-v2 = 精简版（71MB）
+#   相比 v1：
+#     · 删掉 315MB 无用 UEFI 固件（riscv/loongarch/arm32/x86-32）
+#     · 补齐 27 个 Homebrew dylib（capstone/gnutls/pixman/glib/usb/ssh...）
+#       → 用 install_name_tool 改成 @executable_path/../lib/，用户机器无需装 Homebrew
+#     · 补上原先缺失的 qemu/data.img.template（干净 ext4 64MB，DEV_TOKEN 为空）
+WRAPPER_LITE_URL="https://github.com/${REPO}/releases/download/wrapper-lite-v2/wrapper-lite-slim.zip"
 DEPS_OK=1
 
 mkdir -p "$APP/Contents/Resources/lima" "$APP/Contents/Resources/deps"
@@ -124,9 +137,24 @@ fi
 if [ -f "$ROOT/assets/ubuntu.img" ]; then
   cp "$ROOT/assets/ubuntu.img" "$APP/Contents/Resources/lima/" && echo "  ✅ ubuntu.img（本地）"
 else
-  echo "  → 下载 Ubuntu 镜像（约 588MB，可能较慢）…"
-  if curl -fsSL --retry 3 --connect-timeout 30 --max-time 1800 -C -        -o "$APP/Contents/Resources/lima/ubuntu.img" "$UBUNTU_URL"; then
-    echo "  ✅ ubuntu.img（下载，$(du -h "$APP/Contents/Resources/lima/ubuntu.img" | cut -f1)）"
+  echo "  → 下载 Ubuntu 镜像（约 588MB）…"
+  IMG_DEST="$APP/Contents/Resources/lima/ubuntu.img"
+  IMG_OK=0
+  if [ -n "$UBUNTU_URL" ]; then
+    echo "    使用 MAC_UBUNTU_URL"
+    if curl -fSL --retry 2 --connect-timeout 30 --max-time 1800 -o "$IMG_DEST" "$UBUNTU_URL"; then IMG_OK=1; fi
+  else
+    for u in "${UBUNTU_MIRRORS[@]}"; do
+      echo "    尝试: $(echo "$u" | cut -d/ -f3)"
+      if curl -fSL --retry 1 --connect-timeout 20 --max-time 1800 -o "$IMG_DEST" "$u"; then
+        IMG_OK=1; break
+      fi
+      echo "    ✗ 该源失败，换下一个"
+      rm -f "$IMG_DEST"
+    done
+  fi
+  if [ "$IMG_OK" = "1" ] && [ -f "$IMG_DEST" ]; then
+    echo "  ✅ ubuntu.img（下载，$(du -h "$IMG_DEST" | cut -f1)）"
   else
     echo "  ⚠️ ubuntu.img 下载失败（App 首次登录时会自行重试）"; DEPS_OK=0
   fi
@@ -141,22 +169,34 @@ if [ -d "$ROOT/assets/wrapper-lite" ]; then
   cp -R "$ROOT/assets/wrapper-lite" "$APP/Contents/Resources/deps/wrapper-lite"
   echo "  ✅ wrapper-lite（本地）"
 else
-  echo "  → 下载 wrapper-lite（约 83MB）…"
+  echo "  → 下载 wrapper-lite（v2 精简版，约 71MB）…"
   TMP_W="$BUILD/wrapper-lite.zip"
-  if curl -fsSL --retry 3 --connect-timeout 20 --max-time 900 -o "$TMP_W" "$WRAPPER_LITE_URL"; then
+  WL_OK=0
+  if curl -fsSL --retry 2 --connect-timeout 30 --max-time 900 -o "$TMP_W" "$WRAPPER_LITE_URL"; then
+    rm -rf "$BUILD/wrapper-unzip"
     unzip -q "$TMP_W" -d "$BUILD/wrapper-unzip"
-    SRC=$(find "$BUILD/wrapper-unzip" -maxdepth 2 -name wrapper-lite-qemu -type f | head -1)
+    SRC=$(find "$BUILD/wrapper-unzip" -maxdepth 3 -name wrapper-lite-qemu -type f | head -1)
     if [ -n "$SRC" ]; then
       SRC_DIR=$(dirname "$SRC")
+      rm -rf "$APP/Contents/Resources/deps/wrapper-lite"
       mv "$SRC_DIR" "$APP/Contents/Resources/deps/wrapper-lite"
+      WL_OK=1
       echo "  ✅ wrapper-lite（下载，$(du -sh "$APP/Contents/Resources/deps/wrapper-lite" | cut -f1)）"
+      # 校验关键文件齐全
+      for f in qemu/bin/qemu-system-x86_64 qemu/vmlinuz-lite-qemu qemu/lite-initramfs.cpio.gz qemu/data.img.template; do
+        [ -f "$APP/Contents/Resources/deps/wrapper-lite/$f" ] || { echo "    ⚠️ 缺少 $f"; WL_OK=0; }
+      done
+      [ "$WL_OK" = "1" ] && echo "    ✅ 关键文件齐全（QEMU/内核/initramfs/data.img.template）"
+      [ -d "$APP/Contents/Resources/deps/wrapper-lite/qemu/lib" ] && echo "    ✅ 已含 $(ls "$APP/Contents/Resources/deps/wrapper-lite/qemu/lib"/*.dylib 2>/dev/null | wc -l | tr -d ' ') 个动态库"
     else
-      echo "  ⚠️ wrapper-lite.zip 结构异常"; DEPS_OK=0
+      echo "  ⚠️ wrapper-lite.zip 结构异常（找不到 wrapper-lite-qemu）"
     fi
   else
-    echo "  ⚠️ wrapper-lite 下载失败"; DEPS_OK=0
+    echo "  ⚠️ wrapper-lite 下载失败（App 首次登录时会自行重试）"
   fi
+  [ "$WL_OK" = "1" ] || DEPS_OK=0
 fi
+# ⚠️ 只删运行时数据 data.img，保留 data.img.template（登录前会从它复制）
 rm -f "$APP/Contents/Resources/deps/wrapper-lite/qemu/data.img" 2>/dev/null || true
 
 # ── wrapper-pkg（自研，无公开源）──
@@ -169,9 +209,19 @@ if [ -d "$ROOT/assets/am-login-package/wrapper-pkg" ]; then
   echo "  ✅ wrapper-pkg（本地目录）"
 elif [ -f "$ROOT/assets/wrapper-pkg.zip" ]; then
   mkdir -p "$(dirname "$WP_DEST")"
+  rm -rf "$BUILD/wp-unzip"
   unzip -q "$ROOT/assets/wrapper-pkg.zip" -d "$BUILD/wp-unzip"
-  SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 1 -type d -name wrapper-pkg | head -1)
-  if [ -n "$SRC_WP" ]; then
+  # ⚠️ 2026-10-25：ditto --keepParent 压出来的顶层目录名不一定是 wrapper-pkg，
+  #   用「含 Dockerfile 或 rootfs 的目录」来识别（更稳）。
+  SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 2 -type f -name Dockerfile | head -1 | xargs -I{} dirname {} 2>/dev/null)
+  if [ -z "$SRC_WP" ]; then
+    SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 2 -type d -name rootfs | head -1 | xargs -I{} dirname {} 2>/dev/null)
+  fi
+  if [ -z "$SRC_WP" ]; then
+    SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 1 -mindepth 1 -type d | head -1)
+  fi
+  if [ -n "$SRC_WP" ] && [ -d "$SRC_WP" ]; then
+    rm -rf "$WP_DEST"
     mv "$SRC_WP" "$WP_DEST"
     echo "  ✅ wrapper-pkg（git 内的 zip，$(du -sh "$WP_DEST" | cut -f1)）"
   else

@@ -44,6 +44,31 @@ final class VMInstaller {
         return "https://github.com/\(runtimeRepo)/releases/download/\(runtimeTag)"
     }
 
+    /// ⚠️ 2026-10-24（优化下载体积）：
+    ///   运行时依赖一律从**官方源**下载，不依赖本仓库的 Release 资产：
+    ///     · ubuntu.img    → Ubuntu 官方云镜像
+    ///     · limactl       → lima 官方 GitHub Release
+    ///     · wrapper-lite  → 本仓库已有的 wrapper-lite-v1 Release
+    ///     · wrapper-pkg   → 已打包进 App（assets/wrapper-pkg.zip，49MB）
+    /// ⚠️ 2026-10-24：Ubuntu 官方源经常超时，改用中科大镜像（实测 12MB/s），
+    ///   多源按顺序回退。
+    static let ubuntuMirrors = [
+        "https://mirrors.ustc.edu.cn/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img",
+        "https://mirrors.aliyun.com/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img",
+        "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img",
+    ]
+    static var ubuntuURL: String { ubuntuMirrors[0] }
+    static let limaVersion = "2.2.1"
+    static var limaURL: String {
+        "https://github.com/lima-vm/lima/releases/download/v\(limaVersion)/lima-\(limaVersion)-Darwin-arm64.tar.gz"
+    }
+    /// ⚠️ 2026-10-25：改用 wrapper-lite-v2（精简版 71MB）
+    ///   相比 v1：删 315MB 无用固件 + 补齐 27 个 Homebrew dylib（用户无需装 Homebrew）
+    ///   + 补上原先缺失的 data.img.template
+    static var wrapperLiteURL: String {
+        "https://github.com/\(runtimeRepo)/releases/download/wrapper-lite-v2/wrapper-lite-slim.zip"
+    }
+
     /// 下载单个运行时资产到指定路径（失败返回 false，不抛错）
     @discardableResult
     func downloadRuntimeAsset(_ name: String, to dest: URL, minBytes: Int64 = 1024) -> Bool {
@@ -74,11 +99,39 @@ final class VMInstaller {
         // 下载到 App 的 Resources/lima/ 下（可写性：用户级 Application Support 兜底）
         let destDir = resourcesDir ?? URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/AnniePlayer/lima")
+        // 从 lima 官方 Release 下载（tar.gz 里含 limactl）
+        guard let r = resourcesDir else { return nil }
         let dest = destDir.appendingPathComponent("limactl")
-        guard downloadRuntimeAsset("limactl", to: dest, minBytes: 1_000_000) else { return nil }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
-        self.limactlDownloaded = dest.path
-        return FileManager.default.isExecutableFile(atPath: dest.path) ? dest.path : nil
+        try? FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+        let tgz = destDir.appendingPathComponent("lima.tar.gz")
+        let url = Self.limaURL
+        log("下载 limactl: \(url)")
+        for attempt in 1...3 {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+            p.arguments = ["-fsSL", "--retry", "1", "--connect-timeout", "20",
+                           "--max-time", "600", "-o", tgz.path, url]
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            try? p.run(); p.waitUntilExit()
+            if FileManager.default.fileExists(atPath: tgz.path) {
+                // 解包取 limactl
+                let tar = Process()
+                tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+                tar.arguments = ["-xzf", tgz.path, "-C", destDir.path]
+                try? tar.run(); tar.waitUntilExit()
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+                    self.limactlDownloaded = dest.path
+                    log("limactl 下载完成")
+                    return dest.path
+                }
+            }
+            log("limactl 第 \(attempt) 次尝试失败")
+            usleep(1_500_000)
+        }
+        _ = r
+        return nil
     }
 
     /// 下载到的 limactl 路径（resourcesDir 找不到时用）
@@ -202,7 +255,7 @@ final class VMInstaller {
 
     /// ⚠️ 2026-10-24：自动下载 Ubuntu 镜像（断点续传 + 重试）
     private func downloadUbuntuImage(to path: String) -> Bool {
-        let url = "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+        let url = Self.ubuntuURL
         for attempt in 1...40 {
             log("下载镜像 第 \(attempt) 次尝试")
             let p = Process()

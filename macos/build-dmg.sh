@@ -76,65 +76,177 @@ echo "     版本: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionStri
 echo "     图标: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$APP/Contents/Info.plist")"
 
 echo ""
-echo "=== 3. 下载运行时依赖（大二进制，来自 Release 资产）==="
-# ⚠️ ubuntu.img(588MB) / limactl(31MB) / wrapper-lite(466MB) 不进 git，
-#    从固定 tag 的 prerelease 资产下载。本地可用环境变量覆盖为本地路径。
+echo "=== 3. 下载运行时依赖 ==="
+# ⚠️ 2026-10-24（优化上传体积）：
+#   原来需要把 ubuntu.img(588MB) + limactl(31MB) + wrapper-lite(83MB) + wrapper-pkg(49MB)
+#   全部作为 Release 资产上传（共 764MB），浏览器上传大文件经常失败。
+#   现在改为全部从**官方源**下载，只有 wrapper-pkg（自研，无公开源）走自己的 Release：
+#     · ubuntu.img    → Ubuntu 官方云镜像（cloud-images.ubuntu.com）
+#     · limactl      → lima 官方 GitHub Release
+#     · wrapper-lite → 本仓库已有的 wrapper-lite-v1 Release
+#     · wrapper-pkg  → 本仓库 mac-runtime-v1 Release（只有 49MB）
+#   本地有文件时优先用本地（开发者用），云端自动下载。
 RUNTIME_TAG="${MAC_RUNTIME_TAG:-mac-runtime-v1}"
 REPO="${GITHUB_REPOSITORY:-Zhou1019-1/AnniePlayer-LXversion}"
 RUNTIME_BASE="${MAC_RUNTIME_BASE:-https://github.com/$REPO/releases/download/$RUNTIME_TAG}"
+# ⚠️ 2026-10-24：Ubuntu 官方源经常超时（实测 30s ×4 次全超时）。
+#   改用中科大镜像（实测 12MB/s），多源按顺序回退。
+UBUNTU_MIRRORS=(
+  "https://mirrors.ustc.edu.cn/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img"
+  "https://mirrors.aliyun.com/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img"
+  "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+)
+UBUNTU_URL="${MAC_UBUNTU_URL:-}"
+LIMA_VER="${MAC_LIMA_VER:-2.2.1}"
+LIMA_URL="https://github.com/lima-vm/lima/releases/download/v${LIMA_VER}/lima-${LIMA_VER}-Darwin-arm64.tar.gz"
+# ⚠️ 2026-10-25：wrapper-lite-v2 = 精简版（71MB）
+#   相比 v1：
+#     · 删掉 315MB 无用 UEFI 固件（riscv/loongarch/arm32/x86-32）
+#     · 补齐 27 个 Homebrew dylib（capstone/gnutls/pixman/glib/usb/ssh...）
+#       → 用 install_name_tool 改成 @executable_path/../lib/，用户机器无需装 Homebrew
+#     · 补上原先缺失的 qemu/data.img.template（干净 ext4 64MB，DEV_TOKEN 为空）
+WRAPPER_LITE_URL="https://github.com/${REPO}/releases/download/wrapper-lite-v2/wrapper-lite-slim.zip"
 DEPS_OK=1
 
-fetch() { # $1=远程文件名 $2=目标路径
-  local url="$RUNTIME_BASE/$1" dest="$2"
-  if ! curl -fsSL --retry 3 --connect-timeout 20 -o "$dest" "$url"; then
-    echo "  ⚠️ 下载失败: $1（该组件将缺失，登录 Apple Music 时会不可用）"
-    return 1
-  fi
-  echo "  ✅ $1 ($(du -h "$dest" | cut -f1))"
-}
+mkdir -p "$APP/Contents/Resources/lima" "$APP/Contents/Resources/deps"
 
-# limactl
-mkdir -p "$APP/Contents/Resources/lima"
-if [ -f "$ROOT/assets/limactl" ]; then
+# ── limactl ──
+if [ -x "$ROOT/assets/limactl" ]; then
   cp "$ROOT/assets/limactl" "$APP/Contents/Resources/lima/" && echo "  ✅ limactl（本地）"
+elif command -v limactl >/dev/null; then
+  cp "$(command -v limactl)" "$APP/Contents/Resources/lima/limactl" && echo "  ✅ limactl（系统）"
 else
-  fetch "limactl" "$APP/Contents/Resources/lima/limactl" && chmod +x "$APP/Contents/Resources/lima/limactl" || DEPS_OK=0
+  TMP_TGZ="$BUILD/lima.tar.gz"
+  echo "  → 下载 limactl（lima v${LIMA_VER}，约 37MB）…"
+  if curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 -o "$TMP_TGZ" "$LIMA_URL"; then
+    tar -xzf "$TMP_TGZ" -C "$BUILD"
+    LIMA_BIN=$(find "$BUILD" -name limactl -type f | head -1)
+    if [ -n "$LIMA_BIN" ]; then
+      cp "$LIMA_BIN" "$APP/Contents/Resources/lima/limactl"
+      chmod +x "$APP/Contents/Resources/lima/limactl"
+      echo "  ✅ limactl（下载，$(du -h "$APP/Contents/Resources/lima/limactl" | cut -f1)）"
+    else
+      echo "  ⚠️ 压缩包里找不到 limactl"; DEPS_OK=0
+    fi
+  else
+    echo "  ⚠️ limactl 下载失败"; DEPS_OK=0
+  fi
 fi
 
-# ubuntu.img
+# ── ubuntu.img ──
 if [ -f "$ROOT/assets/ubuntu.img" ]; then
   cp "$ROOT/assets/ubuntu.img" "$APP/Contents/Resources/lima/" && echo "  ✅ ubuntu.img（本地）"
 else
-  fetch "ubuntu.img" "$APP/Contents/Resources/lima/ubuntu.img" || DEPS_OK=0
+  echo "  → 下载 Ubuntu 镜像（约 588MB）…"
+  IMG_DEST="$APP/Contents/Resources/lima/ubuntu.img"
+  IMG_OK=0
+  if [ -n "$UBUNTU_URL" ]; then
+    echo "    使用 MAC_UBUNTU_URL"
+    if curl -fSL --retry 2 --connect-timeout 30 --max-time 1800 -o "$IMG_DEST" "$UBUNTU_URL"; then IMG_OK=1; fi
+  else
+    for u in "${UBUNTU_MIRRORS[@]}"; do
+      echo "    尝试: $(echo "$u" | cut -d/ -f3)"
+      if curl -fSL --retry 1 --connect-timeout 20 --max-time 1800 -o "$IMG_DEST" "$u"; then
+        IMG_OK=1; break
+      fi
+      echo "    ✗ 该源失败，换下一个"
+      rm -f "$IMG_DEST"
+    done
+  fi
+  if [ "$IMG_OK" = "1" ] && [ -f "$IMG_DEST" ]; then
+    echo "  ✅ ubuntu.img（下载，$(du -h "$IMG_DEST" | cut -f1)）"
+  else
+    echo "  ⚠️ ubuntu.img 下载失败（App 首次登录时会自行重试）"; DEPS_OK=0
+  fi
 fi
 
-# lima yaml / am-login 包
+# ── lima yaml / am-login 部署包 ──
 [ -f "$ROOT/assets/annie-am-login.yaml" ] && cp "$ROOT/assets/annie-am-login.yaml" "$APP/Contents/Resources/lima/" || true
-[ -d "$ROOT/assets/am-login-package" ] && cp -R "$ROOT/assets/am-login-package" "$APP/Contents/Resources/lima/" || true
+[ -d "$ROOT/assets/am-login-package" ] && cp -R "$ROOT/assets/am-login-package" "$APP/Contents/Resources/lima/" 2>/dev/null || true
 
-# wrapper-lite（QEMU + wrapper-lite-qemu）
+# ── wrapper-lite（QEMU 运行时）──
 if [ -d "$ROOT/assets/wrapper-lite" ]; then
-  mkdir -p "$APP/Contents/Resources/deps"
   cp -R "$ROOT/assets/wrapper-lite" "$APP/Contents/Resources/deps/wrapper-lite"
   echo "  ✅ wrapper-lite（本地）"
 else
-  WRAP_TMP="$BUILD/wrapper-lite.zip"
-  if curl -fsSL --retry 3 --connect-timeout 20 -o "$WRAP_TMP" "$RUNTIME_BASE/wrapper-lite.zip"; then
-    mkdir -p "$APP/Contents/Resources/deps"
-    unzip -q "$WRAP_TMP" -d "$APP/Contents/Resources/deps/"
-    [ -d "$APP/Contents/Resources/deps/wrapper-lite" ] || mv "$APP/Contents/Resources/deps/unpacked" "$APP/Contents/Resources/deps/wrapper-lite" 2>/dev/null || true
-    echo "  ✅ wrapper-lite（下载）"
+  echo "  → 下载 wrapper-lite（v2 精简版，约 71MB）…"
+  TMP_W="$BUILD/wrapper-lite.zip"
+  WL_OK=0
+  if curl -fsSL --retry 2 --connect-timeout 30 --max-time 900 -o "$TMP_W" "$WRAPPER_LITE_URL"; then
+    rm -rf "$BUILD/wrapper-unzip"
+    unzip -q "$TMP_W" -d "$BUILD/wrapper-unzip"
+    SRC=$(find "$BUILD/wrapper-unzip" -maxdepth 3 -name wrapper-lite-qemu -type f | head -1)
+    if [ -n "$SRC" ]; then
+      SRC_DIR=$(dirname "$SRC")
+      rm -rf "$APP/Contents/Resources/deps/wrapper-lite"
+      mv "$SRC_DIR" "$APP/Contents/Resources/deps/wrapper-lite"
+      WL_OK=1
+      echo "  ✅ wrapper-lite（下载，$(du -sh "$APP/Contents/Resources/deps/wrapper-lite" | cut -f1)）"
+      # 校验关键文件齐全
+      for f in qemu/bin/qemu-system-x86_64 qemu/vmlinuz-lite-qemu qemu/lite-initramfs.cpio.gz qemu/data.img.template; do
+        [ -f "$APP/Contents/Resources/deps/wrapper-lite/$f" ] || { echo "    ⚠️ 缺少 $f"; WL_OK=0; }
+      done
+      [ "$WL_OK" = "1" ] && echo "    ✅ 关键文件齐全（QEMU/内核/initramfs/data.img.template）"
+      [ -d "$APP/Contents/Resources/deps/wrapper-lite/qemu/lib" ] && echo "    ✅ 已含 $(ls "$APP/Contents/Resources/deps/wrapper-lite/qemu/lib"/*.dylib 2>/dev/null | wc -l | tr -d ' ') 个动态库"
+    else
+      echo "  ⚠️ wrapper-lite.zip 结构异常（找不到 wrapper-lite-qemu）"
+    fi
   else
-    echo "  ⚠️ 下载失败: wrapper-lite.zip"
-    DEPS_OK=0
+    echo "  ⚠️ wrapper-lite 下载失败（App 首次登录时会自行重试）"
   fi
+  [ "$WL_OK" = "1" ] || DEPS_OK=0
 fi
-# data.img 不进包（登录后生成的运行时数据）
+# ⚠️ 只删运行时数据 data.img，保留 data.img.template（登录前会从它复制）
 rm -f "$APP/Contents/Resources/deps/wrapper-lite/qemu/data.img" 2>/dev/null || true
 
-[ "$DEPS_OK" = "1" ] && echo "  ✅ 运行时依赖齐全" || echo "  ⚠️ 部分依赖缺失（包体积会变小，登录功能不可用）"
+# ── wrapper-pkg（自研，无公开源）──
+# ⚠️ 2026-10-24：49MB，压缩后小于 100MB，直接进 git（assets/wrapper-pkg.zip），
+#   这样完全不需要 Release 资产，也不用浏览器上传大文件。
+WP_DEST="$APP/Contents/Resources/lima/am-login-package/wrapper-pkg"
+if [ -d "$ROOT/assets/am-login-package/wrapper-pkg" ]; then
+  mkdir -p "$(dirname "$WP_DEST")"
+  cp -R "$ROOT/assets/am-login-package/wrapper-pkg" "$WP_DEST"
+  echo "  ✅ wrapper-pkg（本地目录）"
+elif [ -f "$ROOT/assets/wrapper-pkg.zip" ]; then
+  mkdir -p "$(dirname "$WP_DEST")"
+  rm -rf "$BUILD/wp-unzip"
+  unzip -q "$ROOT/assets/wrapper-pkg.zip" -d "$BUILD/wp-unzip"
+  # ⚠️ 2026-10-25：ditto --keepParent 压出来的顶层目录名不一定是 wrapper-pkg，
+  #   用「含 Dockerfile 或 rootfs 的目录」来识别（更稳）。
+  SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 2 -type f -name Dockerfile | head -1 | xargs -I{} dirname {} 2>/dev/null)
+  if [ -z "$SRC_WP" ]; then
+    SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 2 -type d -name rootfs | head -1 | xargs -I{} dirname {} 2>/dev/null)
+  fi
+  if [ -z "$SRC_WP" ]; then
+    SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 1 -mindepth 1 -type d | head -1)
+  fi
+  if [ -n "$SRC_WP" ] && [ -d "$SRC_WP" ]; then
+    rm -rf "$WP_DEST"
+    mv "$SRC_WP" "$WP_DEST"
+    echo "  ✅ wrapper-pkg（git 内的 zip，$(du -sh "$WP_DEST" | cut -f1)）"
+  else
+    echo "  ⚠️ wrapper-pkg.zip 结构异常"; DEPS_OK=0
+  fi
+else
+  echo "  → 下载 wrapper-pkg（约 49MB）…"
+  TMP_WP="$BUILD/wrapper-pkg.zip"
+  if curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 -o "$TMP_WP" "$RUNTIME_BASE/wrapper-pkg.zip"; then
+    mkdir -p "$(dirname "$WP_DEST")"
+    unzip -q "$TMP_WP" -d "$BUILD/wp-unzip"
+    SRC_WP=$(find "$BUILD/wp-unzip" -maxdepth 1 -type d -name wrapper-pkg | head -1)
+    if [ -n "$SRC_WP" ]; then
+      mv "$SRC_WP" "$WP_DEST"
+      echo "  ✅ wrapper-pkg（下载，$(du -sh "$WP_DEST" | cut -f1)）"
+    else
+      echo "  ⚠️ wrapper-pkg.zip 结构异常"; DEPS_OK=0
+    fi
+  else
+    echo "  ⚠️ wrapper-pkg 下载失败"; DEPS_OK=0
+  fi
+fi
 
-echo ""
+[ "$DEPS_OK" = "1" ] && echo "  ✅ 运行时依赖齐全" || echo "  ⚠️ 部分依赖缺失（首次登录时会自行补下载）"
+
 echo "=== 4. 签名（ad-hoc）==="
 codesign --force --deep --sign - "$APP" 2>/dev/null && echo "  ✅ 已签名（ad-hoc）" || echo "  ⚠️ 签名失败（不影响本机使用）"
 codesign -v "$APP" 2>/dev/null && echo "  ✅ 签名校验通过" || true

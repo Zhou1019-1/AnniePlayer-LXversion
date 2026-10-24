@@ -24,6 +24,45 @@ let _dir = '';
 let _annieHs = null; // V4.6：安妮音源心跳参数（init 消息带入，挂 lxApi 供音源验证）
 const _runtimes = new Map(); // id -> {handler, info}
 
+/* ============================================================================
+ * V4.6.1：安妮独家音源「标识块」
+ * 脚本文件头连续的 `#@…` 明文本行即标识块，不参与混淆，由本宿主剥离后执行：
+ *     #@安妮音源 v6                                     ← 身份（tag + 版本），命中才算独家源
+ *     #@name …  #@description …  #@version …  #@author …  ← 展示信息
+ * 标识块不是合法 JS —— 任何不做剥离的宿主（洛雪等）解析即 SyntaxError，导入必失败。
+ * 洛雪类第三方源没有标识块 → 本函数原样返回，老路径一个字节都不动。
+ * ========================================================================== */
+const IDENTITY_PREFIX_RE = /^#@安妮音源(?:\s+(\S+))?\s*$/;
+const IDENTITY_SCAN_LINES = 12;
+
+/** 定位文件头标识块（容忍块内/块前空行）；返回 {start, end, tag, ver}，未命中 start=-1 */
+function findIdentityBlock(lines) {
+  let start = -1;
+  let end = -1;
+  let tag = '';
+  let ver = '';
+  const limit = Math.min(lines.length, IDENTITY_SCAN_LINES);
+  for (let i = 0; i < limit; i++) {
+    const line = lines[i].replace(/^\uFEFF/, '').trim();
+    if (!line) continue; // 空行：块前/块内都容忍
+    if (line.indexOf('#@') !== 0) break; // 首行非标识 → 块到此结束
+    if (start < 0) start = i;
+    end = i;
+    const m = IDENTITY_PREFIX_RE.exec(line);
+    if (m && !tag) { tag = '安妮音源'; ver = (m[1] || '').trim(); }
+  }
+  return { start, end, tag, ver };
+}
+
+/** 剥离标识块；无标识块时原样返回（洛雪源路径零改动） */
+function stripIdentityBlock(script) {
+  const lines = String(script || '').split(/\r?\n/);
+  const b = findIdentityBlock(lines);
+  if (b.start < 0) return { script, tag: '', ver: '', stripped: false };
+  const out = lines.slice(0, b.start).concat(lines.slice(b.end + 1));
+  return { script: out.join('\n'), tag: b.tag, ver: b.ver, stripped: true };
+}
+
 /* ---------------- 工具（与主进程原实现一致） ---------------- */
 function md5(s) {
   return crypto.createHash('md5').update(typeof s === 'string' ? Buffer.from(s, 'utf8') : s).digest('hex');
@@ -37,7 +76,7 @@ function aesEncrypt(data, mode, key, iv) {
 }
 
 /* ---------------- LX API 沙箱（与迁移前逐字段一致） ---------------- */
-function createSandbox(sourceId, scriptInfo) {
+function createSandbox(sourceId, scriptInfo, identity) {
   const state = { requestHandler: null, initedHandler: null };
   const EVENT_NAMES = {
     request: 'request',
@@ -70,7 +109,11 @@ function createSandbox(sourceId, scriptInfo) {
     currentScriptInfo: scriptInfo,
     /* V4.6：安妮播放器指纹——音源验证宿主身份用（洛雪无此字段） */
     __annieHost: true,
-    __annieHs: _annieHs, // 心跳参数（端口+密钥），安妮音源 V6 启动时验证
+    /* V4.6.1：握手参数（端口+密钥+身份）只注入「带标识块」的独家源；
+     * 洛雪类第三方源拿到的是 undefined —— 与改造前一致，行为零变化。 */
+    __annieHs: identity
+      ? { port: (_annieHs && _annieHs.port) || 0, key: (_annieHs && _annieHs.key) || '', tag: identity.tag, ver: identity.ver }
+      : undefined,
     on(eventName, handler) {
       if (eventName === EVENT_NAMES.request) state.requestHandler = handler;
       else if (eventName === EVENT_NAMES.inited) state.initedHandler = handler;
@@ -127,9 +170,12 @@ function createSandbox(sourceId, scriptInfo) {
 /* ---------------- 运行时管理 ---------------- */
 function loadRuntime(entry) {
   const file = path.join(_dir, entry.id + '.js');
-  const script = fs.readFileSync(file, 'utf8');
+  const raw = fs.readFileSync(file, 'utf8');
+  // V4.6.1：剥掉文件头标识块（独家源）；无标识块 = 洛雪类第三方源，原样执行
+  const ident = stripIdentityBlock(raw);
+  const script = ident.script;
   const info = { name: entry.name, version: entry.version, description: entry.description, author: entry.author };
-  const { sandbox, state } = createSandbox(entry.id, info);
+  const { sandbox, state } = createSandbox(entry.id, info, ident.stripped ? { tag: ident.tag, ver: ident.ver } : null);
   try {
     // V4.0.3 安全加固：codeGeneration 全关——禁用 eval / Function 构造器 / WebAssembly，
     // 堵住「宿主函数 .constructor('return process')()」经典逃逸链。
@@ -147,7 +193,7 @@ function loadRuntime(entry) {
     _runtimes.delete(entry.id);
     throw new Error('音源脚本未注册请求处理器 (lx.on("request", ...))');
   }
-  _runtimes.set(entry.id, { handler: state.requestHandler, info });
+  _runtimes.set(entry.id, { handler: state.requestHandler, info, exclusive: !!ident.stripped, tag: ident.tag, ver: ident.ver });
   if (state.initedHandler) {
     try { Promise.resolve(state.initedHandler({ status: true, sources: {} })).catch(() => { }); } catch { }
   }

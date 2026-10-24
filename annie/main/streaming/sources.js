@@ -81,9 +81,12 @@ function scheduleRestart() {
         .then(() => {
           // 重建后重新加载所有启用音源（init 消息驱动 loaded 回执）
           // V4.6：带安妮音源心跳参数（仅安妮音源 V6 用，其他音源无感）
-          const hs = require('../annieSourceHandshake').getHandshake();
-          postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled), annieHs: hs });
-          return reloadAll();
+          // V4.6.1：先等心跳端点就绪，避免插件心跳撞空（与 init 同因）
+          const hsModule = require('../annieSourceHandshake');
+          return hsModule.ready().then(() => {
+            postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled), annieHs: hsModule.getHandshake() });
+            return reloadAll();
+          });
         })
         .then(() => {
           _restarting = false;
@@ -240,8 +243,13 @@ function init(app) {
   // 启动沙箱 Worker 并异步加载所有启用的音源（不再阻塞主进程）
   startWorker();
   // V4.6：带安妮音源心跳参数
-  const hs = require('../annieSourceHandshake').getHandshake();
-  postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled), annieHs: hs });
+  // V4.6.1：必须等心跳端点真正 listen 完成再递参数——否则插件加载后立刻 POST 会
+  // 撞上「端点尚未就绪」→ ECONNREFUSED → 心跳假失败（实测踩过）
+  const hsModule = require('../annieSourceHandshake');
+  hsModule.getHandshake();
+  hsModule.ready().then(() => {
+    postToWorker({ type: 'init', dir: _dir, entries: _registry.filter((e) => e.enabled), annieHs: hsModule.getHandshake() });
+  });
 }
 
 function list() {

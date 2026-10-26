@@ -55,7 +55,7 @@ jobs:
       - name: 列出产物（核对用）
         shell: bash
         run: |
-          find macos -maxdepth 3 \( -name '*.dmg' -o -name '*.zip' \) -exec ls -lh {} \;
+          find macos/dist -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' \) -exec ls -lh {} \;
 
       - name: 发布到 GitHub Release（prerelease，勿改）
         uses: softprops/action-gh-release@v2
@@ -64,11 +64,11 @@ jobs:
           name: 安妮播放器 macOS 版 V${{ env.RELVER }}
           body_path: release-notes-mac.md
           prerelease: true   # ⚠️ 硬规则：防止抢 releases/latest 指针（见顶部注释）
+          # ⚠️ 只收 dist/ 下 build-dmg.sh 的产物。不要加 macos/build/*.zip——
+          # build-dmg.sh 会把下载的 wrapper-lite.zip 临时留在 build/，glob 宽了会误传（已踩）。
           files: |
             macos/dist/*.dmg
             macos/dist/*.zip
-            macos/build/*.dmg
-            macos/build/*.zip
 
 # ============================================================================
 # 备注：ubuntu.img（588MB）与 limactl（31MB）是 AM 解密 VM 的运行时依赖，

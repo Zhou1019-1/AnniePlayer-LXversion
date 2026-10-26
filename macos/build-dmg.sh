@@ -253,7 +253,7 @@ codesign -v "$APP" 2>/dev/null && echo "  ✅ 签名校验通过" || true
 
 echo ""
 echo "=== 5. 打包产物 ==="
-SAFE_VER=$(echo "$VERSION" | tr -cd '0-9A-Za-z.-')
+SAFE_VER=$(echo "$VERSION" | sed -e 's/^mac-v//' -e 's/^v//' | tr -cd '0-9A-Za-z.-')
 
 # ZIP（含安装说明）
 README_TMP="$BUILD/README.txt"

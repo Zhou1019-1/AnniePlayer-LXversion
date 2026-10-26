@@ -64,11 +64,11 @@ jobs:
           name: 安妮播放器 macOS 版 V${{ env.RELVER }}
           body_path: release-notes-mac.md
           prerelease: true   # ⚠️ 硬规则：防止抢 releases/latest 指针（见顶部注释）
-          # ⚠️ 只收 dist/ 下 build-dmg.sh 的产物。不要加 macos/build/*.zip——
-          # build-dmg.sh 会把下载的 wrapper-lite.zip 临时留在 build/，glob 宽了会误传（已踩）。
+          # ⚠️ 精确文件名收集（不用 *.zip 通配）——build-dmg.sh 会把下载的
+          # wrapper-lite.zip 临时留在 build/，宽 glob 曾把 Windows 的包误传上 mac Release（已踩）。
           files: |
-            macos/dist/*.dmg
-            macos/dist/*.zip
+            macos/dist/annie-player-macos-arm64-*.zip
+            macos/dist/安妮播放器-*-离线版.dmg
 
 # ============================================================================
 # 备注：ubuntu.img（588MB）与 limactl（31MB）是 AM 解密 VM 的运行时依赖，

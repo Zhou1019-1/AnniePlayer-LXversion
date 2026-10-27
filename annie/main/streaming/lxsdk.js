@@ -89,14 +89,18 @@ function normalize(source, info) {
   };
 }
 
-/** 待试音质序列：从请求档位开始只向下回退（flac24bit → flac → 320k → 128k） */
+/** 待试音质序列：从请求档位开始只向下回退（flac24bit → flac → 320k → 128k）
+ *  V4.6.2：用户所选档始终保留——搜索结果的 meta.types 由平台 size_hires 等字段推导，
+ *  不可靠（平台返回 0/缺失不代表真无该音质），曾致「选 Hi-Res 实际从 flac 起播」。
+ *  现在只对「降级档」按 types 过滤；所选档失败由音源自带降级链兜底。 */
 function qualityCandidates(quality, meta) {
   const want = ANNIE_TO_TYPE[quality] || 'flac';
   const startIdx = Math.max(0, QUALITY_ORDER.indexOf(want));
   const downChain = QUALITY_ORDER.slice(startIdx);
+  if (downChain.length <= 1) return downChain;
   const avail = new Set((meta.types || []).map((t) => t.type));
-  const filtered = downChain.filter((t) => !avail.size || avail.has(t));
-  return filtered.length ? filtered : downChain;
+  const rest = downChain.slice(1).filter((t) => !avail.size || avail.has(t));
+  return [downChain[0], ...rest];
 }
 
 /* ---------------- 张冠李戴拦截（tx） ---------------- */

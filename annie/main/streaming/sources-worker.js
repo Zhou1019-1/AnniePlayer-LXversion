@@ -168,7 +168,7 @@ function createSandbox(sourceId, scriptInfo, identity) {
 }
 
 /* ---------------- 运行时管理 ---------------- */
-function loadRuntime(entry) {
+async function loadRuntime(entry) {
   const file = path.join(_dir, entry.id + '.js');
   const raw = fs.readFileSync(file, 'utf8');
   // V4.6.1：剥掉文件头标识块（独家源）；无标识块 = 洛雪类第三方源，原样执行
@@ -188,6 +188,13 @@ function loadRuntime(entry) {
   } catch (e) {
     _runtimes.delete(entry.id);
     throw new Error(`音源脚本执行失败: ${e.message}`);
+  }
+  // 注册可能是异步的（插件先把心跳 await 完再 on(request)，如「章鱼音源特供版」）：
+  // 给最多 2s 的窗口轮询，既兼容同步注册，也兼容先握手后注册的写法。
+  let waited = 0;
+  while (typeof state.requestHandler !== 'function' && waited < 2000) {
+    await new Promise((r) => setTimeout(r, 50));
+    waited += 50;
   }
   if (typeof state.requestHandler !== 'function') {
     _runtimes.delete(entry.id);
@@ -227,14 +234,14 @@ function handleRequestMessage(msg) {
     .catch((err) => post({ type: 'result', jobId: msg.jobId, ok: false, error: String((err && err.message) || err) }));
 }
 
-process.on('message', (msg) => {
+process.on('message', async (msg) => {
   switch (msg.type) {
     case 'init':
       _dir = msg.dir;
       if (msg.annieHs) _annieHs = msg.annieHs; // V4.6：心跳参数（端口+密钥）
       for (const entry of msg.entries) {
         try {
-          loadRuntime(entry);
+          await loadRuntime(entry);
           post({ type: 'loaded', id: entry.id, ok: true });
         } catch (e) {
           post({ type: 'loaded', id: entry.id, ok: false, error: String(e.message || e) });
@@ -243,7 +250,7 @@ process.on('message', (msg) => {
       break;
     case 'load':
       try {
-        loadRuntime(msg.entry);
+        await loadRuntime(msg.entry);
         post({ type: 'loaded', id: msg.entry.id, ok: true });
       } catch (e) {
         post({ type: 'loaded', id: msg.entry.id, ok: false, error: String(e.message || e) });

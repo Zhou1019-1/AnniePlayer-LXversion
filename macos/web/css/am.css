@@ -1,0 +1,3616 @@
+/* ================= Apple Music 风格主题（主题 C，与粒子舞台/FB2K 并列） =================
+ * 所有规则限定在 html[data-theme="am"] 下，与其余主题完全隔离。
+ * 设计：Apple Music for Windows（Fluent/Liquid Glass）——
+ *   磨砂玻璃（高斯模糊+饱和+半透明）、封面氛围大模糊背景、圆角卡片、#fa2d55 强调色；
+ * 亮/暗双主题：#am-root.am-light 切换 CSS 变量；
+ * 布局：顶部传输栏(56px,磨砂) → 主体[侧栏(240px,磨砂) | 内容 | 歌词面板(360px,磨砂,可显隐)]。
+ * AM 主题自带标题栏（拖拽区+窗口按钮），隐藏旧 #titlebar。 */
+
+/* ---------- 主题显隐总开关 ---------- */
+#am-root { display: none; }
+html[data-theme="am"] #am-root {
+  display: flex; flex-direction: column;
+  position: fixed; inset: 0; z-index: 40;
+  overflow: hidden;
+}
+html[data-theme="am"] #layout,
+html[data-theme="am"] #viz-bar,
+html[data-theme="am"] #bottom-bar,
+html[data-theme="am"] #level-dock,
+html[data-theme="am"] #tool-banner { display: none !important; }
+html[data-theme="am"] #titlebar { display: none !important; }
+
+/* V3.5.17：实时频谱可视化条（贴底细条，引擎 32 频段驱动）
+   ⚠️ 2026-10-21：彻底隐藏（display:none）。
+      它虽然不能点了，但仍占 22px 高度，导致窗口底部留一条空档、全屏效果不完整。
+      用户不需要这条频谱，直接不渲染。 */
+.am-vizbar { display: none !important; }
+
+/* ---------- 设计变量（默认暗色；.am-light 覆盖为亮色） ---------- */
+#am-root {
+  /* ⚠️ 2026-10-22 统一变速（缓动）曲线（用户反馈「匀速太生硬」）：
+     原来大量过渡用默认的 ease 或纯 linear，视觉上偏机械。
+     这里定义一套有「加速—减速」质感的曲线，按场景选用：
+       --am-ease-out     标准出场（快起慢停，最常用）
+       --am-ease-in-out  对称（用于来回变化的属性，如 width）
+       --am-ease-spring  带轻微回弹（用于强调操作，如按钮按下、封面弹出）
+       --am-ease-snap    极快收尾（用于 hover 这类高频小变化）
+       --am-ease-emphasis 用于出现/消失的强动效
+     用法：transition: opacity .3s var(--am-ease-out); */
+  --am-ease-out: cubic-bezier(.22, 1, .36, 1);
+  --am-ease-in-out: cubic-bezier(.45, 0, .25, 1);
+  --am-ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --am-ease-snap: cubic-bezier(.2, .8, .3, 1);
+  --am-ease-emphasis: cubic-bezier(.16, 1, .3, 1);
+  /* 时长梯度 */
+  --am-t-fast: .16s;
+  --am-t-base: .26s;
+  --am-t-slow: .38s;
+
+  --am-accent: #fa2d55;
+  --am-accent-hover: #fb4a6e;
+  --am-accent-ink: #fff;
+  --am-bg: #1e1e1e;
+  --am-bg-elev: #262626;
+  --am-text: #f5f5f7;
+  --am-text-2: rgba(245, 245, 247, .56);
+  --am-text-3: rgba(245, 245, 247, .34);
+  --am-sep: rgba(255, 255, 255, .08);
+  /* ⚠️ 2026-10-22：本 App 的 WKWebView 不渲染 backdrop-filter，
+     原来的 72%/62% 半透明在无模糊时会让内容透出来显得很脏。
+     提高不透明度到 94%/88%，再用下方 .am-glass-surface 的渐变+阴影模拟磨砂层次。 */
+  --am-glass: rgba(30, 30, 30, .72);
+  --am-glass-2: rgba(38, 38, 38, .62);
+  --am-hover: rgba(255, 255, 255, .06);
+  --am-active: rgba(255, 255, 255, .10);
+  --am-row-cur: rgba(250, 45, 85, .14);
+  --am-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+  --am-blur: blur(48px) saturate(1.8);
+  --am-font: -apple-system, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  color: var(--am-text);
+  font: 13px/1.5 var(--am-font);
+  background: var(--am-bg);
+  -webkit-font-smoothing: antialiased;
+}
+#am-root.am-light {
+  /* 柔和暖白：避免纯白刺眼，同时保证正文/次级文字对比度 */
+  /* ⚠️ 2026-10-21 加深（用户反馈「浅色界面文字太浅、和背景融合」）：
+     原 text-2 等效 #6b6a66（4.6:1，勉强）、text-3 等效 #a09f9b（2.4:1，太低）。
+     现在 text-2 提到 6.9:1、text-3 提到 4.6:1，都过 WCAG AA。 */
+  --am-bg: #f6f4ef;
+  --am-bg-elev: #fbfaf7;
+  --am-text: #14130f;
+  --am-text-2: rgba(20, 19, 15, .78);
+  --am-text-3: rgba(20, 19, 15, .58);
+  --am-sep: rgba(70, 58, 38, .18);
+  --am-glass: rgba(246, 244, 239, .78);
+  --am-glass-2: rgba(251, 250, 247, .72);
+  --am-hover: rgba(88, 70, 42, .06);
+  --am-active: rgba(88, 70, 42, .10);
+  --am-row-cur: rgba(250, 45, 85, .11);
+  --am-shadow: 0 12px 34px rgba(70, 58, 38, .18);
+}
+
+/* ---------- 封面氛围大模糊背景（图 1 风格） ---------- */
+#am-root::before {
+  content: ''; position: absolute; inset: -8%;
+  background-image: var(--am-bgimage, none);
+  background-size: cover; background-position: center;
+  filter: blur(90px) saturate(1.5) brightness(.42);
+  transform: scale(1.1);
+  transition: opacity .6s var(--am-ease-out);
+  pointer-events: none;
+}
+#am-root.am-light::before { filter: blur(90px) saturate(1.35) brightness(1.0); opacity: .42; }
+#am-root.am-nobg::before { opacity: 0; }
+
+/* ---------- V4.4：自定义壁纸（全局，wallpaper.js 注入 --wp-img；壁纸优先替代封面氛围） ---------- */
+html.wp-on #am-root::before {
+  background-image: var(--wp-img);
+  filter: blur(var(--wp-blur, 40px)) saturate(1.15) brightness(calc(1 - var(--wp-dim, .3)));
+  opacity: .55;
+}
+html.wp-on #am-root.am-nobg::before { opacity: .55; }        /* 压过「无封面隐藏氛围」规则 */
+html.wp-on #am-root.am-bgout::before { opacity: .55; }       /* 切歌 dip-fade 不对壁纸生效 */
+
+/* ---------- 顶部传输栏（磨砂） ---------- */
+.am-topbar {
+  /* ⚠️ 2026-10-21 v4（铺满模式）：
+     - 高度 76px：用户要的「更大上端面积」
+     - 左侧 padding 84px：给 macOS 红绿灯让位（fullSizeContentView 下红绿灯浮在网页上）
+     - 这样播放器图标整体右移，视觉上就是「窗口真全屏」 */
+  flex: none; height: 84px; display: flex; align-items: center; gap: 16px;
+  padding: 0 20px 0 84px; position: relative; z-index: 3;
+  background: var(--am-glass);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  border-bottom: 1px solid var(--am-sep);
+  /* ⚠️ 2026-10-22 去掉 -webkit-app-region: drag（用户反馈「进度条无法交互」）：
+     WKWebView 里 app-region:drag 区域会**吞掉所有鼠标事件**交给窗口管理器，
+     即使子元素设了 no-drag，父容器仍在 drag 区内时事件仍可能丢失。
+     而且我们已经用 Swift 的原生 DragBarView 处理窗口拖动，网页里压根不需要 drag 区。 */
+  -webkit-app-region: no-drag;
+}
+/* ⚠️ 顶栏 SVG 图标（2026-10-21 v3）：用户要求「除播放控制外全部缩小一档」
+   —— 工具按钮（音量/EQ/循环/全屏/信息/设置/返回）图标 24 → 19px；
+   播放控制（上一曲/暂停/下一曲）保持 30px 不受影响。 */
+.am-topbar .am-tbtn > svg { width: 19px !important; height: 19px !important; }
+.am-topbar .am-transport .am-tbtn > svg { width: 30px !important; height: 30px !important; }
+/* V4.4：AM 顶栏置底（设置中心「AM 界面」页开关）——播放控制/进度/工具按钮整条移到窗口下方；
+ * vizbar 频谱条保持贴在顶栏上方；边框从上分割线换成下分割线 */
+#am-root.am-topbar-bottom .am-topbar { order: 99; border-bottom: 0; border-top: 1px solid var(--am-sep); }
+#am-root.am-topbar-bottom .am-vizbar { order: 98; }
+/* 窗口三键（— ▢ ✕）不随顶栏下沉，钉回右上角（操作直觉：关窗永远右上）。
+ * 注意：顶栏 backdrop-filter 会创建包含块使 fixed 失效，故置底时 JS 会把 .am-winbtns
+ * 物理移为 #am-root 直接子节点（settings.js applyInterface）；此处补挂出后的 no-drag。 */
+#am-root.am-topbar-bottom .am-winbtns {
+  position: fixed; top: 0; right: 0; z-index: 60;
+  padding: 6px 10px 8px 20px; -webkit-app-region: no-drag;
+  background: var(--am-glass-2); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-radius: 0 0 0 14px; /* 左下圆角玻璃角标，避免与内容区控件视觉打架 */
+}
+#am-root.am-topbar-bottom .am-winbtns button { -webkit-app-region: no-drag; }
+/* ⚠️ 2026-10-22：原生 DragBarView 已处理窗口拖动，这里不再设 drag 区。 */
+.am-transport { display: flex; align-items: center; gap: 8px; }
+.am-tbtn {
+  border: 0; background: transparent; color: var(--am-text-2); cursor: pointer;
+  /* 按钮基础尺寸（工具按钮用）：50 → 40px（2026-10-21 v3 缩小一档） */
+  width: 40px; height: 40px; border-radius: 10px; font-size: 20px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s, transform .1s var(--am-ease-out);
+}
+.am-tbtn:hover { background: var(--am-hover); color: var(--am-text); }
+.am-tbtn:active { transform: scale(.92); transition-duration: .08s; }
+.am-tbtn.on { color: var(--am-accent); }
+.am-tbtn.am-play { width: 60px; height: 60px; font-size: 32px; color: var(--am-text); }
+/* 播放控制区（上一曲/暂停/下一曲）保持大尺寸 */
+.am-transport .am-tbtn { width: 50px; height: 50px; font-size: 26px; border-radius: 12px; }
+
+/* 中央：迷你封面 + 标题 + 音质徽标；下行：当前时间 · 细进度 · 剩余时间 */
+.am-np {
+  /* ⚠️ 2026-10-22：去掉 margin:auto（这是「进度条宽度塌成 0 / 跑到窗口外」的根因）。
+     flex:1 已经能占满剩余空间，再加 margin:auto 会让浏览器把
+     剩余空间先分给 margin（542px），然后 flex 只能拿到 0 宽度。
+     布局全部交给 #am-root .am-topbar .am-np 那条规则控制。 */
+  flex: 1; min-width: 0; max-width: 440px;
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  position: relative; cursor: default;
+}
+.am-np-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.am-np-cover {
+  width: 38px; height: 38px; border-radius: 6px; object-fit: cover; flex: none;
+  background: var(--am-bg-elev); box-shadow: 0 2px 10px rgba(0, 0, 0, .3);
+}
+.am-np-cover:not([src]) { visibility: hidden; }
+.am-np-text { min-width: 0; flex: 1; }
+.am-np-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-np-sub { font-size: 11px; color: var(--am-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-badge {
+  flex: none; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  color: var(--am-accent); border: 1px solid var(--am-accent); border-radius: 5px;
+  padding: 2px 6px; opacity: .9; white-space: nowrap;
+}
+/* V4.4：流媒体命中本地播放缓存——音质徽标变绿带圆点（主界面药丸 / 沉浸 / 迷你纯文本） */
+.am-badge.am-fmt-cache { color: #33c98f; border-color: #33c98f; }
+.am-badge.am-fmt-cache::before {
+  content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor; margin-right: 4px; vertical-align: 1px;
+}
+.am-imm-fmt.am-fmt-cache, .am-mini-fmt.am-fmt-cache { color: #4ad295; }
+.am-imm-fmt.am-fmt-cache::before, .am-mini-fmt.am-fmt-cache::before {
+  content: '●'; font-size: 8px; margin-right: 4px; vertical-align: 1px;
+}
+.am-np-progrow { display: flex; align-items: center; gap: 8px; }
+.am-np-time {
+  flex: none; width: 40px; font-size: 10px; color: var(--am-text-2);
+  font-variant-numeric: tabular-nums; text-align: center; user-select: none;
+}
+.am-np-prog {
+  flex: 1; height: 4px; border-radius: 2px;
+  background: var(--am-sep);
+  cursor: pointer; position: relative;
+  /* ⚠️ 2026-10-22 去掉 overflow:hidden（用户反馈「进度条点了完全没变化」）：
+     视觉上只有 4px 高，鼠标极难精准点中。
+     这里用 ::before 伪元素向上/下各扩 8px 做出 20px 的透明点击热区，
+     视觉上仍然是细条，但随便点都能命中。 */
+  overflow: visible;
+}
+/* 透明点击热区：视觉 4px，实际可点 20px */
+.am-np-prog::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%; transform: translateY(-50%);
+  height: 20px;
+  background: transparent;
+  /* 伪元素比本体大，天然扩大命中范围 */
+}
+/* 填充条（自己裁剪圆角，因为父级不再 overflow:hidden） */
+.am-np-prog i {
+  display: block; height: 100%; width: 0;
+  background: var(--am-text-2); border-radius: 2px;
+  position: relative; z-index: 1;
+  pointer-events: none;
+}
+.am-np-prog:hover i { background: var(--am-accent); }
+/* hover 时进度条加粗一点，给出「可交互」的视觉反馈 */
+.am-np-prog:hover { height: 6px; transition: height .12s var(--am-ease-out); }
+.am-np-prog.hide-scrollbar { }
+/* V4.4：进度条 hover 时间预览气泡（三处进度行共用；挂进度行容器，相对其定位） */
+.am-np-progrow, .am-imm-prog { position: relative; }
+.am-prog-tip {
+  position: absolute; bottom: calc(100% + 7px); transform: translateX(-50%);
+  z-index: 20; pointer-events: none; white-space: nowrap;
+  padding: 3px 8px; border-radius: 6px;
+  background: rgba(20,20,24,.92); color: #fff; font-size: 11px; font-style: normal;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+.am-prog-tip::after {
+  content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  border: 4px solid transparent; border-top-color: rgba(20,20,24,.92);
+}
+
+.am-tb-right { display: flex; align-items: center; gap: 6px; }
+.am-vol { display: flex; align-items: center; gap: 6px; }
+.am-vol input[type="range"] {
+  -webkit-appearance: none; width: 84px; height: 4px; border-radius: 2px;
+  background: var(--am-sep); outline: none; cursor: pointer;
+}
+.am-vol input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--am-text); box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+.am-winbtns { display: flex; gap: 2px; margin-left: 4px; }
+.am-winbtns .am-tbtn { border-radius: 6px; width: 40px; font-size: 13px; }
+.am-winbtns .am-close:hover { background: #e81123; color: #fff; }
+
+/* ---------- 主体三栏 ---------- */
+.am-body { flex: 1; display: flex; min-height: 0; position: relative; z-index: 2; }
+
+/* 侧栏（磨砂 Liquid Glass） */
+.am-side {
+  flex: none; width: 240px; display: flex; flex-direction: column;
+  background: var(--am-glass-2);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  border-right: 1px solid var(--am-sep);
+  padding: 8px; overflow-y: auto;
+}
+.am-search {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  background: var(--am-hover); border-radius: 8px; padding: 6px 10px; margin-top: auto;
+}
+.am-search input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  color: var(--am-text); font: 13px var(--am-font);
+}
+.am-search input::placeholder { color: var(--am-text-3); }
+.am-side-h {
+  flex: none; font-size: 11px; font-weight: 600; color: var(--am-text-3);
+  padding: 10px 10px 4px; letter-spacing: .02em;
+}
+.am-nav {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: transparent; color: var(--am-text); cursor: pointer;
+  padding: 7px 10px; border-radius: 8px; font: 13px var(--am-font); text-align: left;
+  transition: background .15s var(--am-ease-out);
+}
+.am-nav:hover { background: var(--am-hover); }
+.am-nav.cur { background: var(--am-active); font-weight: 600; }
+.am-nav .am-nav-ico { width: 18px; text-align: center; flex: none; opacity: .8; }
+.am-nav .am-nav-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-nav .am-nav-del {
+  flex: none; opacity: 0; border: 0; background: transparent; color: var(--am-text-3);
+  cursor: pointer; font-size: 14px; padding: 0 4px; border-radius: 4px;
+}
+.am-nav:hover .am-nav-del { opacity: 1; }
+.am-nav .am-nav-del:hover { color: var(--am-accent); }
+.am-nav.am-new { color: var(--am-text-2); }
+/* V4.3.26：侧栏歌单长按拖拽排序 */
+.am-nav.pl-drag-src { opacity: .45; cursor: grabbing; background: var(--am-hover); }
+.am-nav.pl-drop-before { box-shadow: inset 0 2px 0 0 var(--am-accent); }
+.am-nav.pl-drop-after { box-shadow: inset 0 -2px 0 0 var(--am-accent); }
+/* V4.4：拖外部文件到侧栏歌单的落点高亮 */
+.am-nav.am-nav-drop { outline: 2px dashed var(--am-accent); outline-offset: -2px; }
+/* V4.4.1：文件夹拖到侧栏空白处 → 整列高亮提示"放这里以文件夹名建歌单" */
+.am-side.am-side-drop { outline: 2px dashed rgba(250,201,0,.7); outline-offset: -3px; background: rgba(250,201,0,.06); }
+
+/* 内容区 */
+/* ⚠️ 2026-10-21：右侧 padding 加大（用户反馈「下载按钮被挡住」）。
+   原因：内容区溢出时右侧出现滚动条（占 12px），加上歌词面板的折叠箭头
+   绝对定位在 right:0/right:360px 处，会盖住表格最后一列。
+   这里给内容区额外右侧安全区，并把表格自身的内边距减回来。 */
+/* ⚠️ 2026-10-22：内容区顶部/底部加渐隐遮罩，模拟磨砂过渡
+   （backdrop-filter 在本 WebView 不生效，用 mask 做等效视觉） */
+.am-content {
+  flex: 1; min-width: 0; overflow-y: auto; padding: 20px 34px 40px;
+  overflow-anchor: none; scrollbar-gutter: stable;
+  /* 禁滚动锚定：窗口化重建表格时浏览器异步挪 scrollTop，与可视区脱节（切歌后列表空白） */ }
+.am-view-h { font-size: 26px; font-weight: 700; margin: 4px 0 16px; letter-spacing: -.01em; }
+/* V4.3.15：歌曲视图标题行（标题 + 排序下拉，样式对齐 .am-st-quality） */
+.am-view-head { display: flex; align-items: baseline; gap: 16px; }
+.am-view-head .am-view-h { flex: 1; min-width: 0; }
+.am-sort-sel {
+  flex: none; border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  border-radius: 8px; padding: 5px 8px; font: 12px var(--am-font); outline: none; cursor: pointer;
+  margin-bottom: 16px;
+}
+/* V4.3.22：视图内搜索框（歌曲/专辑/喜爱歌曲头部，样式对齐 .am-sort-sel） */
+.am-view-search {
+  flex: none; width: 200px; border: 1px solid var(--am-sep); outline: none;
+  background: var(--am-glass-2); color: var(--am-text);
+  border-radius: 8px; padding: 5px 10px; font: 12px var(--am-font);
+  margin-bottom: 16px; transition: border-color .15s var(--am-ease-out);
+}
+.am-view-search:focus { border-color: var(--am-accent); }
+.am-view-search::placeholder { color: var(--am-text-3); }
+
+/* V4.3.22：下载情况视图（五标签 + 任务表格，洛雪式） */
+.am-dlt-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.am-dlt-tabs { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+.am-dlt-bar .am-btn { margin-left: auto; }
+.am-dlt-empty { padding: 90px 0; text-align: center; color: var(--am-text-3); font-size: 15px; }
+.am-dlt-table td { vertical-align: middle; }
+.am-dlt-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.am-dlt-sub { font-size: 11px; color: var(--am-text-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.am-dlt-prog { display: flex; align-items: center; gap: 8px; }
+.am-dlt-prog-track { flex: 1; height: 6px; border-radius: 3px; background: var(--am-sep); overflow: hidden; }
+.am-dlt-prog-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--am-accent), color-mix(in srgb, var(--am-accent) 60%, #fff)); transition: width .3s var(--am-ease-in-out); }
+.am-dlt-pct { font-size: 11px; color: var(--am-text-2); width: 38px; text-align: right; flex: none; }
+.am-dlt-err { color: #e5534b; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; display: inline-block; vertical-align: middle; }
+.am-dlt-ops { display: flex; gap: 2px; }
+
+/* V4.3.22：在线音乐多选模式 */
+.am-ms-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.am-ms-bar.am-ms-float {
+  position: sticky; top: -28px; z-index: 8; margin: -28px -28px 10px; padding: 10px 28px; /* V4.4.9：贴顶不留缝，与 .am-content padding-top 28 对齐 */
+  background: var(--am-glass, rgba(28,30,38,.88));
+  border-bottom: 1px solid var(--am-sep);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+}
+.am-ms-count { margin-left: auto; font-size: 12px; color: var(--am-text-2); }
+.am-ms-ck { accent-color: var(--am-accent); width: 15px; height: 15px; cursor: pointer; vertical-align: middle; }
+.am-tr.sel { background: color-mix(in srgb, var(--am-accent) 14%, transparent); }
+.am-tr.sel:hover { background: color-mix(in srgb, var(--am-accent) 20%, transparent); }
+/* V4.4：顶部多选工具条歌单菜单（独立于 R.pop，避免全局外点逻辑；需要实色背景防内容穿透） */
+.am-ms-pl-menu {
+  background: var(--am-panel, rgba(28, 30, 38, .96));
+  color: var(--am-text, #f2f3f5);
+  border: 1px solid var(--am-line, rgba(255,255,255,.16));
+  border-radius: 9px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.32);
+  backdrop-filter: blur(18px);
+  padding: 6px;
+}
+.am-ms-pl-menu .am-pop-head { padding: 7px 10px; white-space: nowrap; }
+.am-ms-pl-menu .am-pop-item { display: block; width: 100%; text-align: left; white-space: nowrap; }
+.am-ms-pl-menu .am-pop-hint { padding: 8px 10px; white-space: nowrap; color: var(--am-text-2); }
+
+/* V4.4：框选选框（fixed 定位，client 坐标，指针穿透） */
+.am-marquee {
+  position: fixed; z-index: 999; pointer-events: none;
+  border: 1px solid var(--am-accent);
+  background: color-mix(in srgb, var(--am-accent) 12%, transparent);
+  border-radius: 2px;
+}
+
+/* V4.3.22：删除确认弹窗 + 危险按钮 */
+.am-btn-danger { color: #e5534b !important; border-color: color-mix(in srgb, #e5534b 45%, transparent) !important; }
+.am-btn-danger:hover { background: color-mix(in srgb, #e5534b 14%, transparent) !important; }
+.am-del-opt { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 13px; color: var(--am-text); cursor: pointer; }
+.am-del-opt input { accent-color: #e5534b; width: 15px; height: 15px; }
+
+/* V4.3.22：播放列表行拖拽排序的落点高亮 */
+.am-tr.drag-over { outline: 2px solid var(--am-accent); outline-offset: -2px; border-radius: 6px; }
+.am-tr[draggable="true"] { cursor: grab; }
+.am-tr[draggable="true"]:active { cursor: grabbing; }
+
+/* 专辑网格 */
+.am-album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 22px 18px; }
+.am-album-card { cursor: pointer; }
+.am-album-card img {
+  width: 100%; aspect-ratio: 1; border-radius: 10px; object-fit: cover; display: block;
+  background: var(--am-bg-elev); box-shadow: 0 4px 18px rgba(0, 0, 0, .25);
+  transition: transform .22s var(--am-ease-spring), box-shadow .22s var(--am-ease-out);
+}
+.am-album-card:hover img { transform: scale(1.03); box-shadow: var(--am-shadow); }
+.am-album-name { margin-top: 8px; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-album-sub { font-size: 12px; color: var(--am-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 歌曲表 */
+/* ⚠️ 2026-10-21：表格必须严格不超出内容区（用户反馈「下载按钮被挡住」）。
+   内容区被歌词面板挤压后变窄，但表格仍按旧宽度渲染 → 溢出到歌词面板下面。
+   用 table-layout:fixed + 各列百分比，保证总和 ≤ 100%。 */
+.am-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.am-table th {
+  text-align: left; font-size: 11px; font-weight: 500; color: var(--am-text-3);
+  padding: 6px 12px; border-bottom: 1px solid var(--am-sep); position: sticky; top: calc(-28px + var(--am-ms-h, 0px)); z-index: 6; /* V4.4.9：吸附贴顶；多选条出现时让到它下面；z-index 压住分组封面（2/3/4） */
+  /* ⚠️ 2026-10-22：表头背景完全透明（用户要求「和播放列表完全一致」）。
+     列表行本身是透明的（透出封面氛围光），表头也透明才能真正连成一体。
+     滚动时内容会从表头下穿过 —— 这是可接受的（与列表行视觉一致优先）。 */
+  background: transparent;
+}
+/* ⚠️ 2026-10-21 修「列表文字全被截断」（用户反馈 Taylor... / Patient...）：
+   原来 td 一律 max-width:0 + table-layout:auto 让各列均分，
+   导致歌名/艺人/专辑都只剩一点宽度。
+   现在给不同语义列设定相对宽度，歌名列最宽。 */
+.am-table td {
+  padding: 7px 10px; font-size: 13px;
+  border-bottom: 1px solid transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 0;
+}
+/* ⚠️ 2026-10-21 表格列宽（table-layout:fixed + 百分比，总和 100%）
+   根因：td 基础规则 max-width:0 + overflow:hidden，
+   未显式给宽度的列被均分 → 封面 34px 被裁到 24px、音质/收藏/链接/下载全显示不全。
+   而且内容区被歌词面板挤压后，表格若不严格 100% 就会溢出盖到面板下面。
+   列宽（搜索/歌曲列表通用）：
+     封面 5% | 歌名 26% | 艺人 16% | 专辑 18% | 时长 8% | 音质 9% | 操作 3×6%=18%
+   合计 100%。宽松时用 min-width 兜底，窄时自动按比例缩。 */
+.am-table th:nth-child(1), .am-table td:nth-child(1) {
+  width: 5%; padding-left: 8px; padding-right: 4px; overflow: visible;
+}
+.am-table th:nth-child(2), .am-table td:nth-child(2) { width: 26%; }
+.am-table th:nth-child(3), .am-table td:nth-child(3) { width: 16%; }
+.am-table th:nth-child(4), .am-table td:nth-child(4) { width: 18%; }
+.am-table th:nth-child(5), .am-table td:nth-child(5) { width: 8%; text-align: right; }
+.am-table th:nth-child(6), .am-table td:nth-child(6) { width: 9%; overflow: visible; }
+/* 操作列（收藏/链接/下载…）每个 6%，最多 3 个 = 18% */
+.am-table th:nth-child(n+7), .am-table td:nth-child(n+7) {
+  width: 6%; padding-left: 2px; padding-right: 2px;
+  overflow: visible; text-align: center;
+}
+/* 图标按钮给足尺寸 */
+.am-table .am-dl-btn {
+  width: 30px; min-width: 24px; max-width: 100%; flex: none;
+  font-size: 14px; line-height: 1; padding: 5px 0; box-sizing: border-box;
+}
+.am-table td button, .am-table td img, .am-table td svg,
+.am-table td .am-mini-btn, .am-table td .am-fav-btn { flex: none; }
+.am-qbadge { display: inline-block; white-space: nowrap; }
+.am-c-title { min-width: 0; }
+.am-c-dim { min-width: 0; }
+#am-root .am-table .am-ms-ck { margin: 0 2px; }
+.am-table .am-tr { cursor: default; border-radius: 8px; transition: background .12s var(--am-ease-out); }
+.am-table .am-tr:hover { background: var(--am-hover); }
+.am-table .am-tr.cur { background: var(--am-row-cur); }
+/* 定位播放文件：两次脉冲高亮（与其他主题的 locate-flash 同语义，AM 用背景色脉冲） */
+@keyframes amLocateFlash { 0%, 100% { background: transparent; } 25%, 65% { background: var(--am-row-cur); } }
+.am-tr.locate-flash { animation: amLocateFlash .9s var(--am-ease-out)-in-out 2; }
+.am-table .am-tr.cur .am-c-title { color: var(--am-accent); font-weight: 600; }
+.am-c-cover { width: 34px; height: 34px; border-radius: 5px; object-fit: cover; background: var(--am-bg-elev); vertical-align: middle; }
+.am-c-dim { color: var(--am-text-2); }
+.am-c-acts { text-align: right; width: 76px; }
+.am-mini-btn {
+  border: 0; background: transparent; color: var(--am-text-3); cursor: pointer;
+  width: 26px; height: 26px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .12s, color .12s var(--am-ease-out);
+}
+.am-tr:hover .am-mini-btn { opacity: 1; }
+.am-mini-btn:hover { color: var(--am-text); background: var(--am-hover); }
+.am-mini-btn.faved { opacity: 1; color: var(--am-accent); }
+
+/* 歌单详情头（图 2 风格） */
+.am-pl-head { display: flex; gap: 22px; align-items: flex-end; margin-bottom: 20px; }
+.am-pl-cover {
+  width: 190px; height: 190px; border-radius: 12px; object-fit: cover; flex: none;
+  background: var(--am-bg-elev); box-shadow: var(--am-shadow);
+}
+.am-pl-cover-ph {
+  width: 190px; height: 190px; border-radius: 12px; flex: none;
+  background: var(--am-bg-elev); box-shadow: var(--am-shadow);
+  display: flex; align-items: center; justify-content: center; font-size: 44px; color: var(--am-text-3);
+}
+.am-pl-info { flex: 1; min-width: 0; }
+.am-pl-name { font-size: 24px; font-weight: 700; outline: none; border-radius: 6px; padding: 0 4px; margin-left: -4px; }
+.am-pl-name[contenteditable="true"]:hover { background: var(--am-hover); }
+.am-pl-meta { color: var(--am-text-2); font-size: 13px; margin: 4px 0 14px; }
+.am-pl-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.am-pl-actions .am-btn { flex: none; white-space: nowrap; } /* V4.4：防按钮文字被挤压成竖排 */
+.am-btn {
+  border: 0; border-radius: 9px; cursor: pointer; font: 600 13px var(--am-font);
+  padding: 8px 18px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  white-space: nowrap; flex: none;
+  background: var(--am-glass-2); color: var(--am-text);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  transition: background .15s, transform .1s var(--am-ease-out);
+}
+.am-btn:hover { background: var(--am-active); }
+.am-btn:active { transform: scale(.96); transition-duration: .08s; }
+.am-btn.am-btn-accent { background: var(--am-accent); color: var(--am-accent-ink); }
+.am-btn.am-btn-accent:hover { background: var(--am-accent-hover); }
+.am-empty { color: var(--am-text-3); text-align: center; padding: 80px 0; font-size: 14px; }
+
+/* ---------- 歌词面板（AM 风格：大字号逐行，当前行高亮，远处微模糊） ---------- */
+.am-lyrics {
+  flex: none; width: 0; overflow: hidden; position: relative;
+  transition: width .25s var(--am-ease-in-out);
+  border-left: 1px solid transparent;
+}
+#am-root.am-lyr-on .am-lyrics {
+  /* ⚠️ 去掉左边框（2026-10-21）：用户反馈像「诡异的紫线」——
+     var(--am-sep) = rgba(255,255,255,.08) 在深蓝背景上呈灰紫。 */
+  width: 360px; border-left-color: transparent;
+  background: var(--am-glass-2);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+}
+/* ⚠️ 2026-10-21：去掉 scroll-behavior: smooth（帧率低），
+   改由 JS rAF 驱动（am-lyrics.js 的 progScrollTop），稳定 60fps。 */
+/* ⚠️ 2026-10-22：去掉 top 过渡（用户反馈「显示封面时不会立即下移」）——
+   封面一出现歌词区就立刻让位，不做动画。 */
+/* ⚠️ 2026-10-22：歌词滚动提到 60fps（用户要求）
+   ─────────────────────────────────────────────────────────────
+   关键优化：
+     1. translateZ(0) —— 强制独立合成层，滚动走 GPU 而不是主线程重绘
+     2. contain: strict —— 隔离布局/绘制，滚动时父容器不重排
+     3. -webkit-overflow-scrolling: touch —— 启用硬件加速滚动（macOS WKWebView 也认）
+     4. will-change: scroll-position —— 提示浏览器提前准备滚动优化
+   配合 JS 端的 requestAnimationFrame + easeOutCubic，可达稳定 60fps。 */
+.am-lyr-scroll {
+  position: absolute; inset: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 50vh 26px;
+  overscroll-behavior: contain;
+  /* GPU 合成层 */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  will-change: scroll-position;
+  contain: layout style;
+  -webkit-overflow-scrolling: touch;
+  /* 隐藏滚动条（不影响滚动） */
+  scrollbar-width: none;
+}
+.am-lyr-scroll::-webkit-scrollbar { display: none; }
+/* V4.3.22：面板顶部封面——绝对定位叠加在歌词区上方；有封面且开关打开时歌词滚动区顶部让位 */
+/* V4.3.26：封面尺寸改为 CSS 变量 --am-lyrcover-size 驱动，歌词区让位随变量联动，右下角把手可拖拽调节 */
+.am-lyr-cover {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 4;
+  width: var(--am-lyrcover-size, 200px); aspect-ratio: 1; object-fit: cover; border-radius: 12px;
+  background: var(--am-glass-2); box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+  transition: width .15s var(--am-ease-snap);
+}
+/* ⚠️ 2026-10-22：封面显示/隐藏要平滑过渡（用户要求），
+   不能用 display:none（无法过渡）。改成 opacity + transform + height 过渡。 */
+.am-lyr-cover:not([src]) {
+  opacity: 0; transform: translateX(-50%) scale(.92) translateY(-8px);
+  pointer-events: none;
+}
+.am-lyr-cover {
+  transition: opacity .28s var(--am-ease-out), transform .32s var(--am-ease-spring),
+              width .25s var(--am-ease-out), top .28s var(--am-ease-out);
+}
+#am-root.am-lyrcover-off .am-lyr-cover {
+  opacity: 0; transform: translateX(-50%) scale(.92) translateY(-8px);
+  pointer-events: none;
+}
+/* ⚠️ 2026-10-22：歌词区让位改为**立即生效**（用户要求「封面显示时立即下移」）。
+   封面本身仍有淡入动画，但歌词区不等待。 */
+/* ⚠️ 2026-10-22：封面出现时歌词区**立即**让位。
+   ⚠️ 关键修正（用户反馈「有封面时歌词太靠下」）：
+     歌词区从 top: 228px 开始，但 JS 居中用的是 clientHeight*0.5，
+     clientHeight 已经变小了（顶部被切掉），居中基准应该跟着走。
+     这里改成用 calc 让 padding 只留「可用高度的一半」，
+     上下对称 → 当前行始终落在**可见区域的正中央**。 */
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyr-scroll {
+  top: calc(var(--am-lyrcover-size, 200px) + 28px);
+  /* 上下 padding 用 50% 而不是 50vh：50% 基于元素自身高度，
+     元素已经被 top 缩短了，所以 50% 刚好是一半可用高度 */
+  padding-top: 50%;
+  padding-bottom: 50%;
+}
+/* 封面大小拖拽把手（右下角，hover 封面/把手显现） */
+.am-lyr-cover-grip {
+  position: absolute; top: calc(14px + var(--am-lyrcover-size, 200px) - 22px); left: 50%;
+  transform: translateX(calc(-50% + var(--am-lyrcover-size, 200px) / 2 - 22px));
+  width: 22px; height: 22px; z-index: 5; cursor: nwse-resize;
+  border-radius: 6px; opacity: 0; transition: opacity .2s var(--am-ease-out);
+  background: rgba(0,0,0,.42);
+  backdrop-filter: blur(2px);
+}
+.am-lyr-cover-grip::before {
+  content: ''; position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px;
+  border-right: 2px solid #fff; border-bottom: 2px solid #fff; border-radius: 1px;
+}
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyrics:hover .am-lyr-cover-grip,
+.am-lyr-cover-grip.on { opacity: 1; }
+#am-root.am-lyrcover-off .am-lyr-cover-grip,
+#am-root:not(.am-lyrcover-has) .am-lyr-cover-grip { display: none; }
+.am-lyr-line {
+  font-size: calc(22px * var(--am-lyr-scale, 1)); font-weight: 700; line-height: var(--am-lyr-lh, 1.45); letter-spacing: -.01em;
+  padding: 7px 0; cursor: pointer;
+  color: var(--am-text-3);
+  /* ⚠️ 2026-10-21 性能优化（修「滚动帧率低」）：
+     - 去掉 filter 过渡（filter 是重绘制属性，每帧都触发离屏合成）
+     - transform 过渡改短（滚动时不需要慢动画）
+     - 加 contain: layout style paint —— 让浏览器把每行当独立绘制单元，
+       滚动时只重绘变化行，不整块重排 */
+  transition: color .3s var(--am-ease-out), transform .22s var(--am-ease-spring), opacity .3s var(--am-ease-out);
+  transform-origin: left center;
+  contain: layout style paint;
+  /* 让 transform/opacity 动画走 GPU 合成层（60fps 关键） */
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.am-lyr-line .tly { display: block; font-size: calc(14px * var(--am-tly-scale, 1)); font-weight: 500; opacity: .8; margin-top: 2px; }
+/* V4.4 双语歌词布局：主界面（含迷你）祖先类 am-m-dual-*，沉浸 am-i-dual-*（行类名共享，靠祖先隔离） */
+.am-m-dual-side .am-lyr-scroll .tly,
+.am-m-dual-side .am-mini-lyr .tly,
+.am-i-dual-side .am-imm-lyr .tly { display: inline-block; margin: 0 0 0 16px; vertical-align: baseline; }
+.am-m-dual-src .am-lyr-scroll .tly,
+.am-m-dual-src .am-mini-lyr .tly,
+.am-i-dual-src .am-imm-lyr .tly { display: none !important; }
+/* 仅译文：译文继承原文字号/字重/行距，按主行形态显示（沉浸行有独立 tly 字号规则，需提权覆盖） */
+.am-lyr-line .tly.tly-main,
+.am-imm-lyr .am-lyr-line .tly.tly-main {
+  display: inline; font-size: inherit; font-weight: inherit; line-height: inherit;
+  letter-spacing: inherit; opacity: 1; margin: 0; color: inherit;
+}
+/* ⚠️ 2026-10-21：去掉 filter: blur 改用 opacity（用户反馈「诡异紫线」）：
+   WKWebView 给带 filter 的元素单独建合成层，裁剪边界处会渗出彩色伪影
+   （实测呈品红色竖线，出现在歌词行右侧）。
+   模糊在视觉上主要作用是「压暗非当前行」，用更低的 opacity 可以近似达到，
+   且完全不触发合成层。 */
+.am-lyr-line.far { opacity: .38; }
+/* 如需更接近原模糊观感（可选），用 text-shadow 做柔化——不建层，无伪影 */
+.am-lyr-line.far .am-lyr-text,
+.am-lyr-line.far {
+  text-shadow: 0 0 2px currentColor;
+}
+/* 歌词虚化开关（默认开）：关闭后非当前行仅压暗不模糊 */
+/* 歌词虚化两套开关：主界面（右栏+迷你）与沉浸各自独立 */
+#am-root.am-no-lyrblur .am-lyr-scroll .am-lyr-line.far,
+#am-root.am-no-lyrblur .am-mini-lyr .am-lyr-line.far { filter: none; }
+#am-root.am-no-imm-lyrblur .am-imm-lyr .am-lyr-line.far { filter: none; }
+.am-lyr-line.near { color: var(--am-text-2); }
+.am-lyr-line.cur { color: var(--am-text); transform: scale(1.04); }
+/* ⚠️ 2026-10-22：指针划过非当前歌词时轻微亮起（用户要求）。
+   当前行 .cur 不动；非当前行 hover 时从 text-3 提到 text-2 并加一点透明度。 */
+.am-lyr-line:hover { color: var(--am-text-2); opacity: .92; }
+.am-lyr-line.cur:hover { color: var(--am-text); opacity: 1; }
+/* far 行（远处模糊行）hover 也要能亮起来 */
+.am-lyr-line.far:hover { opacity: .88; color: var(--am-text-2); text-shadow: none; }
+/* 光标提示可点击跳转 */
+.am-lyr-line { cursor: pointer; }
+.am-lyr-empty { color: var(--am-text-3); font-size: 15px; font-weight: 600; text-align: center; margin-top: 30vh; }
+/* ---------- 逐字歌词：逐词 span（词间自然折行；词内双层按进度裁切扫过） ---------- */
+.am-lyr-line.kara { white-space: normal; }
+.am-lyr-line.kara .kara-w { position: relative; display: inline-block; white-space: pre; }
+.am-lyr-line.kara .kara-wb { color: var(--am-text-3); }
+.am-lyr-line.kara.cur .kara-wb { color: var(--am-text-2); }
+.am-lyr-line.kara .kara-wh {
+  position: absolute; left: 0; top: 0; width: 0%; overflow: hidden; white-space: pre;
+  color: var(--am-text); /* 与逐行高亮同色（.cur），非强调色 */
+  /* ⚠️ 去掉 mask-image（2026-10-21）：
+     WKWebView 渲染 -webkit-mask-image 渐变时会在文字下方画出异常横线
+     （用户反馈的「诡异紫线」）。改用 clip-path（WKWebView 支持良好）。 */
+  clip-path: inset(0 0 0 0);
+  -webkit-clip-path: inset(0 0 0 0);
+}
+/* 沉浸歌词：深色封面背景上用白色扫过 */
+.am-imm-lyr .am-lyr-line.kara .kara-wb { color: rgba(255, 255, 255, .34); }
+.am-imm-lyr .am-lyr-line.kara.cur .kara-wb { color: rgba(255, 255, 255, .58); }
+.am-imm-lyr .am-lyr-line.kara .kara-wh { color: #fff; }
+/* 沉浸模式悬停：轻微提亮（AM 风格） */
+.am-imm-lyr .am-lyr-line:hover { color: rgba(255, 255, 255, .62); opacity: .95; }
+.am-imm-lyr .am-lyr-line.cur:hover { color: #fff; opacity: 1; }
+
+/* 滚动条 */
+.am-side::-webkit-scrollbar, .am-content::-webkit-scrollbar, .am-lyr-scroll::-webkit-scrollbar { width: 8px; }
+.am-side::-webkit-scrollbar-thumb, .am-content::-webkit-scrollbar-thumb, .am-lyr-scroll::-webkit-scrollbar-thumb {
+  background: var(--am-sep); border-radius: 4px;
+}
+.am-lyr-scroll::-webkit-scrollbar-thumb { background: transparent; }
+/* 沉浸/迷你歌词滚动条：仅滚动时出现（JS 加 .scrolling，停滚 800ms 移除） */
+.am-imm-lyr::-webkit-scrollbar, .am-mini-lyr::-webkit-scrollbar { width: 8px; }
+.am-imm-lyr::-webkit-scrollbar-thumb, .am-mini-lyr::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.am-imm-lyr.scrolling::-webkit-scrollbar-thumb, .am-mini-lyr.scrolling::-webkit-scrollbar-thumb { background: rgba(255,255,255,.32); }
+/* V4.1：沉浸/迷你歌词行切换平滑滚动（主面板 .am-lyr-scroll 已有） */
+/* 同上：交给 JS rAF 驱动 */
+.am-imm-lyr, .am-mini-lyr { overscroll-behavior: contain; }
+/* 歌词外观设置：悬浮 ⚙（hover 面板显现）+ 弹层 */
+.am-lyrics { position: relative; }
+.am-lyr-set {
+  position: absolute; top: 10px; right: 10px; z-index: 5;
+  width: 30px; height: 30px; border: 0; border-radius: 50%;
+  background: var(--am-glass-2); color: var(--am-text-2); font-size: 14px; cursor: pointer;
+  opacity: 0; transition: opacity .2s var(--am-ease-out);
+}
+.am-lyrics:hover .am-lyr-set { opacity: 1; }
+.am-lyr-set:hover { color: var(--am-text); }
+.am-lyrset-pop { min-width: 250px; }
+.am-lyrset-slider { flex: 1; accent-color: var(--am-accent); }
+.am-lyrset-v { min-width: 38px; text-align: right; font-size: 11px; color: var(--am-text-3); }
+/* V4.4：弹层内分段按钮组（预设/双语/跟随位置/歌词背景） */
+.am-pop-row-wrap { flex-wrap: wrap; row-gap: 6px; }
+.am-seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.am-seg .am-tbtn {
+  width: auto; height: auto; padding: 4px 11px; font-size: 12px; font-weight: 500;
+  border-radius: 7px; background: var(--am-glass-2); color: var(--am-text-2);
+}
+.am-seg .am-tbtn:hover { background: var(--am-hover); color: var(--am-text); }
+.am-seg .am-tbtn.on {
+  color: var(--am-accent);
+  background: color-mix(in srgb, var(--am-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--am-accent) 45%, transparent);
+}
+
+/* "添加到播放列表"弹出菜单 */
+.am-pop {
+  position: fixed; z-index: 90; min-width: 180px; max-width: 260px;
+  background: var(--am-glass); border: 1px solid var(--am-sep); border-radius: 10px;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: var(--am-shadow); padding: 6px; display: none;
+}
+.am-pop.on { display: block; }
+.am-pop-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 0; background: transparent; color: var(--am-text); cursor: pointer;
+  padding: 7px 10px; border-radius: 7px; font: 13px var(--am-font); text-align: left;
+}
+.am-pop-item:hover { background: var(--am-accent); color: #fff; }
+/* V4.4.6：顶栏「⋯」菜单项激活态（如桌面歌词已开启） */
+.am-pop-item.on { color: var(--am-accent); font-weight: 600; }
+/* V4.4：菜单分组标题（不可点）——旧实现复用 .am-pop-item（cursor:pointer + hover 高亮），
+ * 用户点「添加到播放列表」标题无任何反应，误以为功能坏了 */
+.am-pop-head { padding: 6px 10px 2px; font: 600 11px var(--am-font); color: var(--am-text-3);
+  letter-spacing: .04em; cursor: default; user-select: none; }
+.am-pop-sep { height: 1px; background: var(--am-sep); margin: 5px 8px; }
+
+/* V4.3.26：弹出菜单二级浮层（歌单太多时右键菜单收敛） */
+.am-pop-sub { position: relative; }
+.am-pop-sub-arrow { margin-left: auto; font-size: 11px; opacity: .65; }
+.am-pop-sub:hover { background: var(--am-accent); color: #fff; }
+.am-pop-sub-panel {
+  position: fixed; z-index: 91; min-width: 170px; max-width: 260px;
+  max-height: min(360px, 60vh); overflow-y: auto;
+  background: var(--am-glass); border: 1px solid var(--am-sep); border-radius: 10px;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: var(--am-shadow); padding: 6px; display: none;
+}
+.am-pop-sub-panel.on { display: block; }
+.am-pop-sub-panel::-webkit-scrollbar { width: 8px; }
+.am-pop-sub-panel::-webkit-scrollbar-thumb { background: var(--am-sep); border-radius: 4px; }
+.am-pop-sub-panel .am-pop-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-align: left; }
+
+/* V4.3.26：歌单内搜索框 / 列表内筛选框（在线歌单 + 发现音乐/榜单/收藏歌单/专辑曲目共用） */
+.am-spl-search {
+  width: 100%; box-sizing: border-box; margin-top: 8px;
+  padding: 7px 11px; border-radius: 8px; font: 13px var(--am-font);
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  outline: none; transition: border-color .2s var(--am-ease-out);
+}
+.am-spl-search:focus { border-color: var(--am-accent); }
+.am-spl-search::placeholder { color: var(--am-text-3); }
+.am-st-filterbar { margin-bottom: 8px; }
+.am-pl-head .am-spl-search { margin-top: 10px; }
+
+/* ---------- 在线搜索视图（洛雪，AM 外观） ---------- */
+/* ⚠️ 2026-10-21 修「搜索界面太混乱」（用户反馈）：
+   之前 bar 和 pfs 都 flex-wrap: wrap，7 个平台 + 4 个功能按钮
+   在窄窗口下会换成 2-3 排，挤成一坨。
+   现在：不换行，超宽时横向滚动（带渐隐提示）。 */
+.am-st-bar {
+  display: flex; align-items: center; gap: 12px;
+  flex-wrap: nowrap;
+  margin-bottom: 12px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;          /* Firefox */
+  padding-bottom: 2px;            /* 给滚动条留位，避免裁掉按钮阴影 */
+}
+.am-st-bar::-webkit-scrollbar { display: none; }   /* 隐藏滚动条但可滚 */
+.am-st-pfs {
+  display: flex; gap: 6px; flex-wrap: nowrap; flex: none;
+}
+.am-st-pfs .am-chip { flex: none; }
+.am-chip {
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text-2);
+  border-radius: 999px; padding: 5px 14px; font: 12px var(--am-font); cursor: pointer;
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  transition: background .15s, color .15s, border-color .15s var(--am-ease-out);
+}
+.am-chip:hover { color: var(--am-text); background: var(--am-hover); }
+.am-chip.cur { background: var(--am-accent); border-color: var(--am-accent); color: #fff; }
+.am-st-quality {
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  border-radius: 8px; padding: 5px 8px; font: 12px var(--am-font); outline: none; cursor: pointer;
+}
+/* V3.5.4 发现音乐：榜单 chips 更紧凑 + 歌单卡片网格 */
+.am-bd-pfs { margin-bottom: 10px; }
+.am-bd-pfs .am-chip { padding: 4px 11px; font-size: 11.5px; }
+.am-sl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+.am-sl-card { cursor: pointer; border-radius: 10px; padding: 8px; transition: background .15s var(--am-ease-out); }
+.am-sl-card:hover { background: var(--am-hover); }
+.am-sl-cover { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
+  background: var(--am-glass-2); display: block; }
+.am-sl-name { margin-top: 7px; font: 12.5px var(--am-font); color: var(--am-text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.am-sl-meta { margin-top: 3px; font: 11px var(--am-font); color: var(--am-text-3, var(--am-text-2)); }
+.am-st-inputrow { display: flex; gap: 10px; margin-bottom: 10px; }
+.am-st-input {
+  flex: 1; min-width: 0; border: 1px solid var(--am-sep); outline: none;
+  background: var(--am-glass-2); color: var(--am-text);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-radius: 10px; padding: 9px 14px; font: 13px var(--am-font);
+  transition: border-color .15s var(--am-ease-out);
+}
+.am-st-input:focus { border-color: var(--am-accent); }
+.am-st-input::placeholder { color: var(--am-text-3); }
+/* V4.4.3：搜索历史自绘下拉弹层（输入行内绝对定位；复用玻璃风） */
+.am-st-histpop {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60;
+  background: var(--am-glass); border: 1px solid var(--am-sep); border-radius: 10px;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: var(--am-shadow); padding: 4px; display: none; max-height: 260px; overflow-y: auto;
+}
+.am-st-histpop.on { display: block; }
+.am-st-histrow { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 7px; }
+.am-st-histrow:hover { background: color-mix(in srgb, var(--am-accent) 14%, transparent); }
+.am-st-histtxt { flex: 1; min-width: 0; padding: 6px 0; cursor: pointer; font: 13px var(--am-font); color: var(--am-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.am-st-histdel { flex: none; border: 0; background: transparent; color: var(--am-text-3); cursor: pointer;
+  width: 22px; height: 22px; border-radius: 5px; font-size: 12px; line-height: 1; padding: 0; }
+.am-st-histdel:hover { background: var(--am-accent); color: #fff; }
+.am-st-histfoot { display: flex; justify-content: center; padding: 6px 4px 2px; border-top: 1px solid var(--am-sep); margin-top: 2px; }
+.am-st-histfoot .am-btn { padding: 4px 14px; font-size: 12px; }
+.am-st-status { font-size: 12px; color: var(--am-text-2); min-height: 18px; margin-bottom: 8px; }
+.am-st-status.warn { color: var(--am-accent); }
+.am-qbadge {
+  display: inline-block; font-size: 10px; font-weight: 600; color: var(--am-text-3);
+  border: 1px solid var(--am-sep); border-radius: 4px; padding: 1px 5px; margin-right: 4px;
+}
+.am-qbadge.hq { color: var(--am-accent); border-color: var(--am-accent); }
+
+/* 文件夹列表行 */
+.am-folder-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 10px; cursor: pointer;
+  transition: background .15s var(--am-ease-out);
+}
+.am-folder-row:hover { background: var(--am-hover); }
+.am-folder-ico { font-size: 20px; flex: none; }
+.am-folder-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-folder-sub { flex: none; font-size: 12px; color: var(--am-text-3); }
+
+/* 设置面板主题卡片缩略图（全局类，配合 settings.js 的 theme-grid） */
+.theme-thumb-am { background: linear-gradient(135deg, rgba(250,45,85,.85), rgba(30,30,30,.9) 60%), rgba(255,255,255,.2); backdrop-filter: blur(6px); }
+
+/* ================= V3.2：播放定时弹层 ================= */
+.am-timer-pop { min-width: 260px; max-width: 300px; }
+.am-pop-h { font-size: 14px; font-weight: 700; color: var(--am-text); padding: 4px 10px 6px; }
+.am-pop-hint { font-size: 11px; color: var(--am-text-3); padding: 0 10px 6px; line-height: 1.5; }
+.am-pop-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; color: var(--am-text); }
+.am-pop-cur { flex: 1; min-width: 0; color: var(--am-accent); }
+.am-pop-num {
+  width: 52px; border: 1px solid var(--am-sep); outline: none; border-radius: 6px;
+  background: var(--am-glass-2); color: var(--am-text); padding: 3px 6px; font: 12px var(--am-font);
+}
+.am-pop-num:focus { border-color: var(--am-accent); }
+
+/* ================= V3.2：待播清单 / 历史记录面板（沉浸+迷你共享） ================= */
+.am-q-tabs { display: flex; gap: 6px; padding: 10px 12px 6px; flex: none; }
+.am-q-tab {
+  flex: 1; border: 0; border-radius: 8px; padding: 6px 0; cursor: pointer;
+  background: rgba(128,128,128,.14); color: rgba(255,255,255,.75); font: 12px var(--am-font);
+}
+.am-q-tab.cur { background: var(--am-accent); color: #fff; font-weight: 600; }
+.am-q-list { flex: 1; overflow-y: auto; padding: 4px 8px 10px; min-height: 0; }
+.am-q-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px; cursor: pointer; }
+.am-q-row:hover { background: rgba(255,255,255,.10); }
+.am-q-row.cur { background: rgba(250,45,85,.20); }
+.am-q-cover { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: rgba(128,128,128,.25); flex: none; }
+.am-q-tx { flex: 1; min-width: 0; }
+.am-q-title { font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-q-sub { font-size: 11px; color: rgba(255,255,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.am-q-dur { font-size: 11px; color: rgba(255,255,255,.55); flex: none; }
+.am-q-row.drag-over { outline: 1.5px dashed rgba(250,45,85,.75); outline-offset: -1.5px; }
+.am-q-row[draggable="true"] { cursor: grab; }
+.am-q-del { flex: none; width: 22px; height: 22px; border: none; border-radius: 6px; background: transparent; color: rgba(255,255,255,.45); font-size: 12px; line-height: 1; cursor: pointer; }
+.am-q-del:hover { background: rgba(250,45,85,.30); color: #fff; }
+#am-root.am-light.am-mini-on .am-q-del { color: var(--am-text-3); }
+#am-root.am-light.am-mini-on .am-q-del:hover { color: var(--am-text); background: rgba(250,45,85,.18); }
+.am-q-empty { color: rgba(255,255,255,.5); font-size: 12px; text-align: center; margin-top: 40px; }
+
+/* ================= V3.2：沉浸式播放界面 ================= */
+.am-imm {
+  position: absolute; inset: 0; z-index: 60; display: none; flex-direction: column;
+  background: var(--am-bg); /* 不透明兜底：无封面时底层界面不能透上来 */
+  overflow: hidden; /* 裁剪外溢的模糊背景层 */
+}
+#am-root.am-imm-on .am-imm { display: flex; }
+/* 沉浸模式静止一段时间自动隐藏鼠标（视频式）；任意鼠标/滚轮/触摸/键盘操作立即恢复 */
+#am-root.am-imm-cursor-off .am-imm,
+#am-root.am-imm-cursor-off .am-imm * { cursor: none !important; }
+/* V4.4：静止隐藏 chrome——顶栏淡出上移，彩胶底栏/经典内联控制淡出，纯透明度不引发布局跳动 */
+.am-imm-closebar { transition: opacity .32s var(--am-ease-out), transform .32s var(--am-ease-out); }
+.am-imm-vbar { transition: opacity .32s var(--am-ease-out), transform .32s var(--am-ease-out); }
+.am-imm-left .am-imm-prog, .am-imm-left .am-imm-ctl { transition: opacity .32s var(--am-ease-out); }
+/* ⚠️ 退出按钮常驻（2026-10-21）：
+   原来静止 2.5 秒会把整条按钮栏连退出键一起淡出，用户在全屏里找不到怎么退出。
+   现在：静止时只隐藏「歌词外观/彩胶/真全屏」等按钮，退出键单独保持可见。 */
+#am-root.am-imm-chrome-off .am-imm-closebar { transform: translateY(-8px); }
+#am-root.am-imm-chrome-off .am-imm-closebar .am-tbtn:not(.am-imm-exit) {
+  opacity: 0; pointer-events: none;
+}
+#am-root.am-imm-chrome-off .am-imm-closebar .am-imm-exit {
+  opacity: .55 !important; pointer-events: auto !important;
+  transition: opacity .32s var(--am-ease-out);
+}
+#am-root.am-imm-chrome-off .am-imm-closebar .am-imm-exit:hover {
+  opacity: 1 !important;
+}
+#am-root.am-imm-chrome-off .am-imm-vbar { opacity: 0; pointer-events: none; transform: translateY(16px); }
+#am-root.am-imm-chrome-off .am-imm-left .am-imm-prog,
+#am-root.am-imm-chrome-off .am-imm-left .am-imm-ctl { opacity: 0; pointer-events: none; }
+/* V4.4.7（秋野奈 PR#6）：沉浸模式「歌曲信息面板」——左上角 ↓ 唤出，自屏幕顶部下拉 */
+/* top 必须与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
+   改 .am-topbar 高度时这里和 .am-imm-closebar 要一起改（V4.4.8 曾漏改导致悬挂栏偏上） */
+.am-imm-infobar {
+  /* ⚠️ 2026-10-24 修复「沉浸模式的歌曲信息按钮和红绿灯叠在一起」：
+     原来 left: 16px 正好在 macOS 红绿灯（关闭/最小化/全屏，占 left 0~78px）上。
+     主顶栏用的是 padding-left: 84px 让位，这里对齐成 left: 88px。 */
+  position: absolute; top: 18px; left: 88px; z-index: 5; display: flex; gap: 8px;
+  -webkit-app-region: no-drag;
+  transition: opacity .32s var(--am-ease-out), transform .32s var(--am-ease-out);
+}
+#am-root.am-imm-chrome-off .am-imm-infobar { opacity: 0; pointer-events: none; transform: translateY(-8px); }
+.am-imm-infobar .am-tbtn { color: #fff; }
+.am-imm-infobar .am-tbtn:hover { background: rgba(255,255,255,.16); color: #fff; }
+/* 歌曲信息弹窗配色变量（默认深色） */
+#am-root { --info-bg: rgba(30,30,30,.94); --info-fg: #fff; --info-k: rgba(255,255,255,.55);
+           --info-border: rgba(255,255,255,.10); }
+#am-root.am-light { --info-bg: rgba(250,248,245,.96); --info-fg: #14130f;
+                    --info-k: rgba(20,19,15,.6); --info-border: rgba(0,0,0,.10); }
+
+/* ⚠️ 2026-10-21：歌曲信息面板从「铺满全屏的遮罩」改成「右上角小弹窗」。
+   原来 inset:0 + translateY(-100%) 会盖住整个界面，用户反馈「占据一整行画面」。 */
+.am-imm-info {
+  position: fixed; top: 92px; right: 20px; z-index: 900;
+  width: min(520px, 92vw); max-height: min(72vh, 640px);
+  overflow-y: auto;
+  /* 用变量，浅色模式自动切换（2026-10-21） */
+  color: var(--info-fg);
+  display: flex; flex-direction: column;
+  background: var(--info-bg);
+  -webkit-backdrop-filter: blur(26px) saturate(1.35); backdrop-filter: blur(26px) saturate(1.35);
+  border: 1px solid var(--info-border, rgba(255,255,255,.10));
+  border-radius: 14px;
+  box-shadow: 0 22px 60px rgba(0,0,0,.28);
+  opacity: 0; pointer-events: none;
+  transform: translateY(-8px) scale(.98);
+  transform-origin: top right;
+  transition: opacity .24s var(--am-ease-out), transform .3s var(--am-ease-spring);
+}
+.am-imm-info.on {
+  opacity: 1; pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+/* 全屏面板：文字块仍贴顶部（66px 起），频谱单独沉到屏幕底部、左右只留 24px —— 比原来更长 */
+.am-imm-info-inner {
+  padding: 18px 20px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+  box-sizing: border-box;
+}
+.am-imm-info-head { display: flex; align-items: baseline; gap: 18px; min-width: 0; }
+.am-imm-info-title {
+  font-size: 18px; font-weight: 600; letter-spacing: .01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.am-imm-info-sub {
+  font-size: clamp(13px, 1.02vw, 16px); color: rgba(255,255,255,.7);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.am-imm-info-grid {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 26px; row-gap: 9px; max-width: 1240px;
+  font-size: clamp(12px, .95vw, 14px); line-height: 1.45;
+}
+.am-imm-info-k { color: var(--info-k, rgba(255,255,255,.55)); letter-spacing: .04em; }
+.am-imm-info-v { color: rgba(255,255,255,.92); min-width: 0; word-break: break-all; }
+.am-imm-info-path {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .94em; color: rgba(255,255,255,.78);
+}
+.am-imm-info-viz {
+  /* canvas 是替换元素：只给 height 时 width:auto 会按内部缓冲区比例自己算宽度（实测只算出 76px），
+     所以这里必须显式给宽度，而不是靠 left/right 拉伸 */
+  position: absolute; left: 16px; width: calc(100% - 32px); bottom: clamp(16px, 2.6vh, 34px);
+  display: block; height: clamp(56px, 7.2vh, 96px);
+  opacity: .92; pointer-events: none;
+}
+/* 左上角 trigger 的图标：SVG 画的钝角 V（chevron）——左右两条臂严格对称，展开时翻 180° */
+.am-imm-chev {
+  display: block; width: 13px; height: 8px; flex: none;
+  transform-origin: 50% 50%;
+  transition: transform .3s cubic-bezier(.25,.8,.3,1);
+}
+.am-imm-infobar .am-tbtn.on .am-imm-chev { transform: rotate(180deg); }
+/* 底部热区：透明且 pointer-events:none（不挡歌词），dock 本体才接收事件 */
+.am-imm-dockzone {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 104px; z-index: 6;
+  display: flex; justify-content: center; align-items: flex-end;
+  pointer-events: none;
+}
+.am-imm-dock {
+  pointer-events: auto;
+  width: min(720px, 88vw); margin: 0 16px 20px; padding: 13px 24px 15px;
+  display: flex; flex-direction: column; gap: 9px;
+  border-radius: 18px; border: 1px solid rgba(255,255,255,.16);
+  background: rgba(20,20,28,.52);
+  backdrop-filter: blur(30px) saturate(1.5); -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  box-shadow: 0 20px 70px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.14);
+  opacity: 0; pointer-events: none; transform: translateY(20px);
+  transition: opacity .34s cubic-bezier(.25,.8,.3,1), transform .34s cubic-bezier(.25,.8,.3,1);
+}
+.am-imm-dock .am-imm-bar { height: 6px; }
+#am-root.am-imm-dock-on .am-imm-dock { opacity: 1; pointer-events: auto; transform: translateY(0); }
+/* 中央状态 OSD（播放/暂停、音量） */
+.am-imm-osd {
+  position: absolute; left: 50%; top: 42%; z-index: 5;
+  display: flex; align-items: center; gap: 16px;
+  padding: 24px 38px; border-radius: 22px;
+  background: rgba(18,18,24,.40);
+  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255,255,255,.12);
+  color: #fff; pointer-events: none;
+  opacity: 0; transform: translate(-50%, -50%) scale(.92);
+  transition: opacity .28s var(--am-ease-out), transform .28s var(--am-ease-out);
+}
+.am-imm-osd-ic { font-size: 52px; line-height: 1; }
+.am-imm-osd-vol { font-size: 30px; font-weight: 700; letter-spacing: .5px; }
+.am-imm-osd.am-imm-osd-in { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.am-imm-osd.am-imm-osd-out { opacity: 0; transform: translate(-50%, -50%) scale(.96); }
+/* V4.4：封面切歌交叉转场——ghost=旧封面淡出微缩（克隆原节点继承方角/圆角），新封面从模糊放大态淡入 */
+.am-imm-cov-ghost { position: absolute; pointer-events: none; z-index: 2; margin: 0; }
+.am-imm-left .am-imm-cov-ghost { top: 0; left: 0; right: 0; aspect-ratio: 1; }
+.am-vinyl-label .am-imm-cov-ghost { inset: 0; width: 100%; height: 100%; }
+.am-imm-cov-ghost.am-cov-out { animation: amCovOut .52s var(--am-ease-out) forwards; }
+.am-imm-cover.am-cov-in, .am-vinyl-cover.am-cov-in { animation: amCovIn .52s var(--am-ease-out); }
+@keyframes amCovIn { from { opacity: 0; filter: blur(10px); transform: scale(1.045); } to { opacity: 1; filter: blur(0); transform: scale(1); } }
+@keyframes amCovOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(.965); } }
+.am-imm-bg {
+  position: absolute; inset: -6%; z-index: 0;
+  background-image: var(--am-bgimage, none); background-size: cover; background-position: center;
+  filter: blur(70px) saturate(1.5) brightness(.5); transform: scale(1.15);
+  transition: opacity .6s var(--am-ease-out);
+  pointer-events: none;
+}
+/* 无封面时不显示背景图（否则残留上一首的模糊封面） */
+#am-root.am-nobg .am-imm-bg { opacity: 0; }
+#am-root.am-light .am-imm-bg { filter: blur(70px) saturate(1.35) brightness(.68); }
+/* V4.4：沉浸模式也使用自定义壁纸（wp-on + wp-imm 双类组合；替代封面氛围，吃同一组模糊/压暗参数） */
+html.wp-on.wp-imm #am-root .am-imm-bg {
+  background-image: var(--wp-img);
+  filter: blur(var(--wp-blur, 40px)) saturate(1.2) brightness(calc(1 - var(--wp-dim, .3)));
+}
+html.wp-on.wp-imm #am-root.am-nobg .am-imm-bg { opacity: 1; } /* 压过「无封面隐藏氛围」 */
+.am-imm-closebar {
+  /* top 与主顶栏窗口按钮竖直居中对齐：(顶栏高 70 - 按钮 34) / 2 = 18px；
+     改 .am-topbar 高度时这里和 .am-imm-infobar 要一起改 */
+  position: absolute; top: 18px; right: 16px; z-index: 3; display: flex; gap: 8px;
+  -webkit-app-region: no-drag;
+}
+.am-imm-closebar .am-tbtn { color: #fff; }
+.am-imm-closebar .am-tbtn:hover { background: rgba(255,255,255,.16); color: #fff; }
+/* V4.3.26：沉浸布局整体居中——两栏改为等分 grid，各自以屏幕左右半区中轴对称。
+   旧版 flex+justify-center 把「固定宽封面列 + 46% 歌词列」整体居中，两栏宽度不等导致视觉左重右轻。 */
+.am-imm-main {
+  position: relative; z-index: 1; flex: 1; min-height: 0; display: grid;
+  grid-template-columns: minmax(0, min(42vw, 890px)) minmax(0, min(42vw, 890px));
+  column-gap: min(3vw, 62px);
+  justify-content: center;
+  align-items: center;
+  padding: min(4.5vh, 56px) min(1.8vw, 40px) min(3.2vh, 40px);
+}
+.am-imm-left {
+  position: relative;
+  width: min(28vw, 48vh, 640px);
+  flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+  justify-self: center;
+}
+.am-imm-cover {
+  width: 100%; aspect-ratio: 1; border-radius: 12px; object-fit: cover;
+  box-shadow: 0 28px 80px rgba(0,0,0,.5); background: rgba(0,0,0,.3);
+}
+/* V4.4.7（秋野奈 PR#4）：标题/歌手/音质字号随封面尺寸缩放——固定 px 在大屏上占比失调 */
+.am-imm-title { font-size: calc(min(28vw, 48vh, 640px) * 0.06); font-weight: 700; color: #fff; text-align: center; margin-top: 6px; }
+.am-imm-sub { font-size: calc(min(28vw, 48vh, 640px) * 0.041); color: rgba(255,255,255,.78); text-align: center; }
+.am-imm-fmt { font-size: calc(min(28vw, 48vh, 640px) * 0.033); color: rgba(255,255,255,.55); text-align: center; min-height: 15px; }
+.am-imm-prog { display: flex; align-items: center; gap: 10px; }
+.am-imm-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.28); cursor: pointer; }
+.am-imm-fill { height: 100%; width: 0; border-radius: 3px; background: #fff; }
+.am-imm-time { font-size: calc(11px * var(--am-imm-fs, 1)); color: rgba(255,255,255,.72); min-width: 36px; text-align: center; }
+.am-imm-ctl { display: flex; align-items: center; justify-content: center; gap: 20px; margin-top: 2px; }
+.am-imm-btn {
+  border: 0; background: transparent; color: #fff; font-size: 20px; cursor: pointer;
+  opacity: .85; padding: 6px; border-radius: 8px; line-height: 1;
+}
+.am-imm-btn:hover { opacity: 1; background: rgba(255,255,255,.14); }
+.am-imm-btn.on { opacity: 1; color: var(--am-accent); }
+.am-imm-play { font-size: 32px; }
+.am-imm-vol { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,.8); }
+.am-imm-volin { width: 78px; accent-color: #fff; }
+/* 浅色 + 无封面：沉浸层回落为柔和暖白底，文字切换为深色，避免白字看不清 */
+#am-root.am-light.am-nobg .am-imm-closebar .am-tbtn,
+#am-root.am-light.am-nobg .am-imm-btn,
+#am-root.am-light.am-nobg .am-imm-title { color: var(--am-text); }
+#am-root.am-light.am-nobg .am-imm-closebar .am-tbtn:hover,
+#am-root.am-light.am-nobg .am-imm-btn:hover { background: var(--am-hover); color: var(--am-text); }
+#am-root.am-light.am-nobg .am-imm-sub { color: var(--am-text-2); }
+#am-root.am-light.am-nobg .am-imm-fmt, #am-root.am-light.am-nobg .am-imm-time { color: var(--am-text-3); }
+#am-root.am-light.am-nobg .am-imm-vol { color: var(--am-text-2); }
+#am-root.am-light.am-nobg .am-imm-bar { background: rgba(70,58,38,.18); }
+#am-root.am-light.am-nobg .am-imm-fill { background: var(--am-accent); }
+#am-root.am-light.am-nobg .am-imm-volin { accent-color: var(--am-accent); }
+#am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line { color: var(--am-text-3); }
+#am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.near { color: var(--am-text-2); }
+#am-root.am-light.am-nobg .am-imm-lyr .am-lyr-line.cur { color: var(--am-text); }
+/* 沉浸歌词列（默认隐藏，💬 展开后左封面右歌词）；V4.3.26：占满右半区并向中轴靠拢，与左栏对称 */
+/* V4.4.7（秋野奈 PR#5）：经典双栏歌词上下渐隐遮罩——滚动时最上/最下一行不再被硬切断（彩胶已有同款） */
+.am-imm-lyr { mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent); display: none; width: 84%; max-width: 560px; justify-self: center; max-height: 100%; overflow-y: auto; overflow-x: hidden; padding: 40vh 8px; position: relative; }
+#am-root.am-imm-lyr-on .am-imm-lyr { display: block; }
+/* V4.4：沉浸模式未开歌词时，封面+信息+控制栏整体居中
+ *（.am-imm-main 恒为 1fr 1fr 双列，歌词隐藏后左列仍停在左半屏，右半全空） */
+#am-root.am-imm-on:not(.am-imm-lyr-on) .am-imm-main { grid-template-columns: 1fr; }
+/* V4.5：文字随窗口缩放改为纯字号路径（原 zoom 方案在 zoom≠1 时会让滚动容器的
+   offsetTop/scrollTop/视觉坐标三套坐标系分离，当前行定位飞到容器外——zoom 已废弃） */
+/* ⚠️ 2026-10-22 沉浸歌词重做（用户要求「学一学 AM 的审美」）：
+   Apple Music 的特征：
+     · 当前行**明显更大更粗更亮**，其他行**明显变暗变小**
+     · 行距宽松，有呼吸感
+     · 当前行不换行（超出时自动缩字号）
+     · 过渡平滑（opacity + transform + color）
+   原来的问题是所有行都 rgba(255,255,255,.9) 一样亮，
+   只靠 scale(1.04) 区分，几乎看不出来。 */
+.am-imm-lyr .am-lyr-line {
+  font-size: calc(26px * var(--am-imm-lyr-scale, 1) * var(--am-imm-fs, 1));
+  font-weight: 600;
+  line-height: var(--am-imm-lyr-lh, 1.45);
+  padding: calc(13px * var(--am-imm-fs, 1)) 0;
+  /* 非当前行：明显变暗（AM 风格） */
+  color: rgba(255, 255, 255, .34);
+  transform-origin: left center;
+  transform: scale(.94);
+  transition: color .35s var(--am-ease-out), opacity .35s var(--am-ease-out),
+              transform .42s cubic-bezier(.22,1,.36,1),
+              font-weight .35s var(--am-ease-out);
+  opacity: .82;
+  will-change: transform, color;
+}
+/* 相邻行（上一句/下一句）：略亮一档，形成层次 */
+.am-imm-lyr .am-lyr-line.near {
+  color: rgba(255, 255, 255, .52);
+  transform: scale(.97);
+  opacity: .90;
+}
+/* 当前行：纯白 + 明显放大 + 加粗 + 完全不透明 */
+.am-imm-lyr .am-lyr-line.cur {
+  color: #fff;
+  font-weight: 700;
+  transform: scale(1.0);
+  opacity: 1;
+  letter-spacing: -.012em;
+}
+/* AM 风格：歌词行不折行（超出容器时由 fitLyrLines 自动缩字号） */
+.am-imm-lyr .am-lyr-line { white-space: nowrap; }
+/* 双语译文行单独占一行，不参与 nowrap */
+.am-imm-lyr .am-lyr-line .tly { white-space: normal; }
+/* 远处行：更暗 */
+.am-imm-lyr .am-lyr-line.far {
+  color: rgba(255, 255, 255, .26);
+  opacity: .72;
+}
+.am-imm-lyr .am-lyr-line .tly { font-size: calc(16px * var(--am-imm-tly-scale, 1) * var(--am-imm-fs, 1)); }
+.am-imm-lyr .am-lyr-line.far { filter: blur(2px); opacity: .45; }
+.am-imm-lyr .am-lyr-line.near { color: rgba(255,255,255,.65); }
+.am-imm-lyr .am-lyr-line.cur { color: #fff; transform: scale(1.03); filter: none; }
+.am-imm-lyr .am-lyr-empty { color: rgba(255,255,255,.5); }
+
+/* ================= V4.4：沉浸模式 · 彩胶唱片（仿 QQ 音乐） =================
+   左 = 大标题 + 常驻大歌词；右 = 旋转彩胶（圆形封面标签 + 封面取色刻纹）；底 = 全宽进度 + 传输栏。
+   颜色变量 --vinyl-c1/--vinyl-c2 由 amVizColor 封面取色注入（黑白封面回落主题强调色）；
+   背景仍走 .am-imm-bg（封面氛围 / 自定义壁纸 wp-on wp-imm 规则照常生效）。 */
+.am-imm-vinyl .am-imm-vmain { align-items: stretch; padding-bottom: 12px; }
+/* 压过「未开歌词时单列居中」规则：彩胶歌词常驻，恒双列。
+   列宽与经典双栏同方案（minmax(0, X) 约束列宽，间距由 .am-imm-main 的 column-gap 控制），
+   避免 1fr 双半屏在大屏上把标题歌词列与彩胶越拉越开 */
+#am-root.am-imm-on .am-imm-vinyl .am-imm-main { grid-template-columns: minmax(0, min(42vw, 890px)) minmax(0, min(42vw, 890px)); }
+.am-imm-vinyl .am-imm-vleft {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  justify-content: center; padding: 0 44px;
+}
+.am-imm-vinyl .am-imm-title { text-align: left; font-size: calc(30px * var(--am-imm-fs, 1)); margin-top: 0; }
+.am-imm-vinyl .am-imm-sub { text-align: left; font-size: calc(17px * var(--am-imm-fs, 1)); }
+.am-imm-vinyl .am-imm-fmt { text-align: left; }
+.am-imm-vinyl .am-imm-lyr {
+  display: block; width: 100%; max-width: none; justify-self: stretch;
+  flex: 1; min-height: 0; margin-top: 16px; padding: 40vh 8px;
+  mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
+}
+.am-imm-vinyl .am-imm-vright { display: flex; align-items: center; justify-content: center; min-height: 0; min-width: 0; }
+/* 彩胶盘体：磨砂亚克力质感——半透明盘体 backdrop-filter 磨砂透出背景，
+   刻纹 = 主色半透明同心圆交替，外加两道高光扫过（亚克力边缘反光） */
+.am-vinyl {
+  --vc1: var(--vinyl-c1, var(--am-accent));
+  --vc2: var(--vinyl-c2, var(--vc1));
+  position: relative; flex: none;
+  width: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1)); aspect-ratio: 1; border-radius: 50%;
+  background:
+    conic-gradient(from 210deg, transparent 0deg, rgba(255,255,255,.18) 16deg, transparent 38deg,
+      transparent 168deg, rgba(255,255,255,.10) 192deg, transparent 218deg),
+    color-mix(in srgb, var(--vc1) 9%, rgba(16,16,22,.16));
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid color-mix(in srgb, var(--vc1) 32%, rgba(255,255,255,.18));
+  box-shadow: 0 30px 90px rgba(0,0,0,.45),
+    inset 0 0 70px color-mix(in srgb, var(--vc1) 16%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.25);
+  /* V4.4：旋转改 rAF 惯性物理（am-render.js vinylFrame，inline transform 逐帧写入）；
+     暂停≈0 速时盘体带 am-vinyl-still，光泽动画同步暂停 */
+  will-change: transform;
+}
+/* 慢速流光：一道比盘体转速慢 7 倍的同向高光带，screen 混合只做提亮，制造亚克力材质流动感 */
+.am-vinyl::before {
+  content: ''; position: absolute; inset: 0; border-radius: 50%; z-index: 2; pointer-events: none;
+  background: conic-gradient(from 30deg,
+    transparent 0deg, rgba(255,255,255,.14) 10deg, rgba(255,255,255,.03) 24deg, transparent 46deg,
+    transparent 198deg, rgba(255,255,255,.09) 212deg, transparent 236deg);
+  mix-blend-mode: screen;
+  animation: amVinylSheen calc(var(--am-vinyl-speed, 18) * 7s) linear infinite;
+}
+@keyframes amVinylSheen { to { transform: rotate(360deg); } }
+.am-imm .am-vinyl.am-vinyl-still::before { animation-play-state: paused; }
+/* 切歌换碟：盘体短暂沉暗再亮起（只动 opacity，旋转角度始终归 rAF 管，不跳角） */
+.am-imm.am-vinyl-switch .am-vinyl { animation: amVinylSwitch .9s var(--am-ease-out); }
+@keyframes amVinylSwitch {
+  0% { opacity: 1; }
+  38% { opacity: .12; }
+  100% { opacity: 1; }
+}
+/* 右上悬挂：盘体探出右上，阴影投向左下（光从左上来），比居中模式更具悬浮感 */
+.am-imm-vinyl.am-pos-corner .am-vinyl {
+  box-shadow: -20px 42px 90px rgba(0,0,0,.52),
+    inset 0 0 70px color-mix(in srgb, var(--vc1) 16%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.25);
+}
+/* 标签圈（圆形封面区，随盘一起转）：占比由 💿 弹层「封面大小」控制（胶圈宽度随之反向） */
+.am-vinyl-label {
+  position: absolute; inset: calc((100% - var(--am-vinyl-cover, 73%)) / 2); border-radius: 50%; overflow: hidden;
+  border: 5px solid color-mix(in srgb, var(--vc2) 45%, rgba(21,21,28,.6));
+  box-shadow: 0 0 0 2px rgba(255,255,255,.10), inset 0 0 30px rgba(0,0,0,.35);
+  background: #15151c; z-index: 3; /* 压在液体层/反光层之上 */
+}
+.am-vinyl-cover { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 轴心孔 */
+.am-vinyl::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 2.6%; aspect-ratio: 1;
+  transform: translate(-50%, -50%); border-radius: 50%; z-index: 4; /* 压在液体层之上 */
+  background: rgba(12,12,18,.85); box-shadow: 0 0 0 3px rgba(255,255,255,.18);
+}
+.am-imm.am-vinyl-nohole .am-vinyl::after { display: none; } /* 💿 弹层「轴心孔」关 */
+/* 底部功能栏：全宽进度条 + 传输/音量/队列 */
+.am-imm-vbar {
+  position: relative; z-index: 1; flex: none;
+  display: flex; align-items: center; gap: 28px;
+  padding: 12px 44px 24px;
+}
+.am-imm-vbar .am-imm-prog { flex: 1; }
+.am-imm-vbar .am-imm-ctl { margin-top: 0; gap: 14px; }
+/* 浅色 + 无封面回落：彩胶盘体保持深色，仅文字走既有浅色规则（已在上方统一处理） */
+/* 唱片位置 · 右上悬挂（QQ 音乐式：盘体探出屏幕右上，由 .am-imm 的 overflow:hidden 裁边） */
+.am-imm-vinyl.am-pos-corner .am-imm-vright { align-items: flex-start; justify-content: flex-end; overflow: visible; }
+.am-imm-vinyl.am-pos-corner .am-vinyl { margin-top: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.24); margin-right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.16); }
+/* 彩胶外观弹层分段按钮（💿） */
+.am-vinylset-seg { display: flex; gap: 6px; flex: 1; }
+/* 盘面图历史缩略图条（仿壁纸历史：点按切回，hover × 删除，当前图 accent 描边） */
+.am-vinylset-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 2px 6px; }
+.am-vinylset-thumb {
+  position: relative; width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
+  cursor: pointer; border: 2px solid transparent; transition: border-color .15s, transform .15s var(--am-ease-out);
+}
+.am-vinylset-thumb:hover { transform: scale(1.08); }
+.am-vinylset-thumb.on { border-color: var(--am-accent, #c9a254); }
+.am-vinylset-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.am-vinylset-thumb-x {
+  position: absolute; top: 0; right: 0; width: 16px; height: 16px; padding: 0;
+  border: none; border-radius: 0 0 0 8px; font-size: 9px; line-height: 16px;
+  background: rgba(0,0,0,.55); color: #fff; cursor: pointer; display: none;
+}
+.am-vinylset-thumb:hover .am-vinylset-thumb-x { display: block; }
+.am-vinylset-segbtn {
+  flex: 1; border: 1px solid var(--am-border, rgba(255,255,255,.16)); border-radius: 6px;
+  background: transparent; color: var(--am-text); font-size: 12px; padding: 4px 8px; cursor: pointer;
+}
+.am-vinylset-segbtn:hover { background: var(--am-hover, rgba(255,255,255,.08)); }
+.am-vinylset-segbtn.on { border-color: var(--am-accent); color: var(--am-accent); }
+/* 沉浸队列抽屉（右侧滑出） */
+.am-imm-queue {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 340px; z-index: 2;
+  display: none; flex-direction: column;
+  background: rgba(18,18,22,.66); backdrop-filter: blur(36px); -webkit-backdrop-filter: blur(36px);
+  border-left: 1px solid rgba(255,255,255,.12);
+}
+#am-root.am-imm-q-on .am-imm-queue { display: flex; }
+/* V4.4：主界面待播清单抽屉（贴顶栏下沿右侧滑入；与沉浸队列同视觉语言） */
+.am-q-drawer {
+  position: absolute; top: 64px; right: 0; bottom: 0; width: 340px; z-index: 6;
+  display: none; flex-direction: column;
+  background: color-mix(in srgb, var(--am-bg) 82%, transparent);
+  backdrop-filter: blur(36px) saturate(1.4); -webkit-backdrop-filter: blur(36px) saturate(1.4);
+  border-left: 1px solid var(--am-sep);
+  box-shadow: -18px 0 50px rgba(0,0,0,.28);
+}
+#am-root.am-q-on .am-q-drawer { display: flex; animation: amQDrawerIn .22s var(--ease-out); }
+@keyframes amQDrawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* 顶栏队列按钮角标 */
+.am-q-badge {
+  position: absolute; right: 1px; top: 2px; min-width: 14px; height: 14px; padding: 0 3px;
+  border-radius: 7px; background: var(--am-accent); color: #fff;
+  font-size: 9px; line-height: 14px; text-align: center; font-style: normal; pointer-events: none;
+}
+/* 收回小标签：抽屉左缘外侧、垂直居中 */
+.am-imm-q-fold {
+  position: absolute; left: -26px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 68px; padding: 0;
+  border: 1px solid rgba(255,255,255,.12); border-right: none; border-radius: 10px 0 0 10px;
+  background: rgba(18,18,22,.66); backdrop-filter: blur(36px); -webkit-backdrop-filter: blur(36px);
+  color: rgba(255,255,255,.65); font-size: 14px; line-height: 1; cursor: pointer;
+}
+.am-imm-q-fold:hover { color: #fff; background: rgba(40,40,48,.8); }
+
+/* V4.3.22：歌词面板折叠/展开小标签（与沉浸队列抽屉同一交互）
+ * 挂 .am-body（面板 overflow:hidden 会裁负 left 子元素）。
+ * 面板开：贴面板左缘（right:360px，❯收回）；面板关：贴窗口右缘（right:0，❮展开） */
+.am-lyr-fold {
+  /* ⚠️ 2026-10-21：折叠箭头会盖住表格最后一列（下载按钮），
+     改成更小、更低、半透明，hover 才明显。 */
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 56px; padding: 0; z-index: 2;
+  opacity: .55;
+  border: 1px solid var(--am-sep); border-right: none; border-radius: 10px 0 0 10px;
+  background: var(--am-glass); backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  color: var(--am-text-2); font-size: 13px; line-height: 1; cursor: pointer;
+  /* z-index 2：低于表格 sticky 表头（6），避免盖住名单最后一列 */
+  transition: right .25s var(--am-ease-out);
+}
+#am-root.am-lyr-on .am-lyr-fold { right: 360px; opacity: .4; }
+.am-lyr-fold:hover { color: var(--am-text); background: var(--am-bg-2); opacity: 1; }
+#am-root.am-mini-on .am-lyr-fold { display: none; }
+
+/* ================= V3.2：AM 迷你模式 ================= */
+.am-mini { position: absolute; inset: 0; z-index: 70; display: none; flex-direction: column; background: #1b1b1f; }
+#am-root.am-mini-on .am-mini { display: flex; }
+/* 迷你时隐藏常规 AM 结构 */
+#am-root.am-mini-on .am-topbar, #am-root.am-mini-on .am-body, #am-root.am-mini-on .am-lyrics,
+#am-root.am-mini-on .am-imm, #am-root.am-mini-on::before { display: none; }
+#am-root.am-light .am-mini { background: #f6f4ef; }
+.am-mini-head { display: flex; align-items: center; gap: 10px; padding: 10px 10px 4px; flex: none; -webkit-app-region: drag; }
+.am-mini-head .am-tbtn { -webkit-app-region: no-drag; }
+.am-mini-cover { width: 46px; height: 46px; border-radius: 7px; object-fit: cover; background: rgba(128,128,128,.25); flex: none; }
+.am-mini-info { flex: 1; min-width: 0; }
+.am-mini-title { font-size: 13px; font-weight: 600; color: var(--am-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-mini-sub { font-size: 11px; color: var(--am-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.am-mini-fmt { font-size: 10px; color: var(--am-text-3); margin-top: 1px; min-height: 12px; }
+.am-mini-winbtns { display: flex; gap: 2px; flex: none; }
+.am-mini-prog { display: flex; align-items: center; gap: 8px; padding: 4px 12px 0; flex: none; }
+.am-mini-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(128,128,128,.3); cursor: pointer; }
+.am-mini-fill { height: 100%; width: 0; border-radius: 2px; background: var(--am-accent); }
+.am-mini-time { font-size: 10px; color: var(--am-text-3); min-width: 32px; text-align: center; }
+.am-mini-ctl { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px 8px; flex: none; }
+.am-mini-vol { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--am-text-2); }
+.am-mini-volin { width: 56px; accent-color: var(--am-accent); }
+.am-mini-mid { display: flex; align-items: center; gap: 4px; }
+.am-mini-play { width: 34px; height: 34px; font-size: 16px; }
+.am-mini-right { display: flex; gap: 2px; }
+/* 迷你歌词/队列面板（展开时窗口拉高，二者互斥） */
+.am-mini-lyr { display: none; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 40vh 14px; border-top: 1px solid var(--am-sep); }
+#am-root.am-mini-lyr-on .am-mini-lyr { display: block; }
+.am-mini-lyr .am-lyr-line { font-size: calc(16px * var(--am-lyr-scale, 1)); font-weight: 600; padding: 8px 0; }
+.am-mini-queue { display: none; flex: 1; min-height: 0; flex-direction: column; border-top: 1px solid var(--am-sep); }
+#am-root.am-mini-q-on .am-mini-queue { display: flex; }
+/* 迷你面板内的行配色跟随亮暗主题（共享样式默认深色，亮主题覆盖） */
+/* V4.3.13：亮色覆盖只作用于迷你模式（亮色底）；沉浸抽屉恒为深色玻璃，不能跟亮 */
+#am-root.am-light.am-mini-on .am-q-tab { background: rgba(0,0,0,.07); color: var(--am-text-2); }
+#am-root.am-light.am-mini-on .am-q-tab.cur { background: var(--am-accent); color: #fff; }
+#am-root.am-light.am-mini-on .am-q-row:hover { background: rgba(0,0,0,.06); }
+#am-root.am-light.am-mini-on .am-q-title { color: var(--am-text); }
+#am-root.am-light.am-mini-on .am-q-sub, #am-root.am-light.am-mini-on .am-q-dur { color: var(--am-text-3); }
+#am-root.am-light.am-mini-on .am-q-empty { color: var(--am-text-3); }
+
+/* V4.4：主界面待播清单抽屉亮色主题覆盖（沉浸抽屉恒为深色玻璃，不跟亮） */
+#am-root.am-light .am-q-drawer .am-q-tab { background: rgba(0,0,0,.07); color: var(--am-text-2); }
+#am-root.am-light .am-q-drawer .am-q-tab.cur { background: var(--am-accent); color: #fff; }
+#am-root.am-light .am-q-drawer .am-q-row:hover { background: rgba(0,0,0,.06); }
+#am-root.am-light .am-q-drawer .am-q-row.cur { background: rgba(250,45,85,.14); }
+#am-root.am-light .am-q-drawer .am-q-title { color: var(--am-text); }
+#am-root.am-light .am-q-drawer .am-q-sub,
+#am-root.am-light .am-q-drawer .am-q-dur { color: var(--am-text-3); }
+#am-root.am-light .am-q-drawer .am-q-empty { color: var(--am-text-3); }
+#am-root.am-light .am-q-drawer .am-q-del { color: var(--am-text-3); }
+#am-root.am-light .am-q-drawer .am-q-del:hover { color: var(--am-text); background: rgba(250,45,85,.18); }
+#am-root.am-light .am-q-drawer .am-cmt-text { color: var(--am-text); }
+#am-root.am-light .am-q-drawer .am-cmt-meta { color: var(--am-text-3); opacity: 1; }
+#am-root.am-light .am-q-drawer .am-imm-q-fold {
+  background: var(--am-bg); color: var(--am-text-3); border-color: var(--am-sep);
+}
+#am-root.am-light .am-q-drawer .am-imm-q-fold:hover { color: var(--am-text); background: rgba(0,0,0,.05); }
+
+/* ================= V3.5.8：在线歌曲下载按钮 / 歌单收藏 ================= */
+.am-dl-btn { background:none; border:none; color:rgba(255,255,255,.45); font-size:14px; cursor:pointer; padding:2px 6px; border-radius:6px; min-width:30px; }
+.am-dl-btn:hover { color:#fff; background:rgba(255,255,255,.12); }
+.am-dl-btn:disabled { opacity:.7; cursor:default; }
+.am-light .am-dl-btn { color:rgba(0,0,0,.4); }
+.am-light .am-dl-btn:hover { color:#000; background:rgba(0,0,0,.08); }
+.am-chip-x { opacity:.45; margin-left:6px; font-size:11px; }
+.am-chip-x:hover { opacity:1; color:#ff6b6b; }
+span.am-chip { cursor:pointer; display:inline-flex; align-items:center; }
+
+/* ---- V3.5.19：评论面板（沉浸/迷你共享队列面板的第三页签） ---- */
+.am-cmt-row { padding: 10px 4px; border-bottom: 1px dashed rgba(128,128,128,.18); }
+.am-cmt-text { font-size: 13px; line-height: 1.6; color: inherit; word-break: break-word; }
+.am-cmt-meta { font-size: 11px; opacity: .5; margin-top: 4px; }
+/* V4.3.20：评论文字配色分场景——沉浸抽屉恒为深色半透明底，浅色主题下 inherit 会变深字看不清 → 强制白；
+ * 浅色迷你面板是浅底（#f6f4ef），反过来强制深字 */
+.am-imm-queue .am-cmt-text { color: #fff; }
+.am-imm-queue .am-cmt-meta { color: rgba(255,255,255,.55); opacity: 1; }
+#am-root.am-light.am-mini-on .am-cmt-text { color: var(--am-text); }
+#am-root.am-light.am-mini-on .am-cmt-meta { color: var(--am-text-3); opacity: 1; }
+
+/* ================= V4.1：AM 界面动效体系 =================
+ * 原则：只动 transform/opacity（GPU 合成层，不触发布局）；
+ * 缓动统一 --ease-out「先快后柔」；时长分级 --dur-micro/.18s、--dur-comp/.28s、--dur-page/.42s；
+ * html[data-motion="reduced"] 缩短时长；html[data-motion="off"] 全局关停。 */
+:root {
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --dur-micro: .18s;
+  --dur-comp: .28s;
+  --dur-page: .42s;
+}
+html[data-motion="reduced"] { --dur-micro: .1s; --dur-comp: .13s; --dur-page: .16s; }
+/* 系统级「减少动效」偏好自动映射为精简档 */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="off"]) { --dur-micro: .1s; --dur-comp: .13s; --dur-page: .16s; }
+}
+html[data-motion="off"] #am-root, html[data-motion="off"] #am-root *,
+html[data-motion="off"] #am-root::before {
+  animation: none !important; transition: none !important var(--am-ease-out);
+}
+
+/* ---- 主界面入场错峰（仅首次挂载：am-render mount() 加 .am-enter，1s 后移除） ---- */
+@keyframes amEnterDown { from { opacity: 0; transform: translateY(-14px); } }
+@keyframes amEnterLeft { from { opacity: 0; transform: translateX(-24px); } }
+@keyframes amEnterUp { from { opacity: 0; transform: translateY(14px); } }
+#am-root.am-enter .am-topbar { animation: amEnterDown var(--dur-page) var(--ease-out) backwards; }
+#am-root.am-enter .am-side { animation: amEnterLeft var(--dur-page) var(--ease-out) .08s backwards; }
+#am-root.am-enter .am-side > * { animation: amEnterLeft var(--dur-page) var(--ease-out) backwards; }
+#am-root.am-enter .am-side > *:nth-child(2) { animation-delay: .12s; }
+#am-root.am-enter .am-side > *:nth-child(3) { animation-delay: .16s; }
+#am-root.am-enter .am-side > *:nth-child(4) { animation-delay: .2s; }
+#am-root.am-enter .am-side > *:nth-child(5) { animation-delay: .24s; }
+#am-root.am-enter .am-side > *:nth-child(6) { animation-delay: .28s; }
+#am-root.am-enter .am-side > *:nth-child(n+7) { animation-delay: .32s; }
+#am-root.am-enter .am-content > * { animation: amEnterUp var(--dur-page) var(--ease-out) .18s backwards; }
+#am-root.am-enter .am-vizbar { animation: amEnterUp var(--dur-page) var(--ease-out) .3s backwards; }
+
+/* ---- 视图/导航切换：内容区错相淡入上浮（renderView 重建时触发，窗口化表格作为整块动画） ---- */
+@keyframes amViewIn { from { opacity: 0; transform: translateY(8px); } }
+.am-content.am-vsw > * { animation: amViewIn var(--dur-comp) var(--ease-out) backwards; }
+.am-content.am-vsw > *:nth-child(2) { animation-delay: .05s; }
+.am-content.am-vsw > *:nth-child(n+3) { animation-delay: .09s; }
+
+/* ---- 切歌时刻 ---- */
+/* 氛围背景 dip-fade：单伪层无法真 crossfade，先淡出 180ms 换图再淡入（am-render swapBg） */
+#am-root.am-bgout::before { opacity: 0; }
+/* 封面卡片弹入 */
+@keyframes amCoverIn { from { opacity: 0; transform: scale(.85); } }
+.am-np-cover.am-swap, .am-imm-cover.am-swap, .am-mini-cover.am-swap, .am-lyr-cover.am-swap {
+  animation: amCoverIn var(--dur-micro) var(--ease-out);
+}
+/* 标题/艺人文本：上浮淡出 → 新文本下移淡入（am-render 两阶段 class） */
+.am-np-text { position: relative; }
+.am-np-title, .am-np-sub { transition: opacity .14s var(--am-ease-out), transform .14s var(--am-ease-out); }
+.am-np-text.am-tx-out .am-np-title, .am-np-text.am-tx-out .am-np-sub { opacity: 0; transform: translateY(-6px); }
+.am-np-text.am-tx-in .am-np-title, .am-np-text.am-tx-in .am-np-sub { animation: amViewIn var(--dur-micro) var(--ease-out); }
+
+/* ---- 播放控制微交互 ---- */
+/* 播放/暂停图标形变（刷新时图标变化触发 am-ico-sw） */
+@keyframes amIcoSw { 0% { opacity: .2; transform: scale(.6); } 100% { opacity: 1; transform: scale(1); } }
+.am-ico-sw { animation: amIcoSw var(--dur-micro) var(--ease-out); }
+/* 进度条：位置脉冲之间线性插值平滑（seek 跳变也变为滑行） */
+.am-np-prog i { transition: width .25s linear, background .15s; }
+.am-imm-fill { transition: width .25s linear; }
+.am-mini-fill { transition: width .25s linear; }
+/* V4.3.21：音量条 hover 展开重构——旧方案 width 0→84px 布局动画在顶栏拖拽区反复触发命中重测，
+ * hover 抖动抽搐；改为绝对定位浮层，只动 opacity/位移，不挤布局 */
+.am-vol { position: relative; }
+.am-vol input[type="range"] {
+  position: absolute; left: 32px; top: 50%; transform: translateY(-50%);
+  width: 96px; height: auto; padding: 9px 8px; /* 加大命中区：裸条只有 4px 高很难点 */
+  border-radius: 8px;
+  opacity: 0; pointer-events: none; z-index: 6;
+  /* 底色走主题玻璃变量（--am-card 未定义，旧写法黑色兜底在亮色模式下黑块看不清） */
+  background: var(--am-glass, rgba(30,30,30,.92));
+  border: 1px solid var(--am-sep, rgba(255,255,255,.08));
+  backdrop-filter: var(--am-blur, blur(24px)); -webkit-backdrop-filter: var(--am-blur, blur(24px));
+  box-shadow: var(--am-shadow, 0 4px 14px rgba(0,0,0,.3));
+  transition: opacity var(--dur-micro) var(--am-ease-out);
+}
+.am-vol:hover input[type="range"], .am-vol input[type="range"]:focus,
+.am-vol.vol-open input[type="range"] { opacity: 1; pointer-events: auto; }
+/* V4.3.22 修复：图标与音量条间有 2px 空隙，鼠标经过空隙时 :hover 断裂、音量条瞬间
+ * pointer-events:none（该属性不参与过渡），导致音量条没等鼠标移到就消失。
+ * 用仅悬停时生效的隐形桥覆盖图标右缘→音量条整片区域，保持 hover 链路不断。
+ * pointer-events:none 默认态保证常态不遮挡右侧独占/定位按钮。 */
+.am-vol::after {
+  content: ''; position: absolute;
+  left: 30px; top: -8px; bottom: -8px; width: 118px;
+  z-index: 5; pointer-events: none;
+}
+.am-vol:hover::after, .am-vol:focus-within::after, .am-vol.vol-open::after { pointer-events: auto; }
+/* 行内迷你按钮/弹层项补齐按压反馈 */
+.am-mini-btn { transition: opacity .12s, color .12s, transform .1s var(--am-ease-out); }
+.am-mini-btn:active { transform: scale(.88); }
+.am-nav { transition: background .15s, transform .1s var(--am-ease-out); }
+.am-nav:active { transform: scale(.97); }
+.am-chip { transition: background .15s, color .15s, border-color .15s, transform .1s var(--am-ease-out); }
+.am-chip:active { transform: scale(.95); }
+
+/* ---- 弹层与面板：从触发点生长 ---- */
+@keyframes amPopIn { from { opacity: 0; transform: scale(.94) translateY(-4px); } }
+.am-pop.on { animation: amPopIn var(--dur-micro) var(--ease-out); transform-origin: top right; }
+
+/* ---- 外壳模式切换 ---- */
+@keyframes amImmIn { from { opacity: 0; transform: scale(1.05); } }
+#am-root.am-imm-on .am-imm { animation: amImmIn var(--dur-page) var(--ease-out); }
+#am-root.am-imm-on .am-imm-cover { animation: amCoverIn var(--dur-page) var(--ease-out) .06s backwards; }
+#am-root.am-mini-on .am-mini { animation: amImmIn var(--dur-comp) var(--ease-out); }
+@keyframes amSlideL { from { opacity: 0; transform: translateX(40px); } }
+#am-root.am-imm-q-on .am-imm-queue { animation: amSlideL var(--dur-comp) var(--ease-out); }
+/* 歌词面板宽度过渡已有（.25s width）；换用统一缓动 */
+.am-lyrics { transition: width var(--dur-comp) var(--ease-out); }
+
+/* ---- 歌词氛围：整组重建（切歌/外观变更）时逐行浮入 ---- */
+@keyframes amLyrIn { from { opacity: 0; transform: translateY(12px); } }
+.am-lyr-fresh .am-lyr-line { animation: amLyrIn var(--dur-page) var(--ease-out) backwards; }
+.am-lyr-fresh .am-lyr-line:nth-child(2) { animation-delay: .04s; }
+.am-lyr-fresh .am-lyr-line:nth-child(3) { animation-delay: .07s; }
+.am-lyr-fresh .am-lyr-line:nth-child(4) { animation-delay: .1s; }
+.am-lyr-fresh .am-lyr-line:nth-child(5) { animation-delay: .13s; }
+.am-lyr-fresh .am-lyr-line:nth-child(6) { animation-delay: .16s; }
+.am-lyr-fresh .am-lyr-line:nth-child(n+7) { animation-delay: .18s; }
+
+/* ---- 应用内输入对话框（window.anniePrompt；挂 body，CSS 变量全部带兜底值，主题外也可用） ---- */
+@keyframes amFadeIn { from { opacity: 0; } }
+.am-prompt-ov {
+  position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, .42);
+  display: flex; align-items: center; justify-content: center;
+  animation: amFadeIn var(--dur-micro, .18s) ease;
+}
+.am-prompt {
+  min-width: 320px; padding: 14px;
+  background: var(--am-glass, rgba(38, 38, 38, .92)); border: 1px solid var(--am-sep, rgba(255, 255, 255, .1));
+  border-radius: 12px; box-shadow: var(--am-shadow, 0 12px 40px rgba(0, 0, 0, .45));
+  backdrop-filter: var(--am-blur, blur(24px)); -webkit-backdrop-filter: var(--am-blur, blur(24px));
+  color: var(--am-text, #f5f5f7); font: 13px/1.5 var(--am-font, "Microsoft YaHei UI", sans-serif);
+  animation: amPopIn var(--dur-micro, .18s) var(--ease-out, ease);
+}
+.am-prompt .am-pop-h { color: inherit; }
+.am-prompt-in {
+  width: 100%; box-sizing: border-box; margin: 10px 0 14px;
+  border: 1px solid var(--am-sep, rgba(255, 255, 255, .14)); outline: none; border-radius: 8px;
+  background: var(--am-glass-2, rgba(128, 128, 128, .12)); color: inherit;
+  padding: 8px 12px; font: 13px var(--am-font, "Microsoft YaHei UI", sans-serif);
+}
+.am-prompt-in:focus { border-color: var(--am-accent, #fa2d55); }
+.am-prompt-btns { display: flex; justify-content: flex-end; gap: 8px; }
+/* 非 AM 主题下对话框按钮的全局兜底（am-btn 变量在 #am-root 上定义） */
+.am-prompt .am-btn { background: rgba(128, 128, 128, .18); color: inherit; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.am-prompt .am-btn.am-btn-accent { background: var(--am-accent, #fa2d55); color: #fff; }
+/* V4.4.2：续播确认弹窗的消息行 */
+.am-resume-msg { margin: 10px 0 14px; font-size: 13px; opacity: .88; word-break: break-all; }
+
+/* ---- 音量图标按钮（点击静音） ---- */
+.am-vol .am-vol-ico { width: 30px; height: 30px; font-size: 14px; flex: none; }
+
+/* ================= V4.3.8：歌曲视图 A–Z 首字母索引栏 =================
+ * 悬浮于内容区右缘、垂直居中，磨砂小胶囊；无曲目的字母置灰不可点，
+ * 滚动时当前字母 accent 高亮（azSyncActive 联动）。 */
+.am-az {
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%); z-index: 8;
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+  padding: 7px 3px; border-radius: 11px;
+  background: var(--am-glass-2); border: 1px solid var(--am-sep);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  user-select: none; box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+  transition: right .25s var(--am-ease-out); /* 与歌词面板宽度过渡同步，歌词展开/收起时索引栏跟随 */
+}
+/* 歌词面板展开（360px）时索引栏左移到歌曲列表右缘，保持悬浮在曲目行上方 */
+#am-root.am-lyr-on .am-az { right: 374px; }
+.am-az-l {
+  width: 15px; text-align: center; font-size: 9px; line-height: 1.65; font-weight: 700;
+  color: var(--am-text-2); border-radius: 5px; cursor: pointer;
+  transition: color .12s var(--am-ease-out), background .12s var(--am-ease-out);
+}
+.am-az-l:hover { color: var(--am-accent); background: var(--am-hover); }
+.am-az-l.cur { color: var(--am-accent); }
+.am-az-l.off { opacity: .28; cursor: default; pointer-events: none; }
+/* V4.3.16：悬浮回顶部（滚过 ~1.5 屏浮出；歌词面板展开时跟随左移） */
+.am-backtop {
+  position: absolute; right: 22px; bottom: 22px; z-index: 9;
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text);
+  font-size: 17px; line-height: 1; cursor: pointer;
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  opacity: 0; pointer-events: none; transform: translateY(10px);
+  transition: opacity .18s var(--am-ease-out), transform .18s var(--am-ease-out), right .25s var(--am-ease-out), background .12s var(--am-ease-out), color .12s var(--am-ease-out);
+}
+.am-backtop.on { opacity: 1; pointer-events: auto; transform: none; }
+/* V4.3.19：切歌格式 OSD（底部居中，避开右下角的设备切换提示与回顶部按钮） */
+#am-fmt-osd {
+  position: absolute; left: 50%; bottom: 72px; z-index: 9;
+  max-width: min(70%, 480px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 6px 13px; border-radius: 14px; font-size: 12px;
+  border: 1px solid var(--am-sep); background: var(--am-glass-2); color: var(--am-text-2);
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  opacity: 0; transform: translateX(-50%) translateY(8px); pointer-events: none;
+  transition: opacity .25s var(--am-ease-out), transform .25s var(--am-ease-out);
+}
+#am-fmt-osd.on { opacity: 1; transform: translateX(-50%); }
+#am-root.am-mini-on #am-fmt-osd, #am-root.am-imm-on #am-fmt-osd { bottom: 14px; }
+.am-backtop:hover { background: var(--am-accent); color: var(--am-accent-ink); border-color: transparent; }
+#am-root.am-lyr-on .am-backtop { right: 382px; }
+/* 迷你/沉浸模式下内容区被顶栏取代，索引栏隐藏 */
+#am-root.am-mini-on .am-az, #am-root.am-imm-on .am-az,
+#am-root.am-mini-on .am-backtop, #am-root.am-imm-on .am-backtop { display: none; }
+/* 索引跳转/定位播放时，行顶部预留 sticky 表头 + 一行的高度，避免首行被表头遮挡（非窗口化路径由 scrollIntoView 走这里） */
+.am-table tbody .am-tr { scroll-margin-top: 100px; }
+.am-info-ov { position: fixed; inset: 0; z-index: 80; display: none;
+  background: rgba(0, 0, 0, .26); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.am-info-ov.on { display: block; }
+
+/* L/R 电平条 */
+#am-root.am-lr-off .am-imm-info-lr { display: none !important; }
+.am-imm-info-lr { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 6px; }
+.am-imm-info-lr-row { display: flex; align-items: center; gap: 8px; }
+.am-imm-info-lr-lab { width: 12px; font-size: 11px; opacity: .55; letter-spacing: .5px; }
+.am-imm-info-lr-track { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--am-text) 12%, transparent); overflow: hidden; }
+.am-imm-info-lr-fill { display: block; height: 100%; width: 0%; border-radius: 2px; background: linear-gradient(90deg, var(--am-accent), color-mix(in srgb, var(--am-accent) 45%, #fff)); transition: width .08s linear; }
+
+
+/* 顶栏整体是 -webkit-app-region: drag（可拖动窗口），里面的元素默认也被算进拖拽区，
+   真实鼠标点击会被系统吞掉——CDP 注入事件绕过这层，所以调试能点、手点没反应。
+   格式胶囊要能点，必须显式 no-drag。 */
+.am-badge, .am-fmt, .am-np-row .am-badge { -webkit-app-region: no-drag; }
+/* 9) 主界面歌词面板：上下渐隐遮罩（和沉浸模式 .am-imm-lyr 同一套写法） */
+.am-lyr-scroll {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+}
+/* 2) 待播角标：am-dot = 6px 圆点（数字不显示）；其余两种模式沿用原气泡样式 */
+.am-q-badge.am-dot {
+  right: 2px; top: 3px; min-width: 6px; width: 6px; height: 6px; padding: 0;
+  border-radius: 50%; overflow: hidden; background: var(--am-text-2); color: transparent;
+  font-size: 0; line-height: 0; box-shadow: none; opacity: .4;
+  transition: opacity .15s var(--am-ease-out);
+}
+.am-tbtn:hover .am-q-badge.am-dot, .am-tbtn.on .am-q-badge.am-dot { opacity: .85; }
+/* 1) 音量条改为「竖直、向下弹出」：原来向右盖住 ⛶ / − 等按钮。
+      竖直滑块用「水平条整体 rotate(-90deg)」实现——Chrome 的 writing-mode 竖直滑块
+      滑钮在横轴上会有 1~2px 的偏心，旋转法沿用水平方向久经验证的居中（thumb margin-top 补半格），
+      左右绝对对得齐。旋转后：0 在下、100 在上。 */
+.am-vol { position: relative; }
+.am-vol input[type="range"] {
+  left: 50%; right: auto; top: calc(100% + 8px); bottom: auto;
+  /* 布局盒 112×30，绕自身中心转 -90° 后视觉尺寸 30×112；
+     translateY 补 (112-30)/2 = 41，让视觉顶边正好落在图标下方 8px */
+  transform: translateX(-50%) translateY(41px) rotate(-90deg);
+  width: 112px; height: 30px; padding: 0 14px; box-sizing: border-box;
+}
+/* 悬停隐形桥跟着变窄变高（原桥向右铺 118px，正是挡按钮的元凶） */
+.am-vol::after {
+  left: 50%; right: auto; top: 100%; bottom: auto; transform: translateX(-50%);
+  width: 52px; height: 128px;
+}
+/* 音量条现在单独浮在下方，不再贴着按钮底色，需要一条看得见的槽 */
+.am-vol input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: color-mix(in srgb, var(--am-text) 22%, transparent);
+}
+.am-vol input[type="range"]::-webkit-slider-thumb { margin-top: -4px; }
+/* 3) 顶栏封面可点进沉浸模式——必须 no-drag，否则点击被窗口拖拽区吃掉（这就是「点了没反应」的根因） */
+.am-np-cover {
+  -webkit-app-region: no-drag; cursor: pointer;
+  transition: transform .15s var(--am-ease-out), filter .15s var(--am-ease-out);
+}
+.am-np-cover:hover { filter: brightness(1.12); transform: scale(1.04); }
+.am-np-cover:active { transform: scale(.97); }
+/* 4) 排序下拉：原生 <select> 的展开列表由系统绘制（蓝底高亮），没法跟皮肤统一，
+      改成「胶囊按钮 + .am-pop 弹层」（见 am-dom.js 的 sortDropdown）。 */
+.am-sort-dd { flex: none; position: relative; display: inline-flex; }
+.am-sort-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 12px 0 14px; border: 0; border-radius: 9px;
+  background: var(--am-glass-2); color: var(--am-text);
+  font: 600 13px var(--am-font); cursor: pointer;
+  transition: background-color .15s var(--am-ease-out);
+}
+.am-sort-btn:hover { background-color: var(--am-hover); }
+.am-sort-btn.on { background-color: var(--am-hover); }
+.am-sort-chev { flex: none; opacity: .65; transition: transform .18s var(--am-ease-out); }
+.am-sort-dd.open .am-sort-chev { transform: rotate(180deg); }
+.am-sort-dd.open .am-sort-btn { background-color: var(--am-hover); }
+.am-sort-pop { min-width: 150px; }
+.am-sort-pop .am-pop-item { white-space: nowrap; }
+.am-pl-actions .am-sort-dd { margin: 0; }
+/* 5) 顶栏「更多」：低频按钮不再弹层，就地收进一条可横向展开的收缩栏 */
+.am-tb-more {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  max-width: 0; overflow: hidden; opacity: 0; pointer-events: none;
+  /* 收起时容器宽度 0，但它在顶栏这一行里仍占「左右各一个 6px gap」，
+     于是 💬 → ‹ 的空隙变成 12px（其它图标之间都是 6px）。
+     用 -6px 右外边距抵掉右边那个 gap：收起 6px、展开 6px，两头都对齐。 */
+  margin-right: -6px;
+  transition: max-width .26s cubic-bezier(.25,.8,.3,1), opacity .2s var(--am-ease-out), margin-right .26s cubic-bezier(.25,.8,.3,1);
+}
+.am-tb-more.open { max-width: 520px; opacity: 1; pointer-events: auto; margin-right: 0; }
+.am-tb-more.no-anim { transition: none var(--am-ease-out); } /* 恢复上次展开状态时不要播一遍动画 */
+
+/* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
+/* ⚠️ 2026-10-22 首句居中（用户要求「第一句开始就得居中，上面宁肯留空」）：
+   原来这里是 padding: 0 26px 40vh（顶部 0），第一句就贴在容器顶部，
+   想居中它需要负 scrollTop，不可能。
+   改成上下都留 40vh，这样第一句也能滚到正中央。 */
+#am-root .am-lyr-scroll { padding: 50vh 26px; }
+#am-root .am-imm-lyr { padding-top: 50vh; padding-bottom: 50vh; }
+#am-root .am-imm-vinyl .am-imm-lyr { padding: 0 8px 40vh 0; }
+/* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
+   = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
+#am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
+#am-root .am-imm-vinyl .am-imm-vleft { padding-left: 0; }
+/* V4.4.8：右上悬挂 = 圆心到上边、到右边距离相等（落在右上角对角线）
+   偏移与盘体宽度同公式，调大小时跟手 */
+#am-root .am-imm-vinyl.am-pos-corner .am-imm-vright { position: static; }
+#am-root .am-imm-vinyl.am-pos-corner .am-vinyl {
+  position: absolute; margin: 0;
+  right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+  top:   calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+}
+/* V4.4.8：彩胶长标题不再撑破布局——最多两行、超出省略 */
+#am-root .am-imm-vinyl .am-imm-title {
+  white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.am-tb-more > * { flex: none; }
+/* 窗口三键原来的 margin-left:4px 会让展开按钮右侧多出 4px，清零 */
+.am-winbtns { margin-left: 0; gap: 4px; }
+/* 三键按钮收窄到与其它工具栏按钮同宽（原 40px 让图标显得又小又散） */
+.am-winbtns .am-tbtn { width: 34px; border-radius: 8px; }
+.am-win-ico { display: block; }
+/* 收藏按钮：未收藏=空心描边，已收藏=主题色实心（默认红） */
+.am-fav-ico { display: block; }
+.am-fav-btn.on, .am-fav-btn.on:hover { color: var(--am-accent); }
+.am-fav-btn.on .am-fav-ico path { fill: currentColor; }
+.am-fav-btn.on .am-fav-ico { animation: amFavPop .28s cubic-bezier(.25,.8,.3,1); }
+@keyframes amFavPop { 0% { transform: scale(.82); } 55% { transform: scale(1.14); } 100% { transform: scale(1); } }
+/* 顶栏歌曲信息行里的收藏键：比工具栏按钮略小一号，跟 38px 封面同一视觉重量；
+   再往格式徽标贴一点（负左边距吃掉一半行内 gap），并轻微下移 2px 让视觉重心落在文字基线上 */
+.am-np-row .am-fav-btn { width: 28px; height: 28px; border-radius: 8px; margin: 0 0 0 4px; position: relative; left: 3px; top: 0px; }
+.am-more-chev { transition: transform .26s cubic-bezier(.25,.8,.3,1); }
+.am-tb-more-btn.on .am-more-chev { transform: rotate(180deg); }
+/* 6) A–Z 索引条与歌词面板那把「❮/❯」把手都会撞：把手在窗口右缘占 26px，
+      索引条原来 right:14px 正好压在它上面；歌词面板开着时把手挪到面板左缘（right:360 + 26），
+      原规则只让到 374px 也不够。两态各让一次。 */
+#am-root .am-az { right: 40px; }
+#am-root.am-lyr-on .am-az { right: 392px; }
+/* 7) 定位当前播放：坐在「回顶部」正上方的圆钮（复用 .am-backtop 的外观与显隐机制） */
+/* 两个圆钮原来用 1px border 画描边，在非整数缩放下会变成 0.88px 且左右落点不同像素，
+   圆心视觉上会偏。改成 border:0 + inset 阴影画描边——描边永远精确贴在盒子内缘，
+   圆和里面的图标都严格同心。 */
+.am-backtop {
+  border: 0; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 0 1px var(--am-sep), 0 4px 16px rgba(0, 0, 0, .25);
+}
+.am-backtop-ico { display: block; }
+.am-locate-fab { right: 22px; bottom: 70px; }
+.am-locate-ico { display: block; }
+#am-root.am-lyr-on .am-locate-fab { right: 382px; }
+.am-mini-btn { display: inline-flex; align-items: center; justify-content: center; line-height: 1; vertical-align: middle; }
+/* 操作列原来是 overflow:hidden + text-overflow:ellipsis，宽度只够两个按钮；
+   播放列表视图里三个按钮（26x3=78px）超出内容盒，浏览器就在右端画一个「…」，
+   看着像多出一个三点图标。改成可见溢出，让第三个按钮完整显示。 */
+.am-table .am-c-acts { overflow: visible !important; text-overflow: clip !important; }
+/* 歌曲行拖拽落点：和侧栏歌单一样用 2px 强调色插入线（上/下沿）代替整行红框 */
+.am-tr.drop-before { box-shadow: inset 0 2px 0 0 var(--am-accent); }
+.am-tr.drop-after { box-shadow: inset 0 -2px 0 0 var(--am-accent); }
+.am-mini-btn.faved .am-fav-ico path { fill: currentColor; }
+/* 8) 顶栏高度（2026-10-21 v5）：84px——用户要求「播放控件图标太小」，加大后给大按钮留空间 */
+.am-topbar { height: 84px; }
+/* 5) 右侧 A–Z 索引条不再常驻：默认隐形，鼠标移到那条窄条上才淡入（窄条本身仍可点） */
+.am-az { opacity: 0; transition: opacity .18s var(--am-ease-out); }
+.am-az:hover, .am-az:focus-within { opacity: 1; }
+
+/* V4.4.8：顶栏进度条左侧的时间数字改为左对齐——这样它的字形起点与顶栏封面左边缘同一条线
+   （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
+#am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
+/* V4.4.8：封面 + 歌名整体再左移 5px（微调）；♥ 与音质胶囊位置不变 */
+#am-root .am-np-cover { margin-left: -5px; }
+#am-root .am-np-text { margin-right: 5px; }
+/* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
+   宽度 500px，右侧按钮组展开时自动收窄，不会重叠 */
+/* ⚠️ 2026-10-21：进度条区域要居中在「播放控件」和「工具按钮」之间。
+   实测（窗口 1219px）：播放控件右边缘 260，工具按钮左边缘 887。
+   居中 = 让 .am-np 在剩余空间里水平居中 → 用 margin: 0 auto。
+   但父级是 flex + 后面还有 .am-tb-right，所以要配合 flex: 1 + max-width。 */
+/* ⚠️ 2026-10-22 重构顶栏三段式布局（修「进度条宽度塌缩成 0 / 跑到窗口外」）：
+   之前用 margin:auto 想把 .am-np 居中，但把 .am-tb-right 的 margin-left:auto
+   也去掉了，两侧都在抢 flex 空间 → .am-np 被挤出窗口。
+   现在改成标准三段式：
+     左：播放控件（flex: none）
+     中：进度区（flex: 1 + 居中对齐 + max-width）
+     右：工具按钮（flex: none + margin-left: auto 推到底）
+   这样进度区稳占中间剩余空间，宽度永远不会塌成 0。 */
+#am-root .am-topbar .am-np {
+  /* ⚠️ 2026-10-22 最终布局：
+     三段式 flex。关键点——
+       · .am-np 有 max-width:440px，所以它不会吃掉全部剩余空间；
+       · 剩余空间必须由 .am-tb-right 的 margin-left:auto 吸收，
+         否则工具按钮会贴在中段右边、右侧留一大片空白（用户反馈的就是这个）。
+       · .am-np 用 flex:0 1 440px（不长大，只按基准宽），保证宽度稳定不塌。 */
+  flex: 0 1 440px !important;
+  max-width: 440px !important;
+  min-width: 200px !important;
+  margin: 0 16px !important;
+}
+#am-root .am-topbar .am-transport {
+  flex: 0 0 auto !important;
+  margin-left: 0 !important;
+}
+#am-root .am-topbar .am-tb-right {
+  /* ← 关键：auto 把工具按钮推到最右侧，吸收所有剩余空间 */
+  margin-left: auto !important;
+  flex: 0 0 auto !important;
+}
+/* V4.4.8 展开「更多」时图标挤压中间块：右侧剩余时长与 ♥/胶囊 向左压一下 */
+@keyframes am-np-nudge {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(-6px); }
+  100% { transform: translateX(0); }
+}
+/* 收起时中间块变宽：右侧剩余时长与 ♥/胶囊 向右弹一下
+ 
+   进度条轨道与左侧已播时间数字动不起来 */
+@keyframes am-np-nudge-r {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
+#am-root.am-tb-open .am-np-progrow > .am-np-time:last-child,
+#am-root.am-tb-open .am-np-row .am-fav-btn,
+#am-root.am-tb-open .am-np-row .am-badge {
+  animation: am-np-nudge .34s var(--am-ease-out)-out both;
+}
+#am-root.am-tb-close .am-np-progrow > .am-np-time:last-child,
+#am-root.am-tb-close .am-np-row .am-fav-btn,
+#am-root.am-tb-close .am-np-row .am-badge {
+  animation: am-np-nudge-r .34s var(--am-ease-out)-out both;
+}
+
+#np-full, .np-full { display: none !important; }
+.amb-mask { display: none !important; }
+/* V4.4.8：顶栏「收藏 + 音质胶囊」整体位置微调 */
+#am-root .am-np-row { padding-right: 5px; }
+/* V4.4.8：排序胶囊与「播放 / 随机播放」同高同内边距 —— 两边文字在同一套行盒里，
+   基线才会真正齐平（之前靠 flex 居中，行盒高度 17.7 vs 18.6，永远差半像素） */
+#am-root .am-sort-btn { height: auto; padding: 8px 12px 8px 14px; }
+#am-root .am-pl-actions { gap: 8px; }
+/* 内容区 < 560px：按钮紧凑，避免换到第三行把标题顶上去 */
+#am-root.am-narrow .am-pl-actions { gap: 6px; }
+#am-root.am-narrow .am-pl-actions .am-btn { padding: 7px 12px; font-size: 12px; }
+#am-root .am-pl-actions .am-btn > svg { display: block; flex: none; }
+/* 行内三点按钮：点更实一点 */
+#am-root .am-row-more svg { stroke-width: 2.2; }
+/* ▶ 与「播放」之间留一点字距（原来挤在一起） */
+#am-root .am-pl-actions .am-btn-accent { word-spacing: 5px; }
+#am-root .am-tbtn > svg { display: block; flex: none; }
+/* 窄内容：中间的随机播放收成纯图标按钮 */
+#am-root.am-narrow .am-pl-actions .am-btn-shuffle .am-btn-label { display: none; }
+#am-root.am-narrow .am-pl-actions .am-btn-shuffle { padding-left: 10px; padding-right: 10px; }
+/* 歌单头部：封面固定顶部、信息组贴底——按钮换行时封面不再被抬高 */
+#am-root .am-pl-head { align-items: stretch; }
+#am-root .am-pl-name { width: fit-content; max-width: 100%; }   /* 改名框贴合文字，不再铺满整行 */
+#am-root .am-side::-webkit-scrollbar { width: 8px; }
+#am-root .am-side > .am-search { transition: width .18s var(--am-ease-out), border-radius .18s var(--am-ease-out); }
+#am-root .am-side > .am-search > input { transition: opacity .12s var(--am-ease-out); }
+#am-root.am-side-rail .am-side > .am-search > input { opacity: 0; }
+/* 侧栏 / 内容区滚动条：默认透明，滚动时才显形（与歌词面板一致） */
+.am-side::-webkit-scrollbar-thumb, .am-content::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.am-side.am-sb-on::-webkit-scrollbar-thumb, .am-content.am-sb-on::-webkit-scrollbar-thumb { background: var(--am-sep); }   /* 鼠标移动中显示 */
+/* 歌词区两个浮层按钮：把手只在指针移到其上时显示；设置键只在鼠标移动时显示 */
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyrics:hover .am-lyr-cover-grip { opacity: 0; }
+#am-root.am-lyrcover-has:not(.am-lyrcover-off) .am-lyrics .am-lyr-cover-grip:hover { opacity: 1; }
+#am-root .am-lyr-cover-grip.on { opacity: 1 !important; }   /* 拖动中保持 */
+#am-root .am-lyrics:hover .am-lyr-set { opacity: 0; }
+#am-root .am-lyrics.am-mv .am-lyr-set { opacity: 1; }   /* 鼠标移动时出现，停 1.2s 隐藏 */
+/* 歌词区按住拖动：抓手光标 + 拖动时禁选中 */
+#am-root .am-lyr-scroll, #am-root .am-imm-lyr, #am-root .am-mini-lyr { cursor: grab; }
+#am-root .am-lyr-scroll.am-drag-lyr, #am-root .am-imm-lyr.am-drag-lyr, #am-root .am-mini-lyr.am-drag-lyr { cursor: grabbing; user-select: none; }
+/* ===== V4.4.9：顶栏中间块间距统一 ===== */
+/* 信息行：封面 / 标题 / ♥ / 胶囊 统一 10px，去掉历史遗留的额外 5px 边距 */
+#am-root .am-np-row { gap: 0; padding-right: 0; }
+#am-root .am-np-row > * { margin-right: 10px !important; }   /* 只统一右侧间距，保留封面的 -5px 微调 */
+#am-root .am-np-row > *:last-child { margin-right: -3px !important; }   /* 胶囊右移 5px：圆角直线段的分界点对齐右侧时间 */
+/* 封面与标题整体右移 2px（封面原来偏左 5px，现为 3px） */
+#am-root .am-np-cover { margin-left: -3px; position: relative; top: 1px; }
+#am-root .am-np-text { position: relative; top: 1px; }   /* 封面与标题同步下移 1px */
+/* 清掉 ♥ 的历史 left:3px 偏移（会把 ♥/胶囊的间距带偏） */
+#am-root .am-np-row .am-fav-btn { left: 0 !important; margin-left: 0 !important; }
+/* 进度条行：左右时间盒固定 40px，左边的右对齐、左边的左对齐，两侧视觉间隙都为 8px */
+#am-root .am-np-progrow { gap: 8px; }
+#am-root .am-np-progrow > .am-np-time { width: auto !important; min-width: 0 !important; text-align: left !important; }   /* 盒子完全贴合数字 */
+#am-root .am-pl-cover, #am-root .am-pl-cover-ph { align-self: flex-start; }
+#am-root .am-pl-head .am-pl-info { align-self: flex-end; }
+/* 歌曲页头部：内容窄时搜索框可收缩/换行，避免和标题重叠 */
+/* 单行排列：空间不足时优先让搜索框收缩，而不是换行 */
+#am-root .am-view-head { flex-wrap: nowrap; }
+#am-root .am-view-search { flex: 1 1 200px; width: 200px; max-width: 200px; min-width: 72px; }
+#am-root .am-view-head .am-sort-sel, #am-root .am-view-head .am-sort-dd { flex: 0 0 auto; }
+#am-root .am-view-head .am-view-h { flex: 0 0 auto; }
+/* 内容区上边距与左边距一致（左=28 内边距 + 8 滚动条槽 = 36），封面不再贴上边 */
+/* 视觉对齐：左侧看起来是 28（8px 滚动条槽与内容同底色），所以上边也用 28 */
+#am-root .am-content { padding-top: 28px; }
+/* 滚动条两侧对称占位：表头/行左右留白一致（否则右侧多出滚动条宽度） */
+#am-root .am-content { scrollbar-gutter: stable both-edges; }
+/* ===== 可拖动分栏：侧栏 / 歌词面板宽度 ===== */
+#am-root { --am-side-w: 240px; --am-lyr-w: 360px; }
+#am-root .am-side { width: var(--am-side-w); }
+#am-root.am-lyr-on .am-lyrics { width: var(--am-lyr-w); }
+#am-root.am-lyr-on .am-lyr-fold { right: var(--am-lyr-w); }
+/* 折叠键宽 26：A–Z 再往左让开，避免叠在一起 */
+/* 展开「更多」时，在设置右边加一条竖线，与展开出来的低频按钮区分 */
+#am-root .am-tb-more::before { content: ""; display: block; width: 1px; height: 18px; flex: none; background: var(--am-sep); margin: 0; }
+/* A–Z 竖条压在最右列上：把行内收藏/三点整体左移，避免重叠 */
+/* 侧栏行健壮性：图标固定宽度、名称省略、删除键贴右，窄宽度下不散架 */
+#am-root .am-side .am-nav { min-width: 0; }
+#am-root .am-side .am-nav-ico { flex: none; width: 20px; text-align: center; }
+#am-root .am-side .am-nav-name { min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }   /* 侧栏收窄时硬裁切（与改动前一致） */
+/* 轨道模式：分组标题用一条横线代替。
+   不改盒模型（只是把文字变透明），避免整列向下漂移 1~2px */
+#am-root.am-hdr-line .am-side .am-side-h { position: relative; color: transparent; white-space: nowrap; overflow: hidden; }
+#am-root.am-hdr-line .am-side .am-side-h::before {
+  content: ""; position: absolute; left: 13px; top: 50%; width: 14px; height: 1px;
+  background: var(--am-sep); transform: translateY(-50%);
+}
+/* 胶囊收起期间先冻结图标组，避免同时位移 */
+/* ===== 侧栏「轨道模式」：窄到只留图标 ===== */
+#am-root.am-side-rail .am-side .am-nav-name,
+#am-root.am-side-rail .am-side .am-nav-badge { display: none !important; }
+/* 轨道模式固定 56px：左边距 18 + 图标 20 + 右边距 18，左右相等 */
+/* 选中态恢复成正方形：行宽 = 图标列宽 32，水平居中 */
+#am-root.am-side-rail .am-side { padding-right: 0; }   /* 抵消 9px 滚动条 */
+/* 轨道模式：行本身保持原尺寸（行高/内边距不变），只把选中背景画成 32×32 的方块 */
+#am-root.am-side-rail .am-side .am-nav { position: relative; background: transparent !important; }
+#am-root.am-side-rail .am-side .am-nav::before {
+  content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+  width: 32px; height: 32px; border-radius: 8px; background: transparent; z-index: -1;
+}
+#am-root.am-side-rail .am-side .am-nav:hover::before,
+#am-root.am-side-rail .am-side .am-nav.cur::before { background: var(--am-hover); }
+#am-root.am-side-rail .am-side .am-nav-ico { width: 20px; }
+#am-root.am-side-rail .am-side .am-nav-del { display: none; }
+#am-root.am-side-rail .am-side > .am-search {
+  width: 34px; height: 34px; padding: 0; margin: 8px auto 10px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+#am-root.am-side-rail .am-side > .am-search > input { display: none; }
+#am-root.am-side-rail .am-side > .am-search > span { display: flex; align-items: center; justify-content: center; }
+#am-root .am-side > .am-search > span.am-search-ico { display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; }
+#am-root .am-side > .am-search > span.am-search-ico svg { display: block; }
+#am-root .am-topbar .am-transport { flex: none; justify-content: space-between; }
+/* 顶栏内容块不裁剪：封面阴影/圆角、胶囊尾巴都不切（胶囊靠即时收缩避免压到图标） */
+#am-root .am-np { overflow: visible; clip-path: inset(-28px -8px -28px -28px); }   /* 仅右缘裁剪：极限拖动时胶囊不会盖到图标 */
+#am-root .am-np-row .am-badge { min-width: 0; transition: width .22s var(--am-ease-out), opacity .16s var(--am-ease-out); }
+/* 拖动分栏时：胶囊参与挤压，文字逐字被裁（而不是整段换字） */
+/* 顶栏空间不足时隐藏音质胶囊（由 JS 按 np 宽度切 am-np-tight） */
+#am-root .am-np-row .am-badge { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 只有带 A–Z 索引条的视图（歌曲页）才需要避让；歌单/专辑页保持贴右对齐 */
+#am-root:has(.am-az) .am-table .am-c-acts { padding-right: 30px; }
+/* A–Z 右缘与表格/表头右缘对齐（内容区右内边距 28 + 滚动条槽 8 = 36） */
+#am-root .am-az { right: 36px; }
+#am-root.am-lyr-on .am-az { right: calc(var(--am-lyr-w) + 36px); }
+#am-root.am-lyr-on .am-backtop { right: calc(var(--am-lyr-w) + 22px); }
+/* 拖拽手柄：贴在两条分界线上，6px 命中区 */
+#am-root .am-resize { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 30; cursor: col-resize; }
+#am-root .am-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background .15s var(--am-ease-out); }
+#am-root .am-resize:hover::after, #am-root .am-resizing .am-resize.dragging::after { background: color-mix(in srgb, var(--am-accent) 60%, transparent); }
+#am-root .am-resize-l { left: var(--am-side-w); transform: translateX(-3px); }
+#am-root .am-resize-r { right: var(--am-lyr-w); transform: translateX(3px); display: none; }
+#am-root.am-lyr-on .am-resize-r { display: block; }
+/* 拖拽时关闭宽度过渡，避免跟手延迟 */
+#am-root.am-resizing .am-lyrics, #am-root.am-resizing .am-lyr-fold { transition: none !important var(--am-ease-out); }
+/* V4.4.8：侧栏搜索框常驻底部 + 胶囊形（列表再长也滚不走） */
+/* 搜索框后面补占位，滚到底时它仍贴在底部（否则会跟着内容一起上移） */
+#am-root .am-side { padding: 8px 0 10px 8px; overflow-x: hidden; }   /* 右 2 + 滚动条 6 = 视觉 8，与左侧 8 对称 */
+/* 主界面歌词面板：右侧滚动条槽位 8px 会让右边留白比左边宽 → 从内边距里扣掉，并稳定槽位 */
+#am-root .am-lyr-scroll { padding-right: 18px !important; scrollbar-gutter: stable; }
+#am-root .am-side > .am-search {
+  position: sticky; bottom: 0; z-index: 6;
+  /* 忽略 9px 滚动条槽位：左右各留 8px（左侧由侧栏 padding 提供） */
+  margin: 8px 6px 0; width: auto; box-sizing: border-box; border-radius: 999px;
+  /* 左右与侧栏列表对齐（原来右边贴边、左边留白，不对称） */
+  border: 1px solid var(--am-sep);
+  /* V4.4.8：底色改为「封面取色」半透明（无封面时回落中性灰） */
+  background: color-mix(in srgb, var(--am-cover-c1, transparent) var(--am-cover-tint, 22%), var(--am-glass-2));
+  backdrop-filter: var(--am-blur); -webkit-backdrop-filter: var(--am-blur);
+  box-shadow: 0 4px 16px -8px rgba(0, 0, 0, .28);
+}
+/* 频谱隐藏/显示时搜索框都贴底 8px；用容器 padding 撑住 sticky，不再单独抬高 */
+/* V4.4.8：A–Z 索引条底色同样用封面取色半透明 */
+#am-root .am-az {
+  /* V4.4.8：材质对齐左下角搜索框（同比例封面取色 + 同毛玻璃 + 同边框/阴影） */
+  /* 对齐搜索框颜色：封面色降到 8%，叠一层白，并把背景降饱和 → 不再被列表行的土黄带偏 */
+  background: color-mix(in srgb, var(--am-cover-c1, transparent) var(--am-cover-tint, 22%), var(--am-glass-2));
+  border: 1px solid var(--am-sep);
+  backdrop-filter: var(--am-blur) brightness(1.06);
+  -webkit-backdrop-filter: var(--am-blur) brightness(1.06);
+  box-shadow: 0 2px 10px -4px rgba(0, 0, 0, .18);
+}
+/* V4.4.8：音量条方向修复已并入 1396 行主规则（rotate(-90deg)），此处补丁块删除（同值冗余） */
+/* V4.4.8：歌词只在末尾留白，开头不留白（主面板 + 沉浸经典 + 彩胶三处统一） */
+/* ⚠️ 2026-10-22 首句居中（用户要求「第一句开始就得居中，上面宁肯留空」）：
+   原来这里是 padding: 0 26px 40vh（顶部 0），第一句就贴在容器顶部，
+   想居中它需要负 scrollTop，不可能。
+   改成上下都留 40vh，这样第一句也能滚到正中央。 */
+#am-root .am-lyr-scroll { padding: 50vh 26px; }
+#am-root .am-imm-lyr { padding-top: 50vh; padding-bottom: 50vh; }
+/* V4.4.8：彩胶歌词左边缘对齐「进度条轨道」左端（不是左侧的时间数字）
+   = 底栏内边距 44 + 时间数字宽 36 + 间隙 10 */
+#am-root .am-imm-vinyl .am-imm-main { justify-content: flex-start; padding-left: 90px; }
+#am-root .am-imm-vinyl .am-imm-vleft { padding-left: 0; }
+/* V4.4.8：右上悬挂 = 圆心到上边、到右边距离相等（落在右上角对角线）
+   偏移与盘体宽度同公式，调大小时跟手 */
+#am-root .am-imm-vinyl.am-pos-corner .am-imm-vright { position: static; }
+#am-root .am-imm-vinyl.am-pos-corner .am-vinyl {
+  position: absolute; margin: 0;
+  right: calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+  top:   calc(min(64vh, 44vw) * var(--am-vinyl-scale, 1) * -0.22);
+}
+/* V4.4.8：顶栏进度条左侧的时间数字改为左对齐——这样它的字形起点与顶栏封面左边缘同一条线
+   （原来是 40px 盒内居中，字形比盒子右移约 11px，看起来封面偏左） */
+#am-root .am-np-progrow > .am-np-time:first-child { text-align: left; }
+/* V4.4.8：封面 + 歌名整体再左移 4px（微调）；♥ 与音质胶囊位置不变 */
+#am-root .am-np-text { margin-right: 10px; }
+/* V4.4.8 顶栏中间块放左侧、紧贴传输键（不再悬浮居中）；
+   宽度用 flex 自适应，右侧按钮组展开时自动收窄，不会重叠 */
+/* 顶栏「封面/进度条/收藏/音质」整块左缘对齐侧栏分界线（封面有 -5px 微调，这里 +5 抵消） */
+/* ⚠️ 2026-10-22：已删除这条规则（它把 margin-left:auto 覆盖成 0，
+   导致工具按钮贴在中段、右侧留一大片空白）。布局见文件上方 .am-np 那段。 */
+/* V4.4.8 展开「更多」时图标会挤压中间块，让 ♥ 与音质胶囊做一下微小回弹 */
+/* 胶囊换文案时的运动模糊（filter 用 animation，比 transition 更可靠可见） */
+@keyframes amBadgeBlur {
+  0% { filter: blur(3px); }
+  100% { filter: blur(0px); }
+}
+#am-root .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s var(--am-ease-out)-out; }
+/* 带模糊时也要把回弹一起播（否则模糊的 animation 会盖掉回弹） */
+#am-root.am-tb-open .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s var(--am-ease-out)-out, am-badge-nudge .30s var(--am-ease-out)-out both; }
+#am-root.am-badge-shift.am-tb-open .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s var(--am-ease-out)-out, am-badge-nudge .46s var(--am-ease-out)-out both; }
+#am-root.am-tb-close .am-np-row .am-badge.am-badge-blur { animation: amBadgeBlur .16s var(--am-ease-out)-out, am-badge-nudge-r .34s var(--am-ease-out)-out both; }
+@keyframes am-badge-nudge {
+  0% { transform: translateX(0); }
+  45% { transform: translateX(-6px); }
+  100% { transform: translateX(0); }
+}
+@keyframes am-badge-nudge-r {
+  0% { transform: translateX(0); }
+  45% { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
+@keyframes am-np-nudge {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(-6px); }
+  100% { transform: translateX(0); }
+}
+@keyframes am-np-nudge-r {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
+/* 展开：右侧剩余时长与 ♥ 一起向左压一下（胶囊不参与，避免宽度动画叠加） */
+#am-root.am-tb-open .am-np-progrow > .am-np-time:last-child,
+#am-root.am-tb-open .am-np-row .am-fav-btn {
+  animation: am-np-nudge .30s var(--am-ease-out)-out both;
+}
+#am-root.am-tb-open .am-np-row .am-badge {
+  animation: am-badge-nudge .30s var(--am-ease-out)-out both;
+}
+/* 胶囊需要收回时整组回弹放慢 */
+#am-root.am-badge-shift.am-tb-open .am-np-progrow > .am-np-time:last-child,
+#am-root.am-badge-shift.am-tb-open .am-np-row .am-fav-btn {
+  animation: am-np-nudge .46s var(--am-ease-out)-out both;
+}
+#am-root.am-badge-shift.am-tb-open .am-np-row .am-badge {
+  animation: am-badge-nudge .46s var(--am-ease-out)-out both;
+}
+/* 收起：右侧剩余时长与 ♥ 向右弹 */
+#am-root.am-tb-close .am-np-progrow > .am-np-time:last-child,
+#am-root.am-tb-close .am-np-row .am-fav-btn {
+  animation: am-np-nudge-r .34s var(--am-ease-out)-out both;
+}
+#am-root.am-tb-close .am-np-row .am-badge {
+  animation: am-badge-nudge-r .34s var(--am-ease-out)-out both;
+}
+/* V4.4.8：沉浸「歌曲信息」面板字号随视口缩放——取消过低的上限，
+   之前 1600px 以上字号就不变了，窗口/全屏字号差不多 */
+#am-root .am-imm-info .am-imm-info-title { font-size: clamp(22px, 2.1vw, 42px) !important; }
+#am-root .am-imm-info .am-imm-info-sub { font-size: clamp(13px, 1.02vw, 22px) !important; }
+#am-root .am-imm-info .am-imm-info-grid { font-size: clamp(12px, 0.95vw, 20px) !important; }
+/* 行列间距改成 em，跟着字号一起放大 */
+#am-root .am-imm-info .am-imm-info-grid { column-gap: 2.1em; row-gap: 0.72em; }
+/* V4.4.8：沉浸层右上角按钮与主界面窗口三键逐像素一致——
+   34×34 按钮、gap 4px、右缘 13.7px、顶 17.6px、圆角 8px、字号 13px */
+#am-root .am-imm-closebar { top: 18px; right: 16px; gap: 3px; z-index: 4; color: #fff; }
+#am-root .am-imm-infobar { top: 18px; left: 16px; }
+#am-root .am-imm-closebar .am-tbtn { width: 34px; height: 34px; border-radius: 8px; font-size: 16px; }
+/* V4.4.8：只有 □ / × 是 SVG，它们视觉占位更小，用负边距把间隙收紧 */
+#am-root .am-imm-closebar .am-tbtn > svg { margin: 0 -2px; }
+/* × 的字形本身比 □ 窄，视觉上间隙偏大→往左微移 */
+#am-root .am-imm-closebar .am-tbtn:last-child { position: relative; left: -1.5px; }
+/* V4.4.8：沉浸底部控制按钮——图标居中、常驻白色（不变红） */
+#am-root .am-imm-ctl .am-imm-btn svg { display: block; }
+/* 气泡尾巴不占视觉重心，下移 0.5px 让它看起来居中 */
+#am-root .am-imm-ctl .am-imm-btn svg { translate: 0 0.5px; }
+#am-root .am-imm-ctl .am-imm-btn svg path { stroke-width: 1.0; }   /* 统一描边：原 1.5 在 24px 下等效 2.25px，明显比邻键粗 */
+#am-root .am-imm-ctl .am-imm-btn,
+#am-root .am-imm-ctl .am-imm-btn.on { color: #fff; }
+/* V4.4.8：沉浸待播清单覆盖右上角按钮条（面板在上） */
+#am-root.am-imm-q-on .am-imm-queue { z-index: 5; }
+/* V4.4.8：待播/评论面板的提示行统一为上下等距（原 .am-q-empty margin-top:40px 使上方过大） */
+#am-root .am-imm-queue .am-q-empty,
+#am-root .am-q-drawer .am-q-empty { margin: 0 0 17px; padding: 8px 0 0; line-height: 12px; text-align: center; }
+/* V4.4.8：评论页提示行距离正文更远一些（正文行高比歌曲行大） */
+#am-root .am-imm-queue .am-q-cmt,
+#am-root .am-q-drawer .am-q-cmt { margin-bottom: 6px; }
+/* V4.4.8：主界面待播抽屉做成浮动卡片（左上/左下圆角，右与底留 8px）；沉浸式面板不动 */
+#am-root .am-q-drawer {
+  /* 顶栏高 70px：上边不越过顶栏 */
+  top: 70px; right: 0; bottom: 16px;
+  border-radius: 12px 0 0 12px;
+  /* 不能 overflow:hidden，会把左侧的收起键裁掉 */
+}
+/* V4.4.8：彩胶长标题不再撑破布局——最多两行、超出省略 */
+#am-root .am-imm-vinyl .am-imm-title {
+  white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ===== V4.4.9：侧栏吸顶胶囊 / 悬浮滚动条 / 分组表头 / 分隔线 / 多选条位置 ===== */
+#am-root.am-hdr-line .am-side .am-side-h { position: sticky; top: 0; z-index: 7; color: transparent; white-space: nowrap; overflow: hidden; }
+#am-root:has(.am-az) .am-table .am-c-acts { padding-right: 30px; }
+#am-root .am-az { right: 36px; }
+#am-root .am-az {
+  /* V4.4.8：材质对齐左下角搜索框（同比例封面取色 + 同毛玻璃 + 同边框/阴影） */
+  /* 对齐搜索框颜色：封面色降到 8%，叠一层白，并把背景降饱和 → 不再被列表行的土黄带偏 */
+  background: color-mix(in srgb, var(--am-cover-c1, transparent) 14%, color-mix(in srgb, var(--am-glass-2) 38%, transparent));
+  border: 1px solid rgba(255, 255, 255, .34);
+  backdrop-filter: blur(10px) saturate(1.12);
+  -webkit-backdrop-filter: blur(10px) saturate(1.12);
+  box-shadow: 0 2px 10px -4px rgba(0, 0, 0, .18);
+}
+#am-root .am-side .am-side-h { display: flex; align-items: center; gap: 6px; min-height: 39px; padding: 4px 10px; user-select: none; cursor: default; position: sticky; top: 0; z-index: 7; }
+#am-root:not(.am-hdr-line) .am-side .am-side-h.am-h-stuck::after { content: ""; position: absolute; left: 0; right: 0; top: 4px; bottom: 4px; border-radius: 999px; z-index: -1; background: color-mix(in srgb, var(--am-cover-c1, transparent) 12%, color-mix(in srgb, var(--am-glass-2) 42%, transparent)); backdrop-filter: blur(16px) saturate(1.05); -webkit-backdrop-filter: blur(16px) saturate(1.05); box-shadow: 0 3px 12px -8px rgba(0, 0, 0, .2); }
+#am-root .am-side-thumb { position: fixed; width: 4px; border-radius: 2px; background: var(--am-sep); z-index: 8; opacity: 0; transition: opacity .18s var(--am-ease-out); pointer-events: none; }
+#am-root .am-side-thumb.on { opacity: 1; pointer-events: auto; }
+#am-root .am-side-thumb:hover { background: color-mix(in srgb, var(--am-text) 24%, transparent); }
+#am-root .am-side .am-side-h:focus-visible { outline: 1px solid var(--am-accent); outline-offset: -1px; border-radius: 6px; }
+#am-root .am-side .am-side-h-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#am-root .am-side .am-side-h.am-grp-off .am-side-h-txt { color: var(--am-text-2); }
+#am-root .am-side .am-grp-hidden { display: none !important; }
+#am-root.am-hdr-line .am-side .am-side-h-txt { color: transparent !important; }
+#am-root .am-table.am-grp { table-layout: fixed; }
+#am-root .am-table .am-grp-tr td { padding: 0; max-width: none; border-bottom: 0; }
+#am-root .am-table .am-grp-tr { --grp-line: color-mix(in srgb, var(--am-sep) 20%, transparent); }
+#am-root .am-table .am-grp-tr .am-grp-covercell { width: 92px; height: 52px; padding: 0 !important; vertical-align: top; position: relative; z-index: 3; overflow: visible !important; background-image: linear-gradient(90deg, transparent 0, var(--grp-line) 100%); background-size: 100% 1px; background-position: 0 0; background-repeat: no-repeat; }
+#am-root .am-table .am-grp-tr .am-grp-infocell { height: 52px; box-sizing: border-box; padding: 12px 12px 0 !important; vertical-align: top; background-image: linear-gradient(90deg, var(--grp-line) 0, var(--grp-line) calc(100% - 120px), transparent 100%); background-size: 100% 1px; background-position: 0 0; background-repeat: no-repeat; }
+#am-root .am-grp-box { display: flex; align-items: flex-start; gap: 8px; height: auto; padding: 0; }
+#am-root .am-grp-box:hover { background: var(--am-hover); }
+#am-root .am-grp-cover { position: absolute; left: 12px; top: 14px; width: 78px; height: 78px; border-radius: 6px; overflow: hidden; background: var(--am-bg-elev); z-index: 2; }
+#am-root .am-grp-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#am-root .am-grp-collapsed .am-grp-cover { width: 40px; height: 40px; top: 12px; }
+#am-root .am-ms-bar.am-ms-float { margin-top: 0; }
+#am-root .am-table .am-grp-tr.am-grp-collapsed .am-grp-infocell { padding-left: 0 !important; position: relative; z-index: 4; overflow: visible !important; }
+#am-root .am-table .am-grp-tr.am-grp-collapsed .am-grp-box { margin-left: -32px; }
+#am-root .am-table .am-c-covercell { width: 92px; padding: 0 0 0 12px !important; }
+#am-root .am-grp-info { flex: 1; min-width: 0; }
+#am-root .am-grp-name { font-size: 13.5px; font-weight: 600; color: var(--am-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#am-root .am-grp-sub { font-size: 11px; color: var(--am-text-3); margin-top: 2px; }
+#am-root .am-grp-box.off .am-grp-name { color: var(--am-text-2); }
+#am-root .am-grp-draggable .am-grp-name { cursor: default; }
+#am-root .am-grp-tr.am-grp-dragging { opacity: .45; cursor: grabbing; }
+#am-root .am-grp-tr.am-grp-drop td { box-shadow: inset 0 2px 0 var(--am-accent) !important; }
+#am-root .am-grp-ghost { border-radius: 8px; overflow: hidden; opacity: .68; box-shadow: 0 12px 30px -8px rgba(0, 0, 0, .4); background: var(--am-bg); backdrop-filter: blur(6px); }
+#am-root .am-grp-ghost .am-grp-tr .am-grp-covercell, #am-root .am-grp-ghost .am-grp-tr .am-grp-infocell { height: 92px; }
+#am-root .am-table .am-grp-tr + .am-tr:hover { background: linear-gradient(90deg, transparent 0 92px, var(--am-hover) 92px); }
+#am-root .am-table .am-grp-tr + .am-tr.cur { background: linear-gradient(90deg, transparent 0 92px, var(--am-row-cur) 92px); }
+#am-root .am-table .am-grp-tr + .am-tr.cur:hover { background: linear-gradient(90deg, transparent 0 92px, var(--am-row-cur) 92px); }
+
+/* 复选框：隐藏原生控件（它会多画两个小点），由 td 伪元素自绘并居中 */
+#am-root .am-table td:has(> input.am-ms-ck) { position: relative; }
+#am-root .am-table input.am-ms-ck {
+  -webkit-appearance: none; appearance: none;
+  opacity: 0; position: absolute; left: 10px; top: 50%;
+  width: 16px; height: 16px; margin: 0; transform: translateY(-50%);
+  cursor: pointer; z-index: 3;
+}
+#am-root .am-table td:has(> input.am-ms-ck)::before {
+  content: ''; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; box-sizing: border-box; border-radius: 4px;
+  border: 1.5px solid color-mix(in srgb, var(--am-text) 40%, transparent);
+  background: transparent; pointer-events: none;
+}
+#am-root .am-table td:has(> input.am-ms-ck:checked)::before {
+  background-color: var(--am-accent);
+  border-color: var(--am-accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.3 8.4 L6.4 11.5 L12.7 4.9' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 11px 11px; background-position: center; background-repeat: no-repeat;
+}
+/* 组头整组复选框：更大、靠左 */
+#am-root .am-table input.am-grp-ck { left: 10px; width: 19px; height: 19px; }
+#am-root .am-table td.am-grp-ckcell:has(> input.am-grp-ck)::before {
+  left: 10px; width: 19px; height: 19px; border-radius: 5px; border-width: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--am-accent) 16%, transparent);
+}
+#am-root .am-table td.am-grp-ckcell:has(> input.am-grp-ck:checked)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.3 8.4 L6.4 11.5 L12.7 4.9' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 13px 13px; background-position: center; background-repeat: no-repeat;
+}
+/* 多选工具条窄窗换行，避免被右侧歌词面板裁掉 */
+#am-root .am-ms-bar { flex-wrap: wrap; row-gap: 6px; }
+/* 专辑详情头部：标题过长省略，排序下拉不被挤走 */
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-view-h {
+  flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-btn,
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-sort-btn,
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-dd,
+#am-root .am-view-head[data-hkey^="albumDetail"] > .am-select { flex: none; }
+/* 搜索框清空按钮（位置由 JS 按输入框计算） */
+#am-root .am-clear-btn, #settings-panel .am-clear-btn {
+  position: absolute; width: 17px; height: 17px; padding: 0; border: 0; border-radius: 50%;
+  background: color-mix(in srgb, var(--am-text) 16%, transparent);
+  color: var(--am-text); font-size: 10px; line-height: 17px; text-align: center;
+  cursor: pointer; z-index: 3; opacity: .75; transform: translateY(-50%);
+}
+#am-root .am-clear-btn:hover, #settings-panel .am-clear-btn:hover {
+  opacity: 1; background: color-mix(in srgb, var(--am-text) 28%, transparent);
+}
+
+/* 拖拽光标：默认箭头，按住一会儿才 grab */
+#am-root .am-tr[draggable="true"] { cursor: default; }
+#am-root .am-tr.drag-ready { cursor: grab; }
+#am-root .am-tr.drag-ready:active { cursor: grabbing; }
+/* 内容区滚动时隐藏歌词折叠按钮，避免挡住滚动条 */
+#am-root .am-lyr-fold { transition: opacity .18s var(--am-ease-out); }
+#am-root.am-rolling .am-lyr-fold { opacity: 0 !important; pointer-events: none; }
+
+/* 搜索框 / 吸顶条 / A–Z：用不受冷色偏向影响的颜色，保持半透明叠加 */
+#am-root .am-side > .am-search {
+  background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 12%, color-mix(in srgb, var(--am-glass-2) 34%, transparent));
+}
+#am-root .am-side > .am-search:hover {
+  background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 18%, color-mix(in srgb, var(--am-glass-2) 44%, transparent));
+}
+#am-root:not(.am-hdr-line) .am-side .am-side-h.am-h-stuck::after {
+  background: color-mix(in srgb, var(--am-cover-vivid, var(--am-cover-c1, transparent)) 12%, color-mix(in srgb, var(--am-glass-2) 42%, transparent));
+}
+
+/* ===== V4.5.1：侧栏排版统一 ===== */
+/* 行高 33、上下内边距 4（三种间隙一致） */
+#am-root .am-side > .am-side-h {
+  height: 33px; min-height: 33px; padding-top: 4px; padding-bottom: 4px;
+  margin-top: 0; padding-left: 10px; gap: 4px;
+}
+#am-root .am-side .am-nav { min-height: 33px; padding-top: 4px; padding-bottom: 4px; gap: 10px; }
+/* 图标在 20px 列内居中（折叠箭头不参与，保持贴左） */
+#am-root .am-side .am-nav-ico { justify-content: center; text-align: center; }
+#am-root .am-side .am-side-caret { width: 16px; min-width: 16px; justify-content: flex-start; }
+/* 分组头与相邻可见行各 +0.5px；头→头不动 */
+#am-root .am-side .am-side-h + .am-nav:not(.am-grp-hidden) { margin-top: 0.5px; }
+#am-root .am-side .am-nav:not(.am-grp-hidden) + .am-side-h { margin-top: 0.5px; }
+/* 顶部留白 8px（底部 10px），吸顶头钉在内容区顶部 */
+#am-root .am-side { padding-top: 8px; }
+#am-root .am-side > .am-side-h { top: 0; }
+/* 吸顶胶囊：高 31px（= 搜索框），上沿贴顶 */
+#am-root:not(.am-hdr-line) .am-side .am-side-h.am-h-stuck::after { top: 0; bottom: 2px; }
+/* 侧栏 SVG 图标统一尺寸 */
+#am-root .am-side .am-nav-ico > svg { width: 18px; height: 18px; display: block; }
+
+/* 文字与图标/封面垂直居中（行高收紧，避免文字整体偏下） */
+#am-root .am-side .am-nav-name { line-height: 1; display: flex; align-items: center; }
+
+/* 歌单单曲拖拽：小胶囊预览（居中跟随指针），源行淡出 */
+#am-root .am-row-src { opacity: .35; }
+.am-row-ghost {
+  position: fixed; z-index: 9999; pointer-events: none;
+  transform: translateX(-50%);
+  max-width: 320px;
+  padding: 9px 18px;
+  border-radius: 12px;
+  font-size: 13px; line-height: 20px; font-weight: 500;
+  letter-spacing: .2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--am-text, #1c1b18);
+  background: var(--am-panel, #fff);
+  border: 1px solid var(--am-line, rgba(0,0,0,.12));
+  box-shadow: 0 12px 30px rgba(0,0,0,.22);
+  opacity: .88;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+body.am-row-dragging { cursor: grabbing; }
+
+/* 落点插入线：组头也接受拖放，必须同样画出 2px 强调色线 */
+#am-root .am-table .am-grp-tr.drop-before {
+  box-shadow: inset 0 2px 0 0 var(--am-accent) !important;
+}
+#am-root .am-table .am-grp-tr.drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--am-accent) !important;
+}
+
+/* 待播清单：提示语上下 4px，列表底部 6px，最后一首封面不贴边 */
+#am-root .am-q-drawer .am-q-empty,
+#am-root .am-imm-queue .am-q-empty {
+  margin: 0 !important;
+  padding: 4px 0 !important;
+}
+#am-root .am-q-drawer .am-q-list,
+#am-root .am-imm-queue .am-q-list {
+  padding-bottom: 6px !important;
+}
+
+
+/* ===== 本轮：封面比例 / 模糊铺底 / 沉浸封面与字号 / 折叠按钮 / 面板边线 ===== */
+#am-root .am-lyr-cover { object-fit: contain; background: transparent; z-index: 4; }
+#am-root .am-lyr-cover-bg {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%) scale(1.18);
+  width: var(--am-lyrcover-size, 200px); aspect-ratio: 1;
+  border-radius: 12px; overflow: hidden;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  filter: blur(18px) saturate(1.6) brightness(1.02);
+  opacity: 1; z-index: 3; pointer-events: none;
+}
+#am-root .am-lyr-cover-bg:not([style*="url("]) { display: none; }
+#am-root.am-lyrcover-off .am-lyr-cover-bg { display: none; }
+
+#am-root .am-imm-cover {
+  aspect-ratio: auto !important; height: auto !important;
+  max-height: 74vh; width: 100%; object-fit: contain;
+}
+#am-root .am-imm-cover:not(.am-imm-wide) { transform: none !important; }
+#am-root .am-imm-cover.am-imm-wide { transform: scale(1.15) !important; }
+
+/* V4.5：原 zoom 规则（.am-imm-title/.am-imm-sub/.am-imm-fmt/时间/歌词行）已删除——
+   zoom≠1 时滚动容器的 offsetTop/scrollTop/视觉坐标三套系分离，当前行飞出容器。
+   文字缩放改由各元素 font-size 乘 var(--am-imm-fs) 实现（见歌词行/彩胶标题/时间等规则） */
+
+/* 待播清单收起按钮：与歌词面板收起按钮同一水平线并贴边 */
+#am-root .am-imm-q-fold { top: 50% !important; left: -27.5px !important; }
+
+/* B 方案：歌词面板不画左边线（连 1px 边带一起去掉，否则会显出一条白线） */
+#am-root .am-lyrics { border-left-color: transparent !important; border-left-width: 0 !important; }
+
+
+
+
+/* ==========================================================================
+   2026-10-22：禁止文字选中（用户反馈「文字内容还是会选中」）
+   ──────────────────────────────────────────────────────────────────────────
+   app.css 第 2 行本来有 `* { user-select: none }`，但 * 选择器优先级最低，
+   被 am.css 里的其他规则盖掉了（实测 #am-root 计算值是 text）。
+   这里用 !important + 高优先级选择器强制禁止，只放行歌词区（方便复制歌词）。
+   ========================================================================== */
+html,
+html body,
+#am-root,
+#am-root * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+/* 放行：输入框 / 文本域 / 可编辑区 */
+#am-root input,
+#am-root textarea,
+#am-root [contenteditable="true"],
+#am-root [contenteditable=""] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+/* 放行：歌词（用户要能复制歌词） */
+#am-root .am-lyr-scroll,
+#am-root .am-lyr-scroll *,
+#am-root .am-imm-lyr,
+#am-root .am-imm-lyr *,
+#am-root .am-mini-lyr,
+#am-root .am-mini-lyr * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+/* 放行：设置面板里的说明文字（方便复制报错信息） */
+#am-root .set-hint,
+#am-root .set-val {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+
+/* ==========================================================================
+   2026-10-23 修复「Apple Music 搜索结果：歌曲标题叠在封面底下」
+   --------------------------------------------------------------------------
+   原因：通用规则 .am-table td:nth-child(1) { width: 5%; overflow: visible }
+         窗口被歌词面板挤压时 5% 只有 30px 左右，而封面 36px + padding 12px
+         = 48px → 封面溢出到「歌曲」列，标题被压在封面底下。
+   注意：不能复用 .am-c-covercell —— 那个 class 是分组大封面（92px），语义不同。
+   ========================================================================== */
+#am-root .am-table th:first-child,
+#am-root .am-table td.am-track-covercell {
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  padding: 4px 6px 4px 8px !important;
+  overflow: hidden !important;
+  vertical-align: middle;
+}
+#am-root .am-table td.am-track-covercell .am-c-cover-hit {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; border-radius: 6px; flex: none;
+}
+#am-root .am-table td.am-track-covercell .am-c-cover {
+  width: 36px !important; height: 36px !important;
+  max-width: 36px !important; max-height: 36px !important;
+  border-radius: 6px; object-fit: cover; display: block;
+}
+
+/* ============================================================
+ * ⚠️ 2026-10-23 修复「下载板块排版混乱」
+ *
+ * 下载页表格（.am-dlt-table）复用了 .am-table 的样式，而 .am-table 的
+ * 列宽规则是为「歌曲列表」设计的（8 列：序号/封面/歌名/歌手/专辑/时长/操作…），
+ * 用的是 nth-child 的百分比：
+ *   nth-child(1)=5%, (2)=26%, (3)=16%, (4)=18%, (5)=8%, (6)=9%, (n+7)=6%
+ *
+ * 但下载页只有 7 列：# / 封面 / 歌曲名 / 进度 / 状态 / 品质 / 操作，
+ * 语义完全不同 → 被套上歌曲列表的百分比后：
+ *   · 第 5 列「状态」只剩 8%（190px 的 inline 表头 vs 8% 的内容格）
+ *   · 第 7 列「操作」只剩 6%（按钮挤成一团）
+ *   · 第 3 列「歌曲名」拿到 16%，长标题疯狂截断
+ *
+ * 修复：给下载页单独的列宽（特异性同 .am-table 规则，但在文件末尾后定义 → 覆盖），
+ * 并且用 table-layout: fixed 让表头和内容严格对齐。
+ * ============================================================ */
+.am-dlt-table {
+  table-layout: fixed;
+  width: 100%;
+}
+/* 第 1 列：序号 */
+.am-dlt-table th:nth-child(1),
+.am-dlt-table td:nth-child(1) {
+  width: 44px;
+  min-width: 44px;
+  padding-left: 8px;
+  padding-right: 4px;
+  text-align: center;
+  overflow: hidden;
+}
+/* 第 2 列：封面 */
+.am-dlt-table th:nth-child(2),
+.am-dlt-table td:nth-child(2) {
+  width: 56px;
+  min-width: 56px;
+  padding-left: 2px;
+  padding-right: 4px;
+  overflow: hidden;
+}
+/* 第 3 列：歌曲名（自适应剩余宽度） */
+.am-dlt-table th:nth-child(3),
+.am-dlt-table td:nth-child(3) {
+  width: auto;
+  min-width: 140px;
+  overflow: hidden;
+}
+/* 第 4 列：进度 */
+.am-dlt-table th:nth-child(4),
+.am-dlt-table td:nth-child(4) {
+  width: 150px;
+  min-width: 120px;
+  overflow: hidden;
+}
+/* 第 5 列：状态 */
+.am-dlt-table th:nth-child(5),
+.am-dlt-table td:nth-child(5) {
+  width: 170px;
+  min-width: 130px;
+  overflow: hidden;
+  text-align: left;
+}
+/* 第 6 列：品质 */
+.am-dlt-table th:nth-child(6),
+.am-dlt-table td:nth-child(6) {
+  width: 76px;
+  min-width: 64px;
+  overflow: hidden;
+  text-align: center;
+}
+/* 第 7 列：操作（暂停/重试/删除…） */
+.am-dlt-table th:nth-child(7),
+.am-dlt-table td:nth-child(7) {
+  width: 120px;
+  min-width: 100px;
+  overflow: hidden;
+  text-align: center;
+}
+/* 第 8 列及以后（防御：万一以后加列） */
+.am-dlt-table th:nth-child(n+8),
+.am-dlt-table td:nth-child(n+8) {
+  width: auto;
+  overflow: hidden;
+  text-align: center;
+}
+/* 下载页的封面小图统一 36×36，圆角 */
+.am-dlt-table .am-c-cover {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: cover;
+  display: block;
+}
+/* 歌名/副标题在自适应列里正常截断（别用 420px 固定上限，长列表会飘） */
+.am-dlt-table .am-dlt-name,
+.am-dlt-table .am-dlt-sub {
+  max-width: 100%;
+}
+/* 操作按钮在固定 120px 列里排成一行，不换行 */
+.am-dlt-table td:nth-child(7) {
+  white-space: nowrap;
+}
+.am-dlt-table td:nth-child(7) .am-btn,
+.am-dlt-table td:nth-child(7) button {
+  margin: 0 1px;
+}
+
+/* ⚠️ 2026-10-23 第二版：窗口只有 600~700px 时上面那套列宽仍会把「歌曲名」挤成 0px
+ * （44+56+150+170+76+120 = 616，几乎占满）。这里全面压缩固定列：
+ *   固定列合计 40+48+118+104+58+96 = 464px，歌曲名至少留 120px → 584px 起不溢出。 */
+.am-dlt-table th:nth-child(1),
+.am-dlt-table td:nth-child(1) { width: 40px; min-width: 40px; }
+.am-dlt-table th:nth-child(2),
+.am-dlt-table td:nth-child(2) { width: 48px; min-width: 48px; }
+.am-dlt-table th:nth-child(3),
+.am-dlt-table td:nth-child(3) { width: auto; min-width: 120px; }
+.am-dlt-table th:nth-child(4),
+.am-dlt-table td:nth-child(4) { width: 118px; min-width: 96px; }
+.am-dlt-table th:nth-child(5),
+.am-dlt-table td:nth-child(5) { width: 104px; min-width: 88px; }
+.am-dlt-table th:nth-child(6),
+.am-dlt-table td:nth-child(6) { width: 58px; min-width: 52px; }
+.am-dlt-table th:nth-child(7),
+.am-dlt-table td:nth-child(7) { width: 96px; min-width: 84px; }
+
+/* 状态列的文字允许换行（列窄了，长错误信息截断为省略号） */
+.am-dlt-table td:nth-child(5) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ⚠️ 2026-10-23 第三版：状态列（第 5 列）th=104 但 td=88，
+ * 差 16px = 左右 padding 不一致。统一 padding + box-sizing。 */
+.am-dlt-table th:nth-child(5),
+.am-dlt-table td:nth-child(5) {
+  padding-left: 8px;
+  padding-right: 8px;
+  box-sizing: border-box;
+}
+/* 其余列也统一 box-sizing，避免 th/td 因 padding 差异错位 */
+.am-dlt-table th,
+.am-dlt-table td {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+ * ⚠️ 2026-10-23 第四版：按实际截图继续修下载页
+ *   · 进度条轨道和深色背景几乎同色 → 看不出进度条
+ *   · 状态列 104px 太窄，「酷狗: 该曲目需要会员…」被截成「酷狗: 该...」
+ *   · 品质徽标 FLAC 后面多出省略号（宽度不够）
+ *   · 表格右侧留大片空白
+ * ============================================================ */
+
+/* 进度条：轨道亮一点，填充用主色 */
+.am-dlt-table .am-dlt-prog-track {
+  background: rgba(255, 255, 255, 0.14);
+  height: 7px;
+  border-radius: 4px;
+}
+.am-dlt-table .am-dlt-prog-fill {
+  background: var(--am-accent);
+  border-radius: 4px;
+  min-width: 2px;
+}
+/* 进度百分比文字固定宽度，避免跳动 */
+.am-dlt-table .am-dlt-pct {
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态列加宽到 132px（能显示「酷狗：需要会员…」这类前缀） */
+.am-dlt-table th:nth-child(5),
+.am-dlt-table td:nth-child(5) {
+  width: 132px;
+  min-width: 112px;
+}
+/* 品质列：徽标不溢出、字号缩小 */
+.am-dlt-table th:nth-child(6),
+.am-dlt-table td:nth-child(6) {
+  width: 64px;
+  min-width: 56px;
+}
+.am-dlt-table td:nth-child(6) .am-qbadge {
+  font-size: 10px;
+  padding: 2px 5px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  text-align: center;
+}
+
+/* 操作列：两个图标紧凑排布，不溢出 */
+.am-dlt-table th:nth-child(7),
+.am-dlt-table td:nth-child(7) {
+  width: 92px;
+  min-width: 80px;
+  white-space: nowrap;
+}
+.am-dlt-table td:nth-child(7) button {
+  width: 26px;
+  min-width: 26px;
+  max-width: 26px;
+  padding: 3px 0;
+  font-size: 12px;
+  margin: 0 2px;
+}
+
+/* 表格铺满可用宽度，去掉右侧空隙 */
+.am-dlt-table {
+  width: 100%;
+}
+
+/* ⚠️ 2026-10-23：总量未知（服务器没给 Content-Length）时的「不确定进度」动画条
+ *   —— 不让用户看到一根死掉的 0% 进度条。 */
+.am-dlt-table .am-dlt-prog-fill.indet {
+  width: 35% !important;
+  background: linear-gradient(90deg, transparent, var(--am-accent), transparent);
+  animation: am-dlt-indet 1.1s ease-in-out infinite;
+}
+@keyframes am-dlt-indet {
+  0%   { margin-left: 0%; }
+  50%  { margin-left: 65%; }
+  100% { margin-left: 0%; }
+}
+
+/* ⚠️ 2026-10-23：歌曲列表的「音质」列 */
+#am-root .am-table td.am-c-quality {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+#am-root .am-table td.am-c-quality .am-qbadge {
+  font-size: 10px;
+  padding: 2px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* ============================================================
+ * ⚠️ 2026-10-23 歌曲列表列宽修复
+ * 「音质」列加进来后，.am-table 原有的 nth-child 百分比规则（第1列5%、第2列26%…
+ * 第5列8%、第6列9%）是按旧列数写的，直接套到新布局：
+ *   · 音质列（第5列）只有 8% → FLAC 徽标被挤成省略号
+ *   · 操作列（第6列）9% ≈ 100px，两个按钮挤在一起
+ * 而 renderTrackTable 本来就用 <colgroup>（layoutCols 动态算 px、支持拖拽调宽），
+ * 这里把 th/td 的宽度交还给 colgroup / 固定列 inline 宽度。
+ * ============================================================ */
+#am-root .am-table.am-track-table th,
+#am-root .am-table.am-track-table td {
+  width: auto;
+}
+/* 音质列：居中 + 不换行 */
+#am-root .am-table.am-track-table td.am-c-quality {
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+/* 操作列：固定宽度（收藏 ♥ + 更多 ⋯），右对齐不挤压 */
+#am-root .am-table.am-track-table th:last-child,
+#am-root .am-table.am-track-table td.am-c-acts {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: visible;
+}
+/* 收藏/更多两个按钮横向排列，间距均匀 */
+#am-root .am-table.am-track-table td.am-c-acts .am-mini-btn {
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+}
+/* 「更多」按钮（⋯）：最小可见尺寸，悬停变亮 */
+#am-root .am-table.am-track-table .am-row-more {
+  opacity: .55;
+}
+#am-root .am-table.am-track-table .am-tr:hover .am-row-more {
+  opacity: 1;
+}
+
+/* ============================================================
+ * ⚠️ 2026-10-23 修复「音质徽标后面的神秘省略号」
+ *   音质列里的 .am-qbadge 原来带了 text-overflow: ellipsis + max-width:100%，
+ *   列宽不够时「FLAC 16bit」被截断显示成「FLAC ...」—— 用户以为出了 bug。
+ *   徽标是短文本，直接 nowrap 不截断；列宽本身在 colgroup 里给足（17%）。
+ * ============================================================ */
+#am-root .am-table td.am-c-quality .am-qbadge {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+/* 音质列内容居中，两侧留一点内边距 */
+#am-root .am-table.am-track-table td.am-c-quality {
+  padding-left: 4px;
+  padding-right: 8px;
+}
+/* ALAC 和 FLAC 一样是红色高亮（.hq 已由 JS 加上，这里确保颜色一致） */
+#am-root .am-qbadge.hq,
+#am-root .am-dlt-table .am-qbadge.hq {
+  color: var(--am-accent);
+  border-color: var(--am-accent);
+}
+
+/* ⚠️ 2026-10-23：音质列表头对齐修复
+ *   .am-table th 默认 text-align: left，而音质列内容（徽标）是居中的
+ *   → 表头「音质」偏左、和下面的 FLAC/MP3 徽标对不齐。
+ *   这里让音质列的表头与内容一致居中。 */
+#am-root .am-table.am-track-table th[data-col="quality"] {
+  text-align: center;
+}
+/* 其他列保持默认左对齐 —— 歌曲/艺人/专辑的表头本来就该和文字起始位对齐 */
+
+/* ⚠️ 2026-10-23：AM 板块「爱心」收藏后的红色状态（单击收藏，右键菜单） */
+#am-root .am-table td .am-dl-btn.faved,
+#am-root .am-dl-btn.faved {
+  color: var(--am-accent, #fa2d55);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--am-accent, #fa2d55) 45%, transparent);
+}
+
+
+/* ⚠️ 2026-10-23：迷你模式布局精修
+   用户反馈「空白容与、大小不均匀」。调整：
+   ① head/ctl 的 padding 均匀化，内容贴合 150 高窗口
+   ② 音量滑块/播放按钮/右侧小按钮统一垂直尺寸
+   ③ 右侧窗口按钮组收紧间距（原来 gap 过大显得散） */
+#am-root.am-mini-on .am-mini-head {
+  padding: 12px 12px 2px;
+  gap: 10px;
+  height: 64px;
+  box-sizing: border-box;
+}
+#am-root.am-mini-on .am-mini-prog {
+  padding: 2px 12px 0;
+  height: 20px;
+  box-sizing: border-box;
+}
+#am-root.am-mini-on .am-mini-ctl {
+  padding: 2px 12px 10px;
+  height: 50px;
+  box-sizing: border-box;
+}
+/* 音量滑块与图标统一高度对齐 */
+#am-root.am-mini-on .am-mini-vol { gap: 6px; height: 22px; }
+#am-root.am-mini-on .am-mini-vol input[type=range] { height: 22px; }
+/* 右侧窗口按钮收紧 */
+#am-root.am-mini-on .am-mini-winbtns { gap: 0; }
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn { width: 26px; height: 26px; }
+/* 播放控制按钮统一尺寸 */
+#am-root.am-mini-on .am-mini-ctl .am-tbtn { width: 30px; height: 30px; }
+/* 歌词/队列按钮 */
+#am-root.am-mini-on .am-mini-ctl .am-mini-btn { width: 26px; height: 26px; }
+
+
+/* ⚠️ 2026-10-23：迷你模式「置顶」按钮开启态高亮
+   （原来是 Pro 界面 #mini-bar 专属样式，迷你模式点📌完全没视觉反馈） */
+#am-root .am-mini .mini-pin-btn { transition: color .15s, background .15s; border-radius: 6px; }
+#am-root .am-mini .mini-pin-btn.on {
+  color: var(--am-accent, #fa2d55);
+  background: color-mix(in srgb, var(--am-accent, #fa2d55) 16%, transparent);
+}
+#am-root .am-mini .mini-pin-btn:hover { background: var(--am-hover, rgba(128,128,128,.16)); }
+/* 迷你进度条拖动手感：加大命中区域 */
+#am-root .am-mini .am-mini-bar { padding: 6px 0; margin: -6px 0; box-sizing: content-box; background-clip: content-box; }
+
+
+/* ⚠️ 2026-10-23 迷你模式二次精修（用户反馈「底部空白太大、右上角图标大小不均/间距太近」）
+   数据：窗口 150 → head 64 + prog 20 + ctl 50 = 134，底部剩 16px 空白。
+   ① 窗口高度 140，ctl 底部 padding 收紧到 4px
+   ② 右上角 4 个按钮统一 24×24、圆角 5px、间距 4px、字号 12px
+   ③ 置顶高亮不再撑大按钮（背景在 24×24 内） */
+#am-root.am-mini-on .am-mini-ctl {
+  padding: 2px 12px 4px;
+  height: 48px;
+}
+#am-root.am-mini-on .am-mini-prog {
+  padding: 2px 12px 0;
+  height: 20px;
+}
+/* 右上角窗口按钮组：统一尺寸 + 适中间距 */
+#am-root.am-mini-on .am-mini-winbtns { gap: 4px; }
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 24px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn.mini-pin-btn.on {
+  background: color-mix(in srgb, var(--am-accent, #fa2d55) 18%, transparent);
+}
+/* 底部控制栏按钮同样统一 */
+#am-root.am-mini-on .am-mini-ctl .am-tbtn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on .am-mini-ctl .am-mini-play { width: 30px; height: 30px; font-size: 14px; }
+/* 音量滑块与图标垂直居中对齐 */
+#am-root.am-mini-on .am-mini-vol { gap: 6px; height: 28px; align-items: center; }
+#am-root.am-mini-on .am-mini-vol > span { font-size: 14px; line-height: 1; display: inline-flex; align-items: center; }
+
+
+/* ⚠️ 2026-10-23 迷你模式三次调整（用户反馈「右上角/播放按钮太小」）
+   emoji/字符按钮的视觉大小由 font-size 决定，容器改成 24px 后字形反而更小了。
+   这里统一放大：右上角 28px/15px，播放 34px/18px，音量 30px。 */
+#am-root.am-mini-on .am-mini-ctl {
+  padding: 3px 12px 5px;
+  height: 56px;
+}
+#am-root.am-mini-on .am-mini-head { height: 66px; }
+#am-root.am-mini-on .am-mini-prog { height: 22px; }
+/* 右上角窗口按钮：28×28，字形 15px */
+#am-root.am-mini-on .am-mini-winbtns { gap: 5px; }
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn.mini-pin-btn.on {
+  background: color-mix(in srgb, var(--am-accent, #fa2d55) 18%, transparent);
+}
+/* 播放控制：34×34，字形 18px（播放按钮 36×36 / 20px） */
+#am-root.am-mini-on .am-mini-ctl .am-tbtn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+#am-root.am-mini-on .am-mini-ctl .am-tbtn:hover { background: var(--am-hover, rgba(128,128,128,.16)); }
+#am-root.am-mini-on .am-mini-ctl .am-mini-play { width: 36px; height: 36px; font-size: 20px; line-height: 36px; }
+#am-root.am-mini-on .am-mini-ctl .am-mini-btn { width: 32px; height: 32px; font-size: 16px; line-height: 32px; }
+/* 音量区：图标 17px + 滑块高 26px */
+#am-root.am-mini-on .am-mini-vol { gap: 7px; height: 32px; align-items: center; }
+#am-root.am-mini-on .am-mini-vol > span { font-size: 17px; line-height: 1; display: inline-flex; align-items: center; }
+#am-root.am-mini-on .am-mini-vol input[type=range] { height: 26px; }
+
+
+/* ⚠️ 2026-10-23 迷你模式上下空白等距化（用户反馈「上下空白不等距」）
+   精确计算：
+     窗口 154 = head 66 + prog 22 + ctl 56 + 剩余 10
+     head 内封面垂直居中 → 顶部空白 = (66-46)/2 = 10px
+     ctl 内按钮垂直居中 + padding-bottom 5 → 底部空白 = (56-34)/2 + 5 + 10 = 26px  ← 偏大
+   修正：head/ctl 去掉垂直 padding，靠固定高度居中；多余空间全部留在窗口底部，
+   再通过窗口高度微调让「顶部 10px = 底部 10px」。 */
+#am-root.am-mini-on .am-mini-head {
+  padding: 0 12px;
+  height: 66px;
+  align-items: center;
+}
+#am-root.am-mini-on .am-mini-prog {
+  padding: 0 12px;
+  height: 22px;
+  align-items: center;
+}
+#am-root.am-mini-on .am-mini-ctl {
+  padding: 0 12px;
+  height: 56px;
+  align-items: center;
+}
+
+
+/* ⚠️ 2026-10-23 迷你模式内容下移（用户反馈「整体偏上、上下空白不等距」）
+   实测截图：顶部空白 11px、底部空白 26px（差 15px）。
+   修正：head 增加 10px 顶部内边距把内容整体下移，窗口高度同步 +10，
+   让顶部/底部留白趋于一致。 */
+#am-root.am-mini-on .am-mini-head {
+  height: 76px;
+  padding: 10px 12px 0;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+
+/* ⚠️ 2026-10-23 迷你模式响应式布局（用户反馈「拖动窗口大小后 UI 不协调」）
+   原来 head/prog/ctl 都是固定像素高度 → 窗口拉大后内容不跟随，留白堆在底部。
+   改成：head 和 ctl 弹性平分剩余高度（内容始终垂直居中），prog 固定。
+   拖动窗口时整块 UI 按比例拉伸，不再出现大片空白。 */
+#am-root.am-mini-on .am-mini {
+  display: flex;
+  flex-direction: column;
+}
+#am-root.am-mini-on .am-mini-head {
+  flex: 1 1 auto;
+  min-height: 56px;
+  max-height: 120px;
+  padding: 0 12px;
+  align-items: center;
+  box-sizing: border-box;
+}
+#am-root.am-mini-on .am-mini-prog {
+  flex: none;
+  height: 22px;
+  padding: 0 12px;
+  align-items: center;
+  box-sizing: border-box;
+}
+#am-root.am-mini-on .am-mini-ctl {
+  flex: 1 1 auto;
+  min-height: 44px;
+  max-height: 100px;
+  padding: 0 12px;
+  align-items: center;
+  box-sizing: border-box;
+}
+/* 封面随 head 高度自适应（窗口拉高时封面变大，但不超过 60） */
+#am-root.am-mini-on .am-mini-cover {
+  width: auto;
+  height: min(46px, calc(100% - 20px));
+  aspect-ratio: 1;
+  max-height: 60px;
+  min-height: 32px;
+}
+/* 窗口很矮时隐藏音质行，避免文字挤压 */
+@media (max-height: 130px) {
+  #am-root.am-mini-on .am-mini-fmt { display: none; }
+}
+
+
+/* ⚠️ 2026-10-23 迷你模式图标随窗口缩放（用户需求「不同窗口尺寸各图标应缩放」）
+   原理：JS 根据窗口尺寸算出 --mini-scale（基准 360×154 = 1.0），
+   CSS 用 calc() 让右上角按钮/播放按钮/文字全部等比缩放。 */
+#am-root.am-mini-on {
+  --mini-scale: 1;
+}
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn {
+  width: calc(28px * var(--mini-scale));
+  height: calc(28px * var(--mini-scale));
+  font-size: calc(15px * var(--mini-scale));
+  line-height: calc(28px * var(--mini-scale));
+  border-radius: calc(6px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-ctl .am-tbtn {
+  width: calc(34px * var(--mini-scale));
+  height: calc(34px * var(--mini-scale));
+  font-size: calc(18px * var(--mini-scale));
+  line-height: calc(34px * var(--mini-scale));
+  border-radius: calc(8px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-ctl .am-mini-play {
+  width: calc(36px * var(--mini-scale));
+  height: calc(36px * var(--mini-scale));
+  font-size: calc(20px * var(--mini-scale));
+  line-height: calc(36px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-ctl .am-mini-btn {
+  width: calc(32px * var(--mini-scale));
+  height: calc(32px * var(--mini-scale));
+  font-size: calc(16px * var(--mini-scale));
+  line-height: calc(32px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-vol {
+  gap: calc(7px * var(--mini-scale));
+  height: calc(32px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-vol > span {
+  font-size: calc(17px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-vol input[type=range] {
+  height: calc(26px * var(--mini-scale));
+  width: calc(110px * var(--mini-scale));
+}
+/* 标题/艺人/音质也随比例缩放（大字窗口下更协调） */
+#am-root.am-mini-on .am-mini-title { font-size: calc(13px * var(--mini-scale)); }
+#am-root.am-mini-on .am-mini-sub { font-size: calc(11px * var(--mini-scale)); }
+#am-root.am-mini-on .am-mini-fmt { font-size: calc(10px * var(--mini-scale)); }
+#am-root.am-mini-on .am-mini-time { font-size: calc(10px * var(--mini-scale)); min-width: calc(32px * var(--mini-scale)); }
+#am-root.am-mini-on .am-mini-cover {
+  width: calc(46px * var(--mini-scale));
+  height: calc(46px * var(--mini-scale));
+  max-height: none;
+  min-height: none;
+  aspect-ratio: auto;
+}
+/* 进度条高度也缩放 */
+#am-root.am-mini-on .am-mini-bar { height: calc(4px * var(--mini-scale)); }
+
+
+/* ⚠️ 2026-10-23 迷你模式进出过渡动画（用户反馈「退出没有丝滑过渡」）
+   ① 迷你 UI 淡出 + 轻微缩小（120ms）
+   ② 主界面淡入 + 上浮（260ms） */
+#am-root .am-mini {
+  transition: opacity .12s ease, transform .12s ease;
+  transform-origin: center center;
+}
+#am-root.am-mini-exiting .am-mini {
+  opacity: 0;
+  transform: scale(.97);
+  pointer-events: none;
+}
+#am-root.am-main-entering .am-topbar,
+#am-root.am-main-entering .am-body,
+#am-root.am-main-entering .am-lyrics {
+  animation: amMainFadeIn .26s cubic-bezier(.22,.8,.36,1) both;
+}
+@keyframes amMainFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* 进入迷你：迷你 UI 从略大淡入（原 amImmIn 保留，这里补尺寸过渡） */
+#am-root.am-mini-on .am-mini {
+  animation: amMiniIn .22s cubic-bezier(.22,.8,.36,1) both;
+}
+@keyframes amMiniIn {
+  from { opacity: 0; transform: scale(1.02); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+
+/* ⚠️ 2026-10-23 进入迷你过渡：主界面淡出缩小（120ms） */
+#am-root.am-main-exiting .am-topbar,
+#am-root.am-main-exiting .am-body,
+#am-root.am-main-exiting .am-lyrics {
+  animation: amMainFadeOut .14s ease both;
+  pointer-events: none;
+}
+@keyframes amMainFadeOut {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(.985); }
+}
+
+
+/* ⚠️ 2026-10-23 迷你模式布局再修（用户反馈「歌词展开时封面/信息太靠上、
+   横向展开时 UI 重叠」）
+   根因：head/ctl 原来用 flex:1 + 固定高度，横向拉宽时 scale 变大，
+   封面撑爆固定高度 → 溢出压到进度条。现在改成：
+   ① head/ctl 高度由内容决定（flex: 0 0 auto），绝不压缩溢出
+   ② 封面尺寸有硬上限 60px，文字行数固定
+   ③ 歌词/队列展开时 head 强制紧凑（封面 46px），把空间全留给歌词 */
+#am-root.am-mini-on .am-mini-head {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 68px;
+  max-height: none;
+  padding: 8px 12px;
+  align-items: center;
+  box-sizing: border-box;
+}
+#am-root.am-mini-on .am-mini-ctl {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 48px;
+  max-height: none;
+  padding: 4px 12px;
+  align-items: center;
+  box-sizing: border-box;
+}
+#am-root.am-mini-on .am-mini-cover {
+  width: calc(46px * var(--mini-scale));
+  height: calc(46px * var(--mini-scale));
+  max-width: 60px;
+  max-height: 60px;
+  min-width: 32px;
+  min-height: 32px;
+  flex: none;
+}
+#am-root.am-mini-on .am-mini-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: calc(46px * var(--mini-scale));
+}
+#am-root.am-mini-on .am-mini-title {
+  line-height: 1.35;
+}
+#am-root.am-mini-on .am-mini-sub,
+#am-root.am-mini-on .am-mini-fmt {
+  line-height: 1.3;
+}
+/* ⚠️ 2026-10-23：歌词/队列展开时**保持封面与展开前一致**（用户反馈大小跳变）。
+   原来这里强制 46px，而展开前是按 --mini-scale 缩放的 → 视觉跳变。
+   现在只调 padding/间距，封面/文字尺寸继续跟随同一个 scale。 */
+#am-root.am-mini-on.am-mini-lyr-on .am-mini-head,
+#am-root.am-mini-on.am-mini-q-on .am-mini-head {
+  padding: 6px 12px;
+  min-height: 0;
+}
+/* 歌词区：占满剩余空间 + 顶部留白 */
+#am-root.am-mini-on .am-mini-lyr {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+
+/* ⚠️ 2026-10-23 新增「纯净模式」（用户需求）
+   只留：封面 / 歌名 / 进度条 / 退出纯净 / 打开主界面 / 关闭软件
+   隐藏：艺人、专辑、音质、音量、播放控制、歌词/队列按钮、最小化/置顶/收藏/下载 */
+/* ⚠️ 2026-10-23：必须用 !important —— 否则会被
+   `#am-root.am-mini-on .am-mini-winbtns .am-tbtn { display: inline-flex }`
+   （特异性 1,3,0）覆盖，导致纯净模式按钮在普通迷你模式下也显示出来。 */
+#am-root.am-mini-on:not(.am-mini-pure) .am-mini-winbtns .am-tbtn.mini-pure-only { display: none !important; }
+#am-root.am-mini-on .mini-pure-btn { display: inline-flex; }
+/* 纯净模式里的 pure-bar 按钮（退出纯净/主界面）只在纯净模式显示 */
+#am-root.am-mini-on:not(.am-mini-pure) .am-mini-pure-bar { display: none !important; }
+
+#am-root.am-mini-on.am-mini-pure .am-mini-sub,
+#am-root.am-mini-on.am-mini-pure .am-mini-fmt,
+#am-root.am-mini-on.am-mini-pure .am-mini-ctl,
+#am-root.am-mini-on.am-mini-pure .am-mini-lyr,
+#am-root.am-mini-on.am-mini-pure .am-mini-queue { display: none !important; }
+
+#am-root.am-mini-on.am-mini-pure .am-mini-head {
+  min-height: 0;
+  padding: 5px 10px 2px;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-cover {
+  width: 38px; height: 38px;
+  max-width: 38px; max-height: 38px;
+  min-width: 38px; min-height: 38px;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-info { min-height: 0; justify-content: center; }
+#am-root.am-mini-on.am-mini-pure .am-mini-title {
+  font-size: calc(13px * var(--mini-scale));
+  line-height: 1.4;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-prog {
+  height: 18px;
+  padding: 0 10px 4px;
+}
+/* 纯净模式按钮组：只显示三个专用按钮 */
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-tbtn { display: none; }
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .mini-pure-only { display: inline-flex; }
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns {
+  gap: 3px;
+  align-items: center;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .mini-pure-only {
+  width: 24px; height: 24px;
+  font-size: 13px;
+  line-height: 24px;
+  border-radius: 5px;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .mini-pure-only:hover {
+  background: var(--am-hover, rgba(128,128,128,.16));
+}
+
+/* ⚠️ 2026-10-23 纯净模式置顶按钮高亮（与普通迷你一致） */
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .mini-pin-btn.on {
+  background: color-mix(in srgb, var(--am-accent, #fa2d55) 18%, transparent);
+  color: var(--am-accent, #fa2d55);
+}
+
+
+/* ⚠️ 2026-10-23 纯净模式按钮布局（用户要求）
+   上方：📌 置顶 + ✕ 关闭软件
+   进度条下：▣ 退出纯净 + ⤢ 打开主界面 */
+#am-root.am-mini-on .am-mini-pure-bar { display: none; }
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 5px;
+  flex: none;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .am-tbtn {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  line-height: 24px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .am-tbtn:hover {
+  background: var(--am-hover, rgba(128,128,128,.16));
+}
+/* 纯净模式 head 右侧只显示纯净模式专用的 📌 和 ✕ 两个按钮
+   ⚠️ 2026-10-23：不能再用 .mini-pin-btn 选择器 —— 普通模式和纯净模式
+   各有一个置顶按钮，同时匹配会出现两个 📌。只认 .mini-pure-only。 */
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-tbtn { display: none; }
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .mini-pure-only { display: inline-flex; }
+/* 纯净模式整体更紧凑 */
+#am-root.am-mini-on.am-mini-pure .am-mini-info { padding-right: 4px; }
+
+/* ⚠️ 2026-10-23 纯净模式按钮布局（用户要求）
+   上面：最小化 — + 关闭 ✕（紧凑贴右）
+   进度条下：📌 ▣ ⤢ 三个按钮**均匀分布** */
+#am-root.am-mini-on .am-mini-pure-top { display: none; }
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-tbtn { display: none !important; }
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-mini-pure-top { display: inline-flex !important; }
+
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar {
+  display: flex;
+  justify-content: space-around;   /* 均匀分布 */
+  align-items: center;
+  padding: 2px 16px 6px;
+  flex: none;
+  gap: 0;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .am-tbtn {
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+  line-height: 30px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .am-tbtn:hover {
+  background: var(--am-hover, rgba(128,128,128,.16));
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .mini-pin-btn.on {
+  background: color-mix(in srgb, var(--am-accent, #fa2d55) 18%, transparent);
+  color: var(--am-accent, #fa2d55);
+}
+
+
+/* ⚠️ 2026-10-23 纯净模式布局重排（用户要求）
+   ① 封面/歌名下移（顶部留白）
+   ② 进度条垂直居中（占据弹性空间）
+   ③ 底部图标缩小，不占太多位置 */
+#am-root.am-mini-on.am-mini-pure .am-mini-head {
+  padding: 12px 10px 4px;     /* 顶部下移 */
+  min-height: 60px;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-prog {
+  flex: 1 1 auto;              /* 进度条占据中间的弹性空间 */
+  display: flex;
+  align-items: center;
+  height: auto;
+  min-height: 22px;
+  padding: 0 12px;
+  margin-top: 2px;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar {
+  flex: 0 0 auto;
+  padding: 0 20px 4px;
+  height: 30px;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .am-tbtn {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  line-height: 24px;
+  border-radius: 6px;
+}
+
+
+/* ⚠️ 2026-10-23 纯净模式顶部按钮（最小化 — / 关闭 ✕）放大
+   原因：纯净模式窗口高度 112，按高度算出的 --mini-scale 只有 0.8，
+   按钮被缩到 22px / 字体 12px，视觉上太小。
+   这里给纯净模式顶部按钮固定尺寸，不参与全局缩放。 */
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-tbtn.am-mini-pure-top {
+  width: 30px !important;
+  height: 30px !important;
+  font-size: 17px !important;
+  line-height: 30px !important;
+  border-radius: 7px !important;
+}
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-tbtn.am-mini-pure-top:hover {
+  background: var(--am-hover, rgba(128,128,128,.16));
+}
+/* 干净模式下顶部按钮组间距也拉开一点 */
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns { gap: 6px; }
+
+
+/* ⚠️ 2026-10-23：普通迷你模式隐藏纯净模式专用的顶部按钮（— ✕）
+   （am-mini-pure-top 之前没在隐藏规则里，退出纯净后会残留） */
+#am-root.am-mini-on:not(.am-mini-pure) .am-mini-winbtns .am-tbtn.am-mini-pure-top {
+  display: none !important;
+}
+
+/* ⚠️ 2026-10-23：迷你模式图标缩放平滑过渡
+   （展开/收起时 --mini-scale 立即更新，加 transition 避免任何一帧的硬跳） */
+#am-root .am-mini .am-tbtn,
+#am-root .am-mini .am-mini-cover {
+  transition: width .18s cubic-bezier(.22,.8,.36,1),
+              height .18s cubic-bezier(.22,.8,.36,1),
+              font-size .18s cubic-bezier(.22,.8,.36,1),
+              line-height .18s cubic-bezier(.22,.8,.36,1);
+}
+
+
+/* ⚠️ 2026-10-23 纯净模式切换平滑缩放（用户要求）
+   ① 淡出：迷你内容 opacity 0 + 轻微缩小
+   ② 淡入：恢复
+   同时给 head/prog/ctl/pure-bar 加 transition 让布局变化连贯 */
+#am-root .am-mini-head,
+#am-root .am-mini-prog,
+#am-root .am-mini-ctl,
+#am-root .am-mini-pure-bar {
+  transition: opacity .16s ease, transform .16s ease;
+}
+#am-root.am-mini-pure-switching .am-mini-head,
+#am-root.am-mini-pure-switching .am-mini-prog,
+#am-root.am-mini-pure-switching .am-mini-ctl,
+#am-root.am-mini-pure-switching .am-mini-pure-bar {
+  opacity: 0;
+  transform: scale(.97);
+}
+
+/* ⚠️ 2026-10-23 纯净模式歌词行（用户要求大字体）
+   只在该模式下显示；单行居中，超长省略 */
+#am-root .am-mini-pure-lyr { display: none; }
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-lyr {
+  display: block;
+  flex: none;
+  text-align: center;
+  /* ⚠️ 2026-10-23：17px 太大（用户反馈），改成 13px 与歌名同级别的辅助信息 */
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--am-text-2);
+  padding: 1px 12px;
+  min-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 纯净模式高度 136 下各区块重新收敛 */
+#am-root.am-mini-on.am-mini-pure .am-mini-head { padding: 8px 10px 2px; min-height: 50px; }
+#am-root.am-mini-on.am-mini-pure .am-mini-prog { flex: 0 0 auto; height: 22px; margin-top: 0; }
+
+
+/* ⚠️ 2026-10-23 迷你模式图标缩放重构（用户要求「图标在固定区块内缩放并调整垂直位置，
+   而不是固定间距」）
+   之前：按钮 width/height/font-size 全部乘 --mini-scale
+        → 窗口变大时按钮盒变大，但 gap 固定 → 区块比例和间距都失真。
+   现在：
+     ① 按钮**槽位**（区块）固定尺寸：右上角 30×30，控制栏 36×36
+     ② **图标**（font-size）在槽位内随 --mini-scale 缩放
+     ③ 槽位内 flex 居中 → 垂直位置始终正确
+     ④ 间距固定（gap 不缩放） */
+#am-root.am-mini-on .am-mini-winbtns {
+  gap: 4px;
+  align-items: center;
+}
+#am-root.am-mini-on .am-mini-winbtns .am-tbtn {
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  font-size: calc(15px * var(--mini-scale)) !important;
+  line-height: 30px !important;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on .am-mini-ctl .am-tbtn {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  font-size: calc(18px * var(--mini-scale)) !important;
+  line-height: 36px !important;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#am-root.am-mini-on .am-mini-ctl .am-mini-play {
+  width: 38px !important;
+  height: 38px !important;
+  min-width: 38px;
+  min-height: 38px;
+  font-size: calc(20px * var(--mini-scale)) !important;
+  line-height: 38px !important;
+}
+#am-root.am-mini-on .am-mini-ctl .am-mini-btn {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px;
+  min-height: 34px;
+  font-size: calc(16px * var(--mini-scale)) !important;
+  line-height: 34px !important;
+}
+/* 音量区：槽位固定，图标缩放 */
+#am-root.am-mini-on .am-mini-vol { gap: 6px; align-items: center; height: 36px; }
+#am-root.am-mini-on .am-mini-vol > span { font-size: calc(17px * var(--mini-scale)); line-height: 1; display: inline-flex; align-items: center; }
+/* 纯净模式顶部按钮同样固定槽位、图标缩放 */
+#am-root.am-mini-on.am-mini-pure .am-mini-winbtns .am-tbtn.am-mini-pure-top {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: calc(17px * var(--mini-scale)) !important;
+  line-height: 32px !important;
+  border-radius: 7px !important;
+}
+/* 纯净模式底部三个按钮：固定槽位，图标缩放 */
+#am-root.am-mini-on.am-mini-pure .am-mini-pure-bar .am-tbtn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: calc(15px * var(--mini-scale)) !important;
+  line-height: 32px !important;
+  border-radius: 7px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 控制栏三个区块垂直居中（窗口拉高时图标跟着居中） */
+#am-root.am-mini-on .am-mini-ctl { align-items: center; }
+
+
+/* ⚠️ 2026-10-23 迷你模式纵向拉伸适配（用户反馈「控件不下移、下方大量空白」）
+   原来 head/prog/ctl 都是 flex:0 固定高度堆在顶部 → 窗口拉高后空白全在底部。
+   改成 space-between：head 贴顶、prog 居中、ctl 贴底，拉伸时三块均匀分布。 */
+#am-root.am-mini-on .am-mini {
+  display: flex !important;
+  flex-direction: column !important;
+  /* ⚠️ 2026-10-23：必须 !important —— 基础规则 .am-mini{flex-direction:column} 和
+     其他分片的 display 规则可能干扰；space-between 让 head 贴顶 / prog 居中 / ctl 贴底。 */
+  justify-content: space-between !important;
+}
+#am-root.am-mini-on .am-mini-head { flex: 0 0 auto; }
+#am-root.am-mini-on .am-mini-prog { flex: 0 0 auto; }
+#am-root.am-mini-on .am-mini-ctl { flex: 0 0 auto; }
+/* 歌词/队列展开时保持正常从上往下的流动（列表占满剩余） */
+#am-root.am-mini-on.am-mini-lyr-on .am-mini,
+#am-root.am-mini-on.am-mini-q-on .am-mini {
+  justify-content: flex-start;
+  /* ⚠️ 2026-10-23：歌词/队列模式原来三块间隙全是 0（挤在一起）。
+     实测 head→prog=0、prog→ctl=0、ctl→歌词=0。
+     加 gap 8px 与普通迷你模式的间隙保持一致。 */
+  gap: 8px;
+}
+#am-root.am-mini-on.am-mini-lyr-on .am-mini-lyr,
+#am-root.am-mini-on.am-mini-q-on .am-mini-queue {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+
+/* ⚠️ 2026-10-23 迷你模式间距精修（用户要求「测量并均匀各 UI 间距」）
+   实测（360×154）:
+     head 高 68（封面 46 + 上下 padding 11） / prog 22 / ctl 56
+     间隙 head→prog 8、prog→ctl 8（space-between 已相等）
+     但 head 内部留白 11、ctl 内部 10 → 视觉上方略多
+   调整：
+     ① head 内部 padding 统一 8px（上下），封面 46 → 内容 62 高
+     ② ctl 内部 padding 统一 8px（上下）
+     ③ 间隙由 space-between 自动分配（三块之间相等） */
+#am-root.am-mini-on .am-mini-head {
+  padding: 8px 12px;
+  min-height: 62px;
+}
+#am-root.am-mini-on .am-mini-ctl {
+  padding: 8px 12px;
+  min-height: 52px;
+}
+#am-root.am-mini-on .am-mini-prog {
+  padding: 0 12px;
+  min-height: 22px;
+}
+
+/* ⚠️ 2026-10-23：控制栏三个区块禁止收缩（窗口变窄时图标被吞的根因）
+   vol / mid / rig 都是 flex 子项，默认 flex-shrink:1 会被压缩 → 右侧图标挤出可视区。 */
+#am-root.am-mini-on .am-mini-ctl > * { flex-shrink: 0; }
+#am-root.am-mini-on .am-mini-winbtns { flex-shrink: 0; }
+#am-root.am-mini-on .am-mini-vol { flex-shrink: 0; }
+
+/* ⚠️ 2026-10-23（用户要求）：歌词/队列展开时**播放控件高度必须与展开前相等**。
+   展开前 ctl 高 54px（8px padding + 36px 按钮槽位）。
+   这里给歌词模式显式锁定同样的高度与 padding，避免 flex 分配导致变高变矮。 */
+#am-root.am-mini-on.am-mini-lyr-on .am-mini-ctl,
+#am-root.am-mini-on.am-mini-q-on .am-mini-ctl {
+  flex: 0 0 54px !important;
+  height: 54px !important;
+  min-height: 54px !important;
+  max-height: 54px !important;
+  padding: 8px 12px !important;
+  box-sizing: border-box;
+  align-items: center;
+}
+/* head 同样保持一致（展开前 62px） */
+#am-root.am-mini-on.am-mini-lyr-on .am-mini-head,
+#am-root.am-mini-on.am-mini-q-on .am-mini-head {
+  flex: 0 0 62px !important;
+  height: 62px !important;
+  min-height: 62px !important;
+  max-height: 62px !important;
+  padding: 8px 12px !important;
+  box-sizing: border-box;
+  align-items: center;
+}
+/* 进度条高度也一致 */
+#am-root.am-mini-on.am-mini-lyr-on .am-mini-prog,
+#am-root.am-mini-on.am-mini-q-on .am-mini-prog {
+  flex: 0 0 22px !important;
+  height: 22px !important;
+  min-height: 22px !important;
+  max-height: 22px !important;
+}
+
+/* ⚠️ 2026-10-23（用户要求）：展开后头部三块间距 = 展开前实测间距
+   （--mini-expand-gap 由 JS 在展开前写入；没写时退回 8px） */
+#am-root.am-mini-on.am-mini-lyr-on .am-mini,
+#am-root.am-mini-on.am-mini-q-on .am-mini {
+  gap: var(--mini-expand-gap, 8px) !important;
+}
+
+/* ⚠️ 2026-10-23：contenteditable 登录输入框的占位提示 */
+.am-editable:empty::before {
+  content: attr(data-placeholder);
+  color: #888;
+  pointer-events: none;
+}
+/* 密码框占位（掩码状态下也能看到提示） */
+.am-editable-pw:empty::before {
+  content: attr(data-placeholder);
+  color: #888;
+  pointer-events: none;
+  -webkit-text-security: none;
+}

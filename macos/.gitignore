@@ -1,0 +1,22 @@
+# 构建产物
+dist/
+build/
+
+# Xcode / Swift
+*.xcodeproj/
+.swiftpm/
+*.o
+*.dSYM/
+
+# 大二进制（走 mac-runtime-v1 Release 资产，不进 git）
+assets/ubuntu.img
+assets/limactl
+assets/wrapper-lite/
+assets/am-login-package/wrapper-pkg/
+AppTemplate/AnniePlayer.app/Contents/Resources/deps/
+AppTemplate/AnniePlayer.app/Contents/Resources/lima/
+
+# 系统 / 编辑器
+.DS_Store
+*.swp
+*~

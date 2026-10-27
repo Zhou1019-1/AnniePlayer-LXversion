@@ -8,6 +8,8 @@ const crypto = require('crypto');
 let server = null;
 let boundPort = 0;
 let secret = ''; // 本次启动的握手密钥（随机生成，重启即变）
+/** 独家音源的身份标签（插件可回带，非空时必须一致） */
+const IDENTITY_TAG = '安妮音源';
 /* V4.6.1：监听就绪信号——音源沙箱加载前必须等端点真正 listen 完成，
  * 否则「插件心跳」会跑在「端点已就绪」之前 → ECONNREFUSED → 心跳假失败（已踩）。 */
 let listening = false;
@@ -30,22 +32,34 @@ function start() {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*'); // 音源沙箱子进程跨域
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-    if (req.method === 'POST' && req.url === '/annie-source-handshake') {
+    // 唯一握手协议（以「章鱼音源特供版」为准）：POST /heartbeat
+    if (req.method === 'POST' && req.url === '/heartbeat') {
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         try {
           const j = JSON.parse(body || '{}');
-          // 验证：密钥匹配 + 客户端声明是安妮音源
-          if (j.key === secret && j.client === 'annie-source') {
-            res.writeHead(200); res.end(JSON.stringify({ ok: true, ts: Date.now() })); return;
+          // 唯一判定：密钥一致（+ 声明了 tag 就必须是安妮音源）。
+          // 不再分 client / source 两套写法 —— 以「章鱼音源特供版」的 body 形状为准。
+          const tag = j.tag == null ? '' : String(j.tag).trim();
+          if (j.key === secret && (!tag || tag === IDENTITY_TAG)) {
+            // 主字段 status（插件读它）；ok 仅作等价冗余，方便日志/旧脚本一眼看懂
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              status: 'ok',
+              ok: true,
+              ts: Date.now(),
+              tag: j.tag || '',
+              ver: j.ver || '',
+            }));
+            return;
           }
         } catch { }
-        res.writeHead(403); res.end(JSON.stringify({ ok: false }));
+        res.writeHead(403); res.end(JSON.stringify({ status: 'error', ok: false }));
       });
       return;
     }
-    res.writeHead(404); res.end(JSON.stringify({ ok: false }));
+    res.writeHead(404); res.end(JSON.stringify({ status: 'error', ok: false }));
   });
   const onErr = () => { // 端口被占：换随机端口重试
     boundPort = pickPort();

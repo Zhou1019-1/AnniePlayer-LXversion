@@ -77,29 +77,15 @@ function sha256File(p) {
   if (actual !== EXPECTED_SHA256) fail('SHA256 不匹配：期望 ' + EXPECTED_SHA256 + '，实际 ' + actual + '（资产被替换/下载损坏，已阻断）');
   console.log('[setup-wrapper] SHA256 校验通过');
 
-  // ③ 解压（Windows 自带 bsdtar 对部分 zip 条目兼容性差，改用 Expand-Archive）
+  // ③ 解压（Windows 自带 bsdtar）
+  // V4.6.1 教训：新版 runner 的 bsdtar 对 zip 中 2 个目录条目报「empty or unreadable filename」
+  // 警告并以非零码退出，但 210 个实体文件已全部解出。容忍该警告，以 verifyDir 落盘校验为准。
   fs.mkdirSync(WRAPPER_DIR, { recursive: true });
   try {
-    if (process.platform === 'win32') {
-      // Windows：GitHub runner 上是 pwsh（PowerShell 7），本地可能是 powershell（Windows PowerShell）
-      // 优先 pwsh，失败回退 powershell，再失败回退 tar
-      let expanded = false;
-      for (const cmd of ['pwsh', 'powershell']) {
-        try {
-          execFileSync(cmd, ['-NoProfile', '-Command', `Expand-Archive -Path '${ZIP_PATH}' -DestinationPath '${WRAPPER_DIR}' -Force`], { stdio: 'inherit' });
-          expanded = true;
-          break;
-        } catch { /* 继续尝试下一个 */ }
-      }
-      if (!expanded) {
-        console.warn('[setup-wrapper] Expand-Archive 不可用，回退 tar');
-        execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
-      }
-    } else {
-      // Linux/macOS：tar 直解
-      execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
-    }
-  } catch (e) { fail('解压失败：' + e.message); }
+    execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
+  } catch (e) {
+    console.warn('[setup-wrapper] tar 退出码非零（部分条目被跳过），以落盘校验为准');
+  }
 
   // ④ 落盘校验，不过即红
   const bad = verifyDir();

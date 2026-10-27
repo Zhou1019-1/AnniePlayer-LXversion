@@ -77,15 +77,22 @@ function sha256File(p) {
   if (actual !== EXPECTED_SHA256) fail('SHA256 不匹配：期望 ' + EXPECTED_SHA256 + '，实际 ' + actual + '（资产被替换/下载损坏，已阻断）');
   console.log('[setup-wrapper] SHA256 校验通过');
 
-  // ③ 解压（Windows 自带 bsdtar 对部分 zip 条目兼容性差，改用 PowerShell Expand-Archive）
+  // ③ 解压（Windows 自带 bsdtar 对部分 zip 条目兼容性差，改用 Expand-Archive）
   fs.mkdirSync(WRAPPER_DIR, { recursive: true });
   try {
     if (process.platform === 'win32') {
-      // Windows：优先 Expand-Archive（兼容性更好），失败回退 tar
-      try {
-        execFileSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path '${ZIP_PATH}' -DestinationPath '${WRAPPER_DIR}' -Force`], { stdio: 'inherit' });
-      } catch (psErr) {
-        console.warn('[setup-wrapper] Expand-Archive 失败，回退 tar：' + psErr.message);
+      // Windows：GitHub runner 上是 pwsh（PowerShell 7），本地可能是 powershell（Windows PowerShell）
+      // 优先 pwsh，失败回退 powershell，再失败回退 tar
+      let expanded = false;
+      for (const cmd of ['pwsh', 'powershell']) {
+        try {
+          execFileSync(cmd, ['-NoProfile', '-Command', `Expand-Archive -Path '${ZIP_PATH}' -DestinationPath '${WRAPPER_DIR}' -Force`], { stdio: 'inherit' });
+          expanded = true;
+          break;
+        } catch { /* 继续尝试下一个 */ }
+      }
+      if (!expanded) {
+        console.warn('[setup-wrapper] Expand-Archive 不可用，回退 tar');
         execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
       }
     } else {

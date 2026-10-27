@@ -77,10 +77,21 @@ function sha256File(p) {
   if (actual !== EXPECTED_SHA256) fail('SHA256 不匹配：期望 ' + EXPECTED_SHA256 + '，实际 ' + actual + '（资产被替换/下载损坏，已阻断）');
   console.log('[setup-wrapper] SHA256 校验通过');
 
-  // ③ 解压（Windows 自带 bsdtar，zip 直解；GitHub windows runner 同）
+  // ③ 解压（Windows 自带 bsdtar 对部分 zip 条目兼容性差，改用 PowerShell Expand-Archive）
   fs.mkdirSync(WRAPPER_DIR, { recursive: true });
   try {
-    execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
+    if (process.platform === 'win32') {
+      // Windows：优先 Expand-Archive（兼容性更好），失败回退 tar
+      try {
+        execFileSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path '${ZIP_PATH}' -DestinationPath '${WRAPPER_DIR}' -Force`], { stdio: 'inherit' });
+      } catch (psErr) {
+        console.warn('[setup-wrapper] Expand-Archive 失败，回退 tar：' + psErr.message);
+        execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
+      }
+    } else {
+      // Linux/macOS：tar 直解
+      execFileSync('tar', ['-xf', ZIP_PATH, '-C', WRAPPER_DIR], { stdio: 'inherit' });
+    }
   } catch (e) { fail('解压失败：' + e.message); }
 
   // ④ 落盘校验，不过即红

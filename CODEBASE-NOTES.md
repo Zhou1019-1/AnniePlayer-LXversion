@@ -480,4 +480,9 @@
 - **判明实例来源**：诊断包/截图先核对 info.json 的 enginePath——已装版 = `E:\AnniePlayerSVLX\resources\engine\`，dev = `工作目录\engine\publish\`。
 - **规矩**：dev 回归前先 `Get-Process AnniePlayerSVLX` 杀掉已装版；npm start 后终端仍在 Running 才算 dev 真起来了。
 
+## 十五、云端发版排障（V4.6.1，2026-10-27 实锤）✅
+- **bsdtar 对 zip 目录条目的警告退出码要容忍**：`setup-wrapper.js` 用 `tar -xf` 解 wrapper-lite.zip（Windows 自带 bsdtar）。新版 GitHub runner（windows-latest 镜像更新）的 bsdtar 对 zip 里 2 个目录条目从「静默跳过」变为「警告 `empty or unreadable filename` + 非零退出码」，但 **212 个实体文件照常全部解出**。旧脚本 `execFileSync` 把非零退出当失败直接 exit 1。修复：catch 退出码仅 warn，以 verifyDir 落盘校验（关键文件 + ≥180 文件 + ≥260MB）为最终判据。✅本地实测 tar exit=0 解出 212 文件。
+- **`gh run rerun` 不含新 commit**：workflow 失败后修复代码再 `gh run rerun <id>`，跑的还是**当时触发的旧 commit**，修复不生效。修复后必须 `git tag -f vX.Y.Z && git push -f origin vX.Y.Z` 移动 tag 重新触发全新 run（Release 未发布成功前移动 tag 安全）。
+- **ffmpeg 下载源偶发 503**（gyan.dev）：release.yml 的 `setup-tools.js` 下载 ffmpeg 遇外部服务 503，直接 rerun 自愈，无需改代码。
+
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

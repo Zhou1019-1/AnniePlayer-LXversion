@@ -3740,14 +3740,18 @@
     // V4.3.22：下载任务管理选项（主进程 dlManager 持久化，改并发即时生效）
     (function () {
       if (!window.mine || !window.mine.dlGetSettings) return;
-      var dlSet = { concurrency: 3, skipExisting: true, fileNameFmt: 'artist-name', embedCover: true, embedLrc: true, embedTLrc: true, lrcTLrc: true, lrcEncoding: 'utf8' };
+      var dlSet = { concurrency: 3, skipExisting: true, fileNameFmt: 'artist-name', embedCover: true, embedLrc: true, embedTLrc: true, lrcTLrc: true, lrcEncoding: 'utf8', embedRLrc: false, embedLxLrc: false, lrcRLrc: false, lrcLxLrc: false, allowOtherSource: true };
       window.mine.dlGetSettings().then(function (s) { if (s) { dlSet = s; applyToUI(); } }).catch(function () { });
       var uiRefs = {};
+      // V4.6.3：默认开/默认关两类开关分别处理（罗马音/逐字跟洛雪一样默认关）
+      var CK_DEF_ON = ['embedCover', 'embedLrc', 'embedTLrc', 'lrcTLrc', 'allowOtherSource'];
+      var CK_DEF_OFF = ['embedRLrc', 'embedLxLrc', 'lrcRLrc', 'lrcLxLrc'];
       function applyToUI() {
         if (uiRefs.conc) uiRefs.conc.value = String(dlSet.concurrency || 3);
         if (uiRefs.skip) uiRefs.skip.checked = !!dlSet.skipExisting;
         if (uiRefs.fmt) uiRefs.fmt.value = dlSet.fileNameFmt || 'artist-name';
-        ['embedCover', 'embedLrc', 'embedTLrc', 'lrcTLrc'].forEach(function (k) { if (uiRefs[k]) uiRefs[k].checked = dlSet[k] !== false; });
+        CK_DEF_ON.forEach(function (k) { if (uiRefs[k]) uiRefs[k].checked = dlSet[k] !== false; });
+        CK_DEF_OFF.forEach(function (k) { if (uiRefs[k]) uiRefs[k].checked = dlSet[k] === true; });
         if (uiRefs.lrcEncoding) uiRefs.lrcEncoding.value = dlSet.lrcEncoding || 'utf8';
       }
       function push(patch) { window.mine.dlSetSettings(patch).then(function (s) { if (s) dlSet = s; }).catch(function () { }); }
@@ -3788,23 +3792,30 @@
         dlSet.fileNameFmt, function (v) { push({ fileNameFmt: v }); });
       r3.appendChild(uiRefs.fmt);
       s0.appendChild(r3);
-      // 嵌入到音频文件中的内容（洛雪同款）：嵌入封面 / 嵌入歌词 / 同时嵌入翻译歌词
-      function mkCkRow(key, title, hint, terms) {
+      // 嵌入到音频文件中的内容（洛雪同款）：嵌入封面 / 嵌入歌词 / 翻译 / 罗马音 / 逐字
+      function mkCkRow(key, title, hint, terms, defOff) {
         var r = markItem(el('div', 'set-row'), terms);
         var l = el('div');
         l.appendChild(el('div', '', title));
         l.appendChild(el('div', 'set-hint', hint));
         r.appendChild(l);
         uiRefs[key] = document.createElement('input');
-        uiRefs[key].type = 'checkbox'; uiRefs[key].checked = dlSet[key] !== false;
+        uiRefs[key].type = 'checkbox';
+        uiRefs[key].checked = defOff ? dlSet[key] === true : dlSet[key] !== false;
         uiRefs[key].onchange = function () { var p = {}; p[key] = uiRefs[key].checked; push(p); };
         r.appendChild(uiRefs[key]);
         s0.appendChild(r);
       }
+      // V4.6.3：自动换源下载（洛雪同款）——失败时跨平台找同歌重试
+      mkCkRow('allowOtherSource', '自动换源下载', '当前平台下载失败时，按歌名+歌手+时长在其他平台找同一首歌重试', '自动换源 下载失败 其他平台 other source');
       mkCkRow('embedCover', '嵌入封面', '把专辑封面嵌入下载的音频文件标签中', '嵌入封面 下载 embed cover');
       mkCkRow('embedLrc', '嵌入歌词', '把歌词嵌入下载的音频文件标签中', '嵌入歌词 下载 embed lyrics');
-      mkCkRow('embedTLrc', '同时嵌入翻译歌词（如果有）', '嵌入歌词时一并将翻译歌词并入', '嵌入翻译歌词 tlyric');
+      mkCkRow('embedTLrc', '同时嵌入翻译歌词（如果有）', '嵌入歌词时一并将翻译歌词并入（按时间轴对齐）', '嵌入翻译歌词 tlyric');
+      mkCkRow('embedRLrc', '同时嵌入罗马音歌词（如果有）', '嵌入歌词时一并将罗马音歌词并入（按时间轴对齐）', '嵌入罗马音歌词 rlyric romaji', true);
+      mkCkRow('embedLxLrc', '同时嵌入逐字歌词（如果有）', '逐字歌词以 awlrc 扩展标签并入（支持的播放器可逐字高亮）', '嵌入逐字歌词 lxlyric awlrc krc', true);
       mkCkRow('lrcTLrc', '旁挂歌词文件含翻译（如果有）', '生成旁挂 .lrc 时把翻译歌词写入同一文件', '歌词文件 翻译 lrc tlyric');
+      mkCkRow('lrcRLrc', '旁挂歌词文件含罗马音（如果有）', '生成旁挂 .lrc 时把罗马音歌词写入同一文件', '歌词文件 罗马音 lrc rlyric romaji', true);
+      mkCkRow('lrcLxLrc', '旁挂歌词文件含逐字歌词（如果有）', '生成旁挂 .lrc 时把逐字歌词以 awlrc 扩展标签写入', '歌词文件 逐字 lrc lxlyric awlrc', true);
       // 歌词文件编码
       var r4 = markItem(el('div', 'set-row'), '歌词编码 UTF-8 GBK lrc encoding');
       var l4 = el('div');

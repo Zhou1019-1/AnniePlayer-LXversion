@@ -147,14 +147,27 @@ async function tryTempProxy(provider, meta, type) {
  * 部分音源脚本无视 info.type，请求 flac 也返回 mp3。
  * 校验规则：请求无损档(flac/flac24bit)时，URL 明确是 mp3/m4a → 判定不符；
  * 无法判断（无扩展名且 HEAD 无 Content-Type）时放行。
+ * V4.6.3：加密容器黑名单——QQ 的 mflac/mgg 等扩展名带 flac 字样极易骗过校验
+ * （实测批量下载时音源间歇性返回 QQ 加密流，下下来是无法播放的加密文件），
+ * 任何档位一律判失败，让任务层走换源/重试。
  */
 function urlExt(url) {
   return (url.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
 }
 
+/* 平台加密容器（QMC/酷狗kgm/网易ncm/酷狗vpr 等）：内容加密，普通解码器无法播放 */
+const ENCRYPTED_EXT = new Set([
+  'mflac', 'mgg', 'mggl',                                   // QQ 音乐 QMCv2 新系
+  'qmc0', 'qmc2', 'qmc3', 'qmcflac', 'qmcogg', 'qmcra',     // QQ 音乐 QMC 老系
+  'tm0', 'tm2', 'tm3', 'tm6',                               // QQ 音乐更老系
+  'ncm',                                                    // 网易云加密
+  'kgm', 'kgma', 'kgmv', 'vpr',                             // 酷狗加密
+]);
+
 async function verifyUrlFormat(url, type) {
   const wantLossless = type === 'flac' || type === 'flac24bit';
   const ext = urlExt(url);
+  if (ENCRYPTED_EXT.has(ext)) return false; // 加密容器：任何档位判失败
   if (ext === 'flac') return wantLossless;
   if (ext === 'mp3' || ext === 'm4a' || ext === 'aac') return !wantLossless;
   if (ext && ext.length <= 5 && /^[a-z0-9]+$/.test(ext) && ext !== 'com' && ext !== 'net') {
@@ -272,9 +285,11 @@ async function search({ provider, keywords, page = 1, limit = 30 }) {
   };
 }
 
-async function songUrl({ provider, song, quality = 'hires' }) {
+async function songUrl({ provider, song, quality = 'hires', lockType = false }) {
   const meta = (song && song.meta) || song || {};
-  const candidates = qualityCandidates(quality, meta);
+  // V4.6.3：lockType（洛雪式下载）——任务锁定用户所选音质，不做降级链；
+  // 失败即任务失败由用户重试，避免「下到的不是所选项」。播放路径永远不传，行为不变。
+  const candidates = lockType ? qualityCandidates(quality, meta).slice(0, 1) : qualityCandidates(quality, meta);
   const requested = candidates[0];
   const sdk = await loadSdk();
   const mod = sdk[provider];
@@ -926,4 +941,4 @@ async function hotComments({ songmid, name, artist, limit = 15 }) {
   };
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments };
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments, verifyUrlFormat, ENCRYPTED_EXT };

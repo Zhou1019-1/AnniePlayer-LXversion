@@ -144,6 +144,30 @@ function baseNameFor(song, fmt) {
   if (fmt === 'name') return name;
   return `${artist} - ${name}`;
 }
+/* V4.6.3：落盘前魔数嗅探——URL 层校验只能看扩展名/Content-Type，无扩展名或
+ * Content-Type 伪装时加密流（QQ mflac/mgg 实测漏网）会混进来；容器头不符
+ * 视为下载失败（删半成品抛错，任务层据此换源）。 */
+function sniffMagicOk(filePath, ext) {
+  let fd;
+  try { fd = fs.openSync(filePath, 'r'); } catch { return true; } // 读不了不拦（保守放行）
+  const buf = Buffer.alloc(16);
+  let n = 0;
+  try { n = fs.readSync(fd, buf, 0, 16, 0); } catch { }
+  try { fs.closeSync(fd); } catch { }
+  if (n < 4) return false; // 空文件/截断
+  const s = (a, b) => buf.slice(a, b).toString('latin1');
+  switch (ext) {
+    case 'flac': return s(0, 4) === 'fLaC';
+    case 'mp3': return s(0, 3) === 'ID3' || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0);
+    case 'm4a': case 'aac': case 'mp4': return s(4, 8) === 'ftyp' || (buf[0] === 0xff && (buf[1] & 0xf0) === 0xf0);
+    case 'ogg': return s(0, 4) === 'OggS';
+    case 'wav': return s(0, 4) === 'RIFF';
+    case 'ape': return s(0, 4) === 'MAC ';
+    case 'dsf': return s(0, 3) === 'DSD';
+    default: return true; // 不认识的容器不拦
+  }
+}
+
 async function download(params, onProgress) {
   /* V4.6：Apple Music 音源走章鱼解密链路（downloadTrack 直接拿 Buffer，含标签/封面/歌词全套），
      不走「songUrl → 拉 URL 流式写盘」通用路径 */
@@ -151,58 +175,118 @@ async function download(params, onProgress) {
     const am = require('./am');
     return am.downloadTrackWithTags(params, onProgress);
   }
-  const r = await songUrl(params);
+  /* V4.6.3 洛雪式下载（国内流媒体，am/qobuz 不动）：
+   * - 锁档不降级：lockType 固定用户所选音质，失败即任务失败（不再静默降档）
+   * - 断点续传：半成品存 <目标>.part，暂停/断网保留，续下带 Range 头
+   * - 链接过期：401/403/410 重新取址（同档锁）后继续 Range 续下（洛雪 refreshUrl 同款）
+   * - 网络错误重试最多 3 次（洛雪 tryNum 同款） */
+  const getUrl = () => songUrl({ provider: params.provider, song: params.song, quality: params.quality, lockType: true });
+  let r = await getUrl();
   if (!r || !r.playable || !r.url) throw new Error((r && r.message) || '无法获取下载地址');
   const song = params.song || {};
   const ext = (r.format && /^[a-z0-9]+$/i.test(r.format) ? r.format : (r.url.split('?')[0].split('.').pop() || 'mp3')).toLowerCase();
   const fileName = baseNameFor(song, params.fileNameFmt) + '.' + ext;
-  let dest = path.join(downloadDir(), fileName);
+  // 续传任务带 destPath（dlManager 持久化的既定目标路径），跳过撞名处理直接续同一文件
+  let dest = params.destPath || path.join(downloadDir(), fileName);
   // V4.3.22：设置「下载目录存在同名文件时跳过下载此任务」
-  if (params.skipExisting && fs.existsSync(dest)) {
+  if (!params.destPath && params.skipExisting && fs.existsSync(dest)) {
     let size = 0; try { size = fs.statSync(dest).size; } catch { }
     return { ok: true, skipped: true, path: dest, size, quality: r.quality || '', level: r.level };
   }
-  let n = 1;
-  while (fs.existsSync(dest)) {
-    dest = path.join(downloadDir(), fileName.replace(new RegExp(`\\.${ext}$`), ` (${n++}).${ext}`));
+  const partOf = (p) => p + '.part';
+  if (!params.destPath) {
+    let n = 1;
+    // 撞名避让同时看完成品与半成品（另一个任务的 .part 不能抢）
+    while (fs.existsSync(dest) || fs.existsSync(partOf(dest))) {
+      dest = path.join(downloadDir(), fileName.replace(new RegExp(`\\.${ext}$`), ` (${n++}).${ext}`));
+    }
   }
+  if (params.onDest) { try { params.onDest(dest); } catch { } }
+  const part = partOf(dest);
 
-  const headers = {};
+  const baseHeaders = {};
   if (r.headers) {
     for (const line of String(r.headers).split('\r\n')) {
       const idx = line.indexOf(':');
-      if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      if (idx > 0) baseHeaders[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
     }
   }
-  const resp = await fetch(r.url, { headers, signal: params.signal });
-  if (!resp.ok || !resp.body) throw new Error('下载失败：HTTP ' + resp.status);
-  const total = Number(resp.headers.get('content-length') || 0);
-  const out = fs.createWriteStream(dest);
-  const reader = resp.body.getReader();
-  let received = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.length;
-      if (!out.write(value)) await new Promise((res) => out.once('drain', res));
-      if (onProgress) onProgress(received, total);
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const throwAbort = () => { const ae = new Error('已暂停'); ae.name = 'AbortError'; throw ae; };
+  const isAbort = (e) => (params.signal && params.signal.aborted) || (e && e.name === 'AbortError');
+  const MAX_RETRY = 3;
+  let retries = 0, refreshes = 0, received = 0;
+  let url = r.url;
+  for (;;) {
+    if (params.signal && params.signal.aborted) throwAbort();
+    let have = 0;
+    try { have = fs.statSync(part).size; } catch { }
+    const headers = { ...baseHeaders };
+    if (have > 0) headers.Range = 'bytes=' + have + '-';
+    let resp;
+    try {
+      resp = await fetch(url, { headers, signal: params.signal });
+    } catch (e) {
+      if (isAbort(e)) throwAbort();
+      if (++retries > MAX_RETRY) throw e;
+      await sleep(1000); continue;
     }
-  } catch (e) {
-    out.destroy();
-    try { fs.unlinkSync(dest); } catch { }
-    // 中止（暂停）统一抛 AbortError，任务管理器区分「用户暂停」和「真实失败」
-    if ((params.signal && params.signal.aborted) || (e && e.name === 'AbortError')) {
-      const ae = new Error('已暂停'); ae.name = 'AbortError'; throw ae;
+    // 链接过期：重新取址（同档锁）后续传——流媒体 URL 有时效，洛雪 refreshUrl 同款
+    if (resp.status === 401 || resp.status === 403 || resp.status === 410) {
+      try { resp.body && resp.body.cancel(); } catch { }
+      if (++refreshes > MAX_RETRY) throw new Error('下载失败：HTTP ' + resp.status + '（链接多次刷新仍过期）');
+      const r2 = await getUrl().catch(() => null);
+      if (!r2 || !r2.url) { await sleep(1000); continue; }
+      url = r2.url;
+      continue;
     }
-    throw e;
+    // 服务器忽略 Range 回 200：从头下（清掉半成品）
+    if (have > 0 && resp.status === 200) { have = 0; try { fs.unlinkSync(part); } catch { } }
+    // 416 Range 不可满足（半成品已完整或比资源还长）：删半成品从头下（洛雪 Resume failed 同款）
+    if (resp.status === 416) {
+      try { resp.body && resp.body.cancel(); } catch { }
+      try { fs.unlinkSync(part); } catch { }
+      continue;
+    }
+    if (!resp.ok || !resp.body || (have > 0 && resp.status !== 206)) {
+      try { resp.body && resp.body.cancel(); } catch { }
+      if (++retries > MAX_RETRY) throw new Error('下载失败：HTTP ' + resp.status);
+      await sleep(1000); continue;
+    }
+    const total = have + Number(resp.headers.get('content-length') || 0);
+    const out = fs.createWriteStream(part, have > 0 ? { flags: 'a' } : {});
+    const reader = resp.body.getReader();
+    received = have;
+    let failed = null;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.length;
+        if (!out.write(value)) await new Promise((res) => out.once('drain', res));
+        if (onProgress) onProgress(received, total);
+      }
+    } catch (e) {
+      failed = e;
+    }
+    if (failed) {
+      out.destroy();
+      // 中止（暂停）/ 断线都保留 .part 半成品——续传从断点继续（洛雪式）
+      if (isAbort(failed)) throwAbort();
+      if (++retries > MAX_RETRY) throw failed;
+      await sleep(1000); continue;
+    }
+    await new Promise((res) => out.end(res));
+    break;
   }
-  await new Promise((res) => out.end(res));
-  // 传完到写标签之间被暂停：同样按中止处理（不留未写标签的半成品）
-  if (params.signal && params.signal.aborted) {
-    try { fs.unlinkSync(dest); } catch { }
-    const ae = new Error('已暂停'); ae.name = 'AbortError'; throw ae;
+  // 传完到改名之间被暂停：同样按中止处理（.part 保留供续传）
+  if (params.signal && params.signal.aborted) throwAbort();
+  // V4.6.3：魔数嗅探——内容与容器不符（疑为平台加密流）删半成品抛错，任务层据此换源
+  if (!sniffMagicOk(part, ext)) {
+    try { fs.unlinkSync(part); } catch { }
+    throw new Error('下载内容与 ' + ext + ' 容器格式不符（疑为平台加密格式），已丢弃');
   }
+  try { fs.renameSync(part, dest); } catch (e) { throw new Error('落盘改名失败：' + (e && e.message)); }
 
   // V1.1.10：下载后写元数据——封面/标题/歌手/专辑/专辑艺术家/曲目号/碟号/发行时间 + 歌词。
   // 附加项受设置页开关控制：saveLrc（旁挂 .lrc + 嵌入）/ saveCover（嵌入封面）。
@@ -213,7 +297,11 @@ async function download(params, onProgress) {
     embedCover: params.embedCover !== false,   // V4.3.22：洛雪「嵌入封面」
     embedLrc: params.embedLrc !== false,       // V4.3.22：洛雪「嵌入歌词」
     embedTLrc: params.embedTLrc !== false,     // V4.3.22：洛雪「同时嵌入翻译歌词」
+    embedRLrc: params.embedRLrc === true,      // V4.6.3：洛雪「同时嵌入罗马音歌词」
+    embedLxLrc: params.embedLxLrc === true,    // V4.6.3：洛雪「同时嵌入逐字歌词(awlrc)」
     lrcTLrc: params.lrcTLrc !== false,         // V4.3.22：洛雪「翻译歌词写入歌词文件」
+    lrcRLrc: params.lrcRLrc === true,          // V4.6.3：洛雪「罗马音写入歌词文件」
+    lrcLxLrc: params.lrcLxLrc === true,        // V4.6.3：洛雪「逐字歌词(awlrc)写入歌词文件」
     lrcEncoding: params.lrcEncoding || 'utf8', // V4.3.22：洛雪「歌词文件编码 UTF-8/GBK」
   }).catch(() => false);
 
@@ -232,11 +320,11 @@ async function writeDownloadedTags(dest, song, provider, opts) {
   try {
     // 1) 补全专辑详情元数据（尽力而为，接口失败返回空字段）
     const detail = await lxsdk.albumDetail({ provider, song }).catch(() => ({}));
-    // 2) 拉歌词（嵌入标签始终做；旁挂 .lrc 受 saveLrc 控制）；译文轨一并带回（外文歌词翻译行）
-    let lrc = '', tlyric = '';
+    // 2) 拉歌词（嵌入标签始终做；旁挂 .lrc 受 saveLrc 控制）；译文/罗马音/逐字轨一并带回
+    let lrc = '', tlyric = '', rlyric = '', lxlyric = '';
     try {
       const lr = await lxsdk.lyric({ provider, song });
-      if (lr && lr.lrc) { lrc = lr.lrc; tlyric = lr.tlyric || ''; }
+      if (lr && lr.lrc) { lrc = lr.lrc; tlyric = lr.tlyric || ''; rlyric = lr.rlyric || ''; lxlyric = lr.lxlyric || ''; }
     } catch { }
     // 3) 封面：song.cover 可能为空（kw/kg 搜索 img:null）→ getPic 补全（嵌入始终做）
     let coverUrl = (song && (song.cover || (song.meta && song.meta.img))) || '';
@@ -261,18 +349,22 @@ async function writeDownloadedTags(dest, song, provider, opts) {
       date: detail && detail.date,
       lyrics: lrc,
       tlyric,
+      rlyric,
+      lxlyric,
       coverUrl,
       coverBytes: coverBuf,
       embedCover: opts.embedCover,
       embedLrc: opts.embedLrc,
       embedTLrc: opts.embedTLrc,
+      embedRLrc: opts.embedRLrc,
+      embedLxLrc: opts.embedLxLrc,
     }).catch(() => ({ ok: false }));
     // V4.3.22：失败留痕——此前全静默，ffmpeg 路径坑排查无门
     if (!tagRes || !tagRes.ok) console.warn('[dl-tag] 写标签失败：' + dest + '，原因：' + ((tagRes && tagRes.reason) || 'unknown'));
     // 5) 独立文件（受开关控制）：
     //    - saveLrc   → 旁挂同名 .lrc（lrcTLrc 控制是否并入翻译，lrcEncoding 控制编码）
     //    - saveCover → 独立封面图片文件（同名 .jpg/.png）
-    if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric, includeTlyric: opts.lrcTLrc, encoding: opts.lrcEncoding });
+    if (wantLrc && lrc && lrc.trim()) tagWriter.writeLyric({ dest, lrc, tlyric, rlyric, lxlyric, includeTlyric: opts.lrcTLrc, includeRlrc: opts.lrcRLrc, includeLxlrc: opts.lrcLxLrc, encoding: opts.lrcEncoding });
     if (wantCover && coverBuf) tagWriter.writeCoverFile({ dest, coverBytes: coverBuf });
     return tagRes && tagRes.ok;
   } catch (e) {
@@ -281,8 +373,39 @@ async function writeDownloadedTags(dest, song, provider, opts) {
   }
 }
 
+/**
+ * V4.6.3 自动换源（洛雪 getOtherSource 同款，功能对齐）：跨平台按「歌名 + 歌手 + 时长」找同歌。
+ * 匹配规则：歌名归一化后严格相等 +（歌手有交集 或 时长差 ≤3s），双条件二选一防误配；
+ * 逐平台搜索（排除当前平台），首个命中即返回。
+ * @returns {Promise<{provider, song}|null>}
+ */
+const _normKey = (s) => String(s || '').toLowerCase().replace(/[\s　·•,，、;；&＆（）()\[\]【】'"/\\-]/g, '');
+async function findOtherSource(song, excludeProvider) {
+  const name = _normKey(song && song.name);
+  if (!name) return null;
+  const artist = _normKey(song && song.artist);
+  const dur = Number(song && song.duration) || 0; // ms
+  const keywords = ((song && song.name) || '') + ' ' + ((song && song.artist) || '');
+  for (const p of PROVIDERS) {
+    if (p === excludeProvider) continue;
+    let list = [];
+    try {
+      const r = await search({ provider: p, keywords: keywords.trim(), page: 1, limit: 5 });
+      list = (r && r.songs) || [];
+    } catch { continue; }
+    for (const c of list) {
+      if (_normKey(c.name) !== name) continue;
+      const ca = _normKey(c.artist);
+      const artistHit = artist && ca && (ca.includes(artist) || artist.includes(ca));
+      const durHit = dur && c.duration && Math.abs(Number(c.duration) - dur) <= 3000;
+      if (artistHit || durHit) return { provider: p, song: c };
+    }
+  }
+  return null;
+}
+
 module.exports = {
-  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir,
+  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir, findOtherSource,
   leaderboards, leaderboardList, songLists, songListSearch, songListDetail, albumSearch, albumSongs,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层

@@ -35,12 +35,15 @@
 
 ### 6. 歌词/编码
 - 旁挂 .lrc 写盘支持 GBK 编码：用 `iconv-lite` 的 `encode(text, 'gbk')`，勿手写。
+- 歌词四轨（lrc/tlyric/rlyric/lxlyric）统一经 `tagWriter.buildLyrics` 组装：译文/罗马音并入前做**时间轴对齐过滤**（防错位），逐字歌词打包 awlrc 扩展标签（洛雪格式），勿直接拼文本。
 - 流媒体歌词缓存按 `state.currentPath` 键控：`window.__annieStreamLrcByPath` / `__annieStreamTlyByPath`（译文轨）。
 
 ### 7. 下载任务管理（dlManager 模式，对齐洛雪）
-- 任务队列 + 并发槽（1-10）+ `AbortController` 实现暂停。**流媒体 URL 有时效，断点续传无意义——"继续"=重新下载**。
-- 持久化 `dl-tasks.json`（含 song 快照供重启继续）；重启后 downloading/waiting 一律置 paused。
-- 队列去重键：`provider + songId`。
+- 任务队列 + 并发槽（1-10）+ `AbortController` 实现暂停。
+- **V4.6.3 起洛雪式下载（仅国内流媒体，am/qobuz 不动）**：锁档不降级（`songUrl lockType`）；半成品存 `<目标>.part` 断点续传（Range 头）；401/403/410 重新取址后续传（流媒体 URL 有时效，洛雪 refreshUrl 同款）；416/服务器忽略 Range 回 200 → 删半成品从头下；网络错误重试 ≤3 次。
+- 持久化 `dl-tasks.json`（含 song 快照 + filePath 供续传）；重启后 downloading/waiting 一律置 paused。
+- 队列去重键：`provider + songId + quality`（同曲可下多个音质）。
+- 下载入口：单曲弹音质选择窗（复用共享弹层 `R.pop`，按 `meta.types` 出按钮）；**多选/批量不弹窗——按各曲 `meta.types` 取各自最高音质（上限 flac24bit），无清单回退当前播放档**（电狗策略，搜索/专辑/歌单详情接口均带真实音质映射）。
 - 进度推送 300ms 节流，事件经 `'dl:event'` 广播。
 
 ### 8. 多选与拖拽

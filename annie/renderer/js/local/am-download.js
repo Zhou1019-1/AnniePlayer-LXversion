@@ -91,6 +91,16 @@
       br.onclick = function () { window.mine.dlRetryAll().then(function (n) { if (n) toast('已重新排队 ' + n + ' 个任务'); }); };
       bar.appendChild(br);
     }
+    // V4.6.3：一键清空——移除全部任务（进行中的中止，半成品 .part 一并清理；已落盘的成品文件不动）
+    if (dlTasks.length) {
+      var ba = el('button', 'am-btn', '🗑 一键清空');
+      ba.title = '移除所有任务（进行中的会中止；已下载完成的文件保留在磁盘）';
+      ba.onclick = function () {
+        if (!confirm('确定清空全部 ' + dlTasks.length + ' 个下载任务？\n（进行中的会中止，未完成半成品删除；已下载完成的文件保留）')) return;
+        window.mine.dlClear(['waiting', 'downloading', 'paused', 'error', 'done']);
+      };
+      bar.appendChild(ba);
+    }
     c.appendChild(bar);
 
     var list = dlTab === 'all' ? dlTasks : dlTasks.filter(function (t) { return t.status === dlTab; });

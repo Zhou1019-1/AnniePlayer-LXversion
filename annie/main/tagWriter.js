@@ -138,9 +138,12 @@ async function writeTags(opts) {
   // V1.1.10：嵌入歌词——FLAC 用大写 LYRICS（Vorbis comment），MP3 用小写 lyrics（ID3 USLT）。
   // 实测：flac + LYRICS 有效；mp3 + lyrics 有效（写成 ID3 标签，播放器/ffprobe 可读）。
   // V4.3.22：embedLrc/embedTLrc 开关（洛雪「嵌入歌词 / 同时嵌入翻译歌词」）
+  // V4.6.3：embedRLrc/embedLxLrc 开关（洛雪「同时嵌入罗马音 / 逐字歌词(awlrc)」），并入走 buildLyrics 时间轴对齐
   if (opts.embedLrc !== false) {
-    let lrc = lyricValue(opts.lyrics);
-    if (lrc && opts.embedTLrc !== false && opts.tlyric) lrc += '\n' + lyricValue(opts.tlyric);
+    const lrc = lyricValue(buildLyrics(
+      { lrc: opts.lyrics, tlyric: opts.tlyric, rlyric: opts.rlyric, lxlyric: opts.lxlyric },
+      { t: opts.embedTLrc !== false, r: opts.embedRLrc === true, lx: opts.embedLxLrc === true }
+    ));
     if (lrc) {
       const lyricKey = ext === 'flac' ? 'LYRICS' : 'lyrics';
       args.push('-metadata', `${lyricKey}=${lrc}`);
@@ -177,10 +180,69 @@ async function writeTags(opts) {
 
 function cleanup(p) { if (p) { try { fs.unlinkSync(p); } catch { } } }
 
+/* ============ V4.6.3 洛雪同款歌词组装（功能对齐，非代码移植） ============
+ * 译文/罗马音并入前做「时间轴对齐过滤」：只保留时间戳与原文匹配的行，防错位（洛雪 lrcTool 同款策略）；
+ * 逐字歌词不直接并入文本（<字级时间戳> 普通播放器不认），打包为 awlrc 扩展标签行追加。 */
+const _timeFieldExp = /^(?:\[[\d:.]+\])+/g;
+const _timeExp = /\d{1,3}(:\d{1,3}){0,2}(?:\.\d{1,3})/g;
+const _tz1 = /^0+(\d+)/, _tz2 = /:0+(\d+)/g, _tz3 = /\.0+(\d+)/;
+function _fmtTimeLabel(label) { return label.replace(_tz1, '$1').replace(_tz2, ':$1').replace(_tz3, '.$1'); }
+function _timeLabelsOf(lrc) {
+  const set = new Set();
+  for (const raw of String(lrc || '').split(/\r\n|\n|\r/)) {
+    const line = raw.trim();
+    const m = _timeFieldExp.exec(line);
+    if (!m) continue;
+    if (!line.replace(_timeFieldExp, '').trim()) continue;
+    const times = m[0].match(_timeExp);
+    if (times) for (const t of times) set.add(_fmtTimeLabel(t));
+  }
+  return set;
+}
+function _filterExtended(lrcLabels, ext) {
+  const lines = [];
+  for (const raw of String(ext || '').split(/\r\n|\n|\r/)) {
+    let line = raw.trim();
+    const m = _timeFieldExp.exec(line);
+    if (!m) continue;
+    const text = line.replace(_timeFieldExp, '').trim();
+    if (!text) continue;
+    const times = m[0].match(_timeExp);
+    if (!times) continue;
+    const kept = times.filter((t) => lrcLabels.has(_fmtTimeLabel(t)));
+    if (!kept.length) continue;
+    if (kept.length !== times.length) line = `[${kept.join('][')}]${text}`;
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+function _buildAwlrc(data) {
+  const b64 = (s) => Buffer.from(String(s).trim(), 'utf8').toString('base64');
+  const parts = [];
+  if (data.lrc) parts.push('lrc:' + b64(data.lrc));
+  if (data.tlyric) parts.push('tlrc:' + b64(data.tlyric));
+  if (data.rlyric) parts.push('rlrc:' + b64(data.rlyric));
+  if (data.lxlyric) parts.push('awlrc:' + b64(data.lxlyric)); // awlrc 键 = 逐字歌词本体（洛雪格式）
+  return parts.length ? `[awlrc:${parts.join(',')}]` : '';
+}
+/** data: {lrc, tlyric, rlyric, lxlyric}; opts: {t, r, lx} 三个开关 */
+function buildLyrics(data, opts) {
+  const lrc = (data && data.lrc) || '';
+  if (!lrc.trim()) return '';
+  if (!data.tlyric && !data.rlyric && !data.lxlyric) return lrc;
+  let out = lrc.trim();
+  const labels = _timeLabelsOf(out);
+  if (opts.t && data.tlyric) { const f = _filterExtended(labels, data.tlyric); if (f) out += '\n\n' + f + '\n'; }
+  if (opts.r && data.rlyric) { const f = _filterExtended(labels, data.rlyric); if (f) out += '\n\n' + f + '\n'; }
+  if (opts.lx) { const aw = _buildAwlrc(data); if (aw) out += '\n\n' + aw + '\n'; }
+  return out;
+}
+
 /**
  * 写 .lrc 歌词文件（与音频同目录同名）。
- * @param {object} opts { dest, lrc, tlyric, includeTlyric?, encoding? }
+ * @param {object} opts { dest, lrc, tlyric, rlyric?, lxlyric?, includeTlyric?, includeRlrc?, includeLxlrc?, encoding? }
  *   includeTlyric: 是否把翻译歌词并入文件（默认 true，洛雪「同时将翻译歌词写入歌词文件」）
+ *   includeRlrc: 罗马音并入（默认 false）/ includeLxlrc: 逐字歌词 awlrc 打包并入（默认 false）
  *   encoding: 'utf8'（默认）| 'gbk'（洛雪同款编码选项，GBK 经 iconv-lite 编码）
  */
 function writeLyric(opts) {
@@ -190,8 +252,10 @@ function writeLyric(opts) {
   if (!lrc.trim()) return { ok: false, reason: 'no-lrc' };
   const lrcPath = dest.replace(/\.[^.]+$/, '') + '.lrc';
   try {
-    const includeT = opts.includeTlyric !== false;
-    const text = lrc + (includeT && opts.tlyric ? '\n' + opts.tlyric : '');
+    const text = buildLyrics(
+      { lrc: opts.lrc, tlyric: opts.tlyric, rlyric: opts.rlyric, lxlyric: opts.lxlyric },
+      { t: opts.includeTlyric !== false, r: opts.includeRlrc === true, lx: opts.includeLxlrc === true }
+    );
     if (opts.encoding === 'gbk') {
       const iconv = require('iconv-lite');
       fs.writeFileSync(lrcPath, iconv.encode(text, 'gbk'));
@@ -220,4 +284,4 @@ function writeCoverFile(opts) {
   } catch (e) { return { ok: false, reason: e.message }; }
 }
 
-module.exports = { writeTags, writeLyric, writeCoverFile, fetchCoverBytes, resolveTool };
+module.exports = { writeTags, writeLyric, writeCoverFile, fetchCoverBytes, resolveTool, buildLyrics };

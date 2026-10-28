@@ -485,4 +485,18 @@
 - **`gh run rerun` 不含新 commit**：workflow 失败后修复代码再 `gh run rerun <id>`，跑的还是**当时触发的旧 commit**，修复不生效。修复后必须 `git tag -f vX.Y.Z && git push -f origin vX.Y.Z` 移动 tag 重新触发全新 run（Release 未发布成功前移动 tag 安全）。
 - **ffmpeg 下载源偶发 503**（gyan.dev）：release.yml 的 `setup-tools.js` 下载 ffmpeg 遇外部服务 503，直接 rerun 自愈，无需改代码。
 
+## 十六、洛雪式下载链路（V4.6.3，仅国内流媒体；am/qobuz 不动）✅ 传输层 13/13 测试通过
+- **锁档不降级**：`songUrl({…, lockType:true})`（lxsdk.js:275-279）把 candidates 截到只剩所选档；下载路径（streaming/index.js `download()` :159）恒传 lockType。播放路径不传，V4.6.2 行为（所选档保留+降级档按 meta.types 过滤）不变。
+- **断点续传**：半成品写 `<目标>.part`，完成才 rename 成正式名（跳过设置 `skipExisting` 只看正式名）；续下带 `Range: bytes=<.part尺寸>-`（index.js:198-201）；服务器忽略 Range 回 200 或 416 → 删 .part 从头下（:219-225）；`onDest` 回调把既定目标路径回写 dlManager 任务（t.filePath），续传任务以 `destPath` 入参跳过撞名逻辑续同一文件（:166/173）。
+- **链接过期刷新**：401/403/410 → 重新走完整 `songUrl` 取址（同档锁，身份/格式校验照常）后 Range 续传，上限 3 次（index.js:210-218）。网络/传输错误重试 ≤3 次、间隔 1s。
+- **暂停/断线保留半成品**：abort 抛 AbortError 但不删 .part（index.js:242-247）；dlManager `start`/`resume` 不再清零 received/total（进度条续显）；`remove` 只清 .part 不动成品（dlManager.js remove）。
+- **去重键 provider+songId+quality**（dlManager.js:57-60）：同曲可下多个音质（洛雪同款）。
+- **下载音质弹窗**（am-stream.js `pickDlQuality` :659-697）：单曲按 `song.meta.types` 出按钮（带文件大小，洛雪 DownloadModal 同款）；复用共享弹层 `R.pop`（规范第 2 条）。接入 3 个单曲入口：搜索行 ⬇ / 右键下载 / 在线歌单行 ⬇（在线歌单行原来走 legacy `downloadSong` 直链路径，已统一到队列）。`downloadSong` 仅剩迷你模式 `AM.downloadStreamSong` 复用，未删。
+- **多选/批量下载·电狗策略**（am-stream.js `bestDlType` :703-711）：✅已验证接口前提——搜索/专辑详情（kw/album.js）/歌单详情（tx/songList.js 等）均返回每首歌真实音质映射（types）。不弹统一档，每首按 `meta.types` 取各自最高（上限 flac24bit），无清单回退 `S.stQuality`（锁档失败即任务报错，可手动重试）。接入「⬇ 下载选中」「⬇ 下载已加载」两个批量入口。
+- **罗马音/逐字歌词（V4.6.3 洛雪同款）**：`lxsdk.lyric` 本就返回 `{lrc, tlyric, rlyric, lxlyric}` 四轨，此前下载只用了两轨。现 `tagWriter.buildLyrics`（tagWriter.js:181-235）统一组装：译文/罗马音并入前做**时间轴对齐过滤**（`_filterExtended`，只留时间戳与原文匹配的行，多时间戳行部分保留；洛雪 lrcTool 同款策略，比此前 raw 追加更正确）；逐字歌词不混入文本，打包 `[awlrc:lrc:b64,tlrc:b64,rlrc:b64,awlrc:b64]` 扩展标签（awlrc 键=逐字本体，洛雪格式）。四个开关 embedRLrc/embedLxLrc/lrcRLrc/lrcLxLrc 默认全关（洛雪默认）。
+- **自动换源下载（V4.6.3 洛雪 isUseOtherSource 同款）**：`streaming.findOtherSource`（index.js:348-378）逐平台搜索（排除当前平台），匹配规则=歌名归一化严格相等 +（歌手互相包含 或 时长差≤3s）；dlManager `start()` 原平台失败后调用，命中则**删旧 .part（内容不同源不可续）+ 清 filePath（新源 ext 可能不同）+ 进度归零**后以同锁定音质重下，成功 note「原平台失败，已从 X 换源下载」。仅国内五平台，设置项 `allowOtherSource` 默认开。
+- **加密容器双防线（V4.6.3，用户实测批量下载漏网）**：① `verifyUrlFormat` 加密扩展名黑名单（lxsdk.js:159-165 `ENCRYPTED_EXT`：mflac/mgg/qmc*/tm*/ncm/kgm*/vpr，任何档位判 false）——mflac 扩展名带 flac 字样曾骗过原校验；② 下载完成**魔数嗅探** `sniffMagicOk`（index.js:150-171，rename 前校验 fLaC/ID3/ftyp 等容器头，不符删 .part 抛错「容器格式不符」）→ 任务层换源兜底。加密流是音源后端**间歇性**返回（同歌重试可拿到正常流），与批量/单独下载无关。
+- **测试**：`%TEMP%/dl-resume-test.js`（纯 Node，require 缓存劫持 lxsdk/tagWriter/sources 打桩 + 本地 HTTP 服务器）覆盖完整下载/Range 续传/403 重取址续传/暂停留半成品续完/魔数嗅探/加密扩展名黑名单，24/24 PASS。局限： Abort 用例需服务器限速（64KB/20ms）才能稳定落在传输中途。`%TEMP%/dl-lyrics-switch-test.js` 覆盖歌词组装+换源匹配，15/15 PASS。
+- ⚠️ **已知边界**：`dlClear` 全清时运行中任务的 .part 可能因写流未关删不掉（Windows 文件锁），遗留孤儿 .part 需手动清；迷你模式 ⬇ 直链下载（`stream:download` IPC）现在也锁档（download() 恒 lockType），失败即报错 toast，无降级。
+
 > **维护提醒**：每次阅览代码发现新事实，顺手追加到对应分区；分区不够用就新加。「🔍待验证」项落实后改「✅」并补行号。本文件随仓库走 git，别提交到杂物目录。

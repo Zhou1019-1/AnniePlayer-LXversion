@@ -567,12 +567,13 @@
       // V3.5.8：单曲下载按钮（V4.3.22 起统一进下载任务队列，见「下载情况」）
       var tdDl = el('td');
       var bDl = el('button', 'am-dl-btn', '⬇');
-      bDl.title = '下载到下载目录（音质：' + S.stQuality + '）';
+      bDl.title = '下载（弹出音质选择，洛雪式锁档）';
       bDl.onclick = function (e) {
         e.stopPropagation();
-        bDl.textContent = '✓';
-        setTimeout(function () { if (bDl.isConnected) bDl.textContent = '⬇'; }, 1500);
-        queueDownloads([song]);
+        pickDlQuality([song], e.clientX, e.clientY, function () {
+          bDl.textContent = '✓';
+          setTimeout(function () { if (bDl.isConnected) bDl.textContent = '⬇'; }, 1500);
+        });
       };
       tdDl.appendChild(bDl); tr.appendChild(tdDl);
       if (S.stMulti) {
@@ -622,12 +623,13 @@
       openSplPicker(e.clientX, e.clientY, songs); // 选择器内部已弹提示；不退出多选，便于连续收藏到多个歌单
     };
     bar.appendChild(bFavAll);
+    // V4.6.3 电狗策略：多选下载不弹统一档——每首按接口音质清单取各自最高（≤Hi-Res）
     var bDl = el('button', 'am-btn', '⬇ 下载选中');
     bDl.onclick = function () {
       if (!S.stSel.size) { stToast('先勾选要下载的歌曲'); return; }
       var songs = Array.from(S.stSel);
+      queueDownloads(songs, function (song) { return bestDlType(song) || S.stQuality; }, '（按各曲最高音质）');
       S.stMulti = false; S.stSel = new Set();
-      queueDownloads(songs);
       renderView();
     };
     bar.appendChild(bDl);
@@ -647,7 +649,7 @@
     b1.onclick = function () { pop.classList.remove('on'); S.stMulti = true; S.stSel = new Set([S.stResults[i]]); renderView(); };
     pop.appendChild(b1);
     var b2 = el('button', 'am-pop-item', '⬇ 下载');
-    b2.onclick = function () { pop.classList.remove('on'); queueDownloads([S.stResults[i]]); };
+    b2.onclick = function () { pop.classList.remove('on'); pickDlQuality([S.stResults[i]], x, y); };
     pop.appendChild(b2);
     pop.classList.add('on');
     var w = pop.offsetWidth, h = pop.offsetHeight;
@@ -655,20 +657,77 @@
     pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
   }
 
-  /* V4.3.22：下载统一入口——进主进程任务队列（下载情况视图管理，支持并发/暂停/重试） */
-  function queueDownloads(songs) {
+  /* V4.6.3 洛雪式下载音质弹窗：点下载弹出音质按钮，选定后入队（任务锁档不降级）。
+   * 单曲按该曲 meta.types 出按钮（洛雪 DownloadModal 同款，带文件大小）；
+   * 批量出通用四档（洛雪 DownloadMultipleModal 同款）。
+   * 复用共享弹层 R.pop（外点关闭全局已注册——禁自建弹层+自挂监听，见 AGENTS.md）。 */
+  var DL_QORDER = ['flac24bit', 'flac', '320k', '128k'];
+  var DL_QLABEL = { flac24bit: '无损 Hi-Res', flac: '无损 FLAC', '320k': '高品 320K', '128k': '标准 128K' };
+  function pickDlQuality(songs, x, y, onPicked) {
+    if (!window.mine.dlAdd || !songs || !songs.length) return;
+    var sizeByType = {};
+    var types = DL_QORDER.slice();
+    if (songs.length === 1) {
+      var m = songs[0].meta || songs[0] || {};
+      var avail = (m.types || []).filter(function (t) { return t && DL_QORDER.indexOf(t.type) >= 0; });
+      if (avail.length) {
+        types = DL_QORDER.filter(function (tp) { return avail.some(function (t) { return t.type === tp; }); });
+        avail.forEach(function (t) { if (t.size) sizeByType[t.type] = t.size; });
+      }
+    }
+    var pop = R.pop;
+    pop.innerHTML = '';
+    var head = el('div', 'am-c-dim', songs.length === 1
+      ? ((songs[0].name || '未知') + ' - ' + (songs[0].artist || '未知艺人'))
+      : ('下载 ' + songs.length + ' 首 · 选择音质'));
+    head.style.padding = '8px 14px 4px'; head.style.fontSize = '12px'; head.style.maxWidth = '260px';
+    head.style.overflow = 'hidden'; head.style.textOverflow = 'ellipsis'; head.style.whiteSpace = 'nowrap';
+    pop.appendChild(head);
+    types.forEach(function (tp) {
+      var label = (DL_QLABEL[tp] || tp) + (sizeByType[tp] ? '　' + String(sizeByType[tp]).toUpperCase() : '');
+      var b = el('button', 'am-pop-item', label);
+      b.onclick = function () {
+        pop.classList.remove('on');
+        queueDownloads(songs, tp);
+        if (onPicked) onPicked();
+      };
+      pop.appendChild(b);
+    });
+    pop.classList.add('on');
+    var w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
+    pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
+  }
+
+  /* V4.6.3 电狗策略·多选/批量下载：以各接口（搜索/专辑/歌单详情，均返回真实音质映射）的
+   * 每首歌音质清单为准，按「各自支持的最高音质」入队（上限 flac24bit/Hi-Res）——
+   * 避免统一高档时接口返回保底/错误音质链；无清单信息的歌曲回退当前播放音质档。 */
+  function bestDlType(song) {
+    var m = (song && song.meta) || song || {};
+    var avail = m.types || [];
+    for (var i = 0; i < DL_QORDER.length; i++) {
+      if (avail.some(function (t) { return t && t.type === DL_QORDER[i]; })) return DL_QORDER[i];
+    }
+    return null;
+  }
+
+  /* V4.3.22：下载统一入口——进主进程任务队列（下载情况视图管理，支持并发/暂停/重试）
+   * V4.6.3：quality 由音质弹窗选定（锁档）；传函数则按曲逐个解析（多选电狗策略）；缺省回退当前播放音质档 */
+  function queueDownloads(songs, quality, toastNote) {
     if (!window.mine.dlAdd || !songs || !songs.length) return;
     var asu = (window.annieSettings && window.annieSettings.ui) || {};
     window.mine.dlAdd(songs.map(function (song) {
       return {
-        provider: song.provider || S.stProvider, quality: S.stQuality, song: song,
+        provider: song.provider || S.stProvider,
+        quality: (typeof quality === 'function' ? quality(song) : (quality || S.stQuality)),
+        song: song,
         saveLrc: asu.saveLrc !== false, saveCover: asu.saveCover !== false
       };
     })).then(function (r) {
       try {
         if (typeof proToast === 'function') {
           proToast('已加入下载队列 ' + (r ? r.added : songs.length) + ' 首' +
-            (r && r.skipped ? '（队列中已存在 ' + r.skipped + ' 首）' : '') + '，见「下载情况」');
+            (r && r.skipped ? '（队列中已存在 ' + r.skipped + ' 首）' : '') + (toastNote || '') + '，见「下载情况」');
         }
       } catch (e) { }
     }).catch(function () { });
@@ -729,7 +788,8 @@
     if (!S.stResults.length || !window.mine.dlAdd) return;
     var btn = el('button', 'am-btn', '⬇ 下载已加载 ' + S.stResults.length + ' 首');
     btn.style.marginTop = '14px'; btn.style.marginLeft = '10px';
-    btn.onclick = function () { queueDownloads(S.stResults.slice()); };
+    // V4.6.3 电狗策略：批量下载不弹统一档——每首按接口音质清单取各自最高（≤Hi-Res）
+    btn.onclick = function () { queueDownloads(S.stResults.slice(), function (song) { return bestDlType(song) || S.stQuality; }, '（按各曲最高音质）'); };
     c.appendChild(btn);
   }
 
@@ -1287,8 +1347,8 @@
         // V4.3.13：在线歌单补齐下载（与搜索结果行同一机制）
         var tdDl = el('td');
         var bDl = el('button', 'am-dl-btn', '⬇');
-        bDl.title = '下载到下载目录（音质：' + S.stQuality + '）';
-        bDl.onclick = function (e) { e.stopPropagation(); downloadSong(song, bDl); };
+        bDl.title = '下载（弹出音质选择，洛雪式锁档）';
+        bDl.onclick = function (e) { e.stopPropagation(); pickDlQuality([song], e.clientX, e.clientY); };
         tdDl.appendChild(bDl); tr.appendChild(tdDl);
         var tdRm = el('td');
         var bRm = el('button', 'am-dl-btn', '✕');

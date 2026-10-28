@@ -551,9 +551,9 @@ npm run gen:help      # 从 helpContent.js 重新生成本 README 的「全功�
 
 ## 致谢
 
-- **秋野奈（[@milesapieree246891-jpg](https://github.com/milesapieree246891-jpg)）**：四批共 10+ 个 PR 的社区协作——可拖分栏、顶栏 SVG 图标统一、内存大涨修复、拖动保护、待播清单完整队列、歌词折行、待播插队、随机播放可见化等（PR #17–#20，全部评审合入）
-- **numb**：macOS 版开发者（进行中）
-- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：三主题逐字歌词（PR #2）；音源沙箱 Worker 化、下载写标签、WASAPI 独占/共享、QQ 免签搜索与纯 JS QRC 解密、AnnieEngine 引擎源码入库（PR #1）
+- **秋野奈（[@milesapieree246891-jpg](https://github.com/milesapieree246891-jpg)）**：界面优化与逻辑规划贡献者——四批共 10+ 个 PR：可拖分栏、顶栏 SVG 图标统一、内存大涨修复、拖动保护、待播清单完整队列、歌词折行、待播插队、随机播放可见化等（PR #17–#20，全部评审合入）
+- **numb**：macOS 版主要贡献者——`macos/` Swift 工程从搭建到发版（mac-v1.0.x），CI/CD 与资产链路全程主导
+- **电狗（[@chenhaochen66](https://github.com/chenhaochen66)）**：音源优化者、疑难处理者——安妮独家音源机制（标识块 + 心跳验证，PR #21/#27）、多选下载音质策略顾问；三主题逐字歌词（PR #2）；音源沙箱 Worker 化、下载写标签、WASAPI 独占/共享、QQ 免签搜索与纯 JS QRC 解密、AnnieEngine 引擎源码入库（PR #1）
 - [洛雪音乐 lx-music-desktop](https://github.com/lyswhut/lx-music-desktop)（Apache-2.0）：流媒体 SDK 与歌词解密方案
 - [QobuzDownloaderX](https://github.com/ImAiiR/QobuzDownloaderX)（[@ImAiiR](https://github.com/ImAiiR)）：Qobuz 下载器先驱，V4.3.6 Qobuz 在线播放/下载的功能清单与交互设计参考对象（API 层为本项目 JS 重写，未使用其代码与二进制）
 - [streamrip](https://github.com/nathom/streamrip)（GPL-3.0）：Qobuz API 请求签名算法的公开参考实现

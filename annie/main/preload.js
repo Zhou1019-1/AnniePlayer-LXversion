@@ -201,6 +201,7 @@ contextBridge.exposeInMainWorld('mine', {
   dlClear: (statuses) => ipcRenderer.invoke('dl:clear', statuses),
   dlRetryAll: () => ipcRenderer.invoke('dl:retryAll'),
   dlOpenFolder: (id) => ipcRenderer.invoke('dl:openFolder', id),
+  dlOpenRoot: () => ipcRenderer.invoke('dl:openRoot'), // V4.6.4：打开下载根目录
   dlGetSettings: () => ipcRenderer.invoke('dl:settings:get'),
   dlSetSettings: (patch) => ipcRenderer.invoke('dl:settings:set', patch),
   onDlEvent: (cb) => { const h = (_e, ev) => cb(ev); ipcRenderer.on('dl:event', h); return () => ipcRenderer.removeListener('dl:event', h); },

@@ -35,9 +35,11 @@
       var body = root && root.querySelector('.am-body');
       if (!body) { setTimeout(boot, 300); return; }
       if (body.querySelector('.am-resize-l')) return;
-      var sw = num(localStorage.getItem(KS), 0);
+      // V4.6.4：localStorage 兜底（隐私模式 getItem 抛异常时按默认宽度）
+      var sw = 0, lw = 0;
+      try { sw = num(localStorage.getItem(KS), 0); } catch (e) { }
       if (sw >= 56 && sw <= 800) root.style.setProperty('--am-side-w', sw + 'px');
-      var lw = num(localStorage.getItem(KL), 0);
+      try { lw = num(localStorage.getItem(KL), 0); } catch (e) { }
       if (lw >= 260 && lw <= 640) root.style.setProperty('--am-lyr-w', lw + 'px');
       function make(cls, get, set, save, sign) {
         var h = document.createElement('div');

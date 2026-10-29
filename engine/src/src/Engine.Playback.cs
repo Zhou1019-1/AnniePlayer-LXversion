@@ -714,9 +714,25 @@ public sealed partial class Engine
         double pos;
         double dur;
         bool shouldEnd = false;
+        string? outputFault = null;
 
         lock (_gate)
         {
+            // V4.6.4：输出设备运行期故障（拔出/独占被抢）——此前无人感知，引擎无声假播放。
+            // 后端 WasapiOut.PlaybackStopped 记标志，此处取出：置 playing=false + 广播专用事件。
+            // V4.6.4 增强：故障后自动重选后端到默认可用设备（无感恢复）——
+            // 旧实现只 Stop 死设备，_backend 留死句柄导致 resume/play 全部无效，
+            // 用户必须手动去设置换设备。现在立刻回退，渲染层据此提示并允许一键续播。
+            if (_playing && _backend is not null)
+            {
+                outputFault = _backend.ConsumeOutputFault();
+                if (outputFault != null)
+                {
+                    _playing = false;
+                    _positionTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                    try { _backend.Stop(); } catch { }
+                }
+            }
             // VST实验区：音频线程置的 Broken 在此（10Hz 定时器线程）转成用户通知，去重
             foreach (var s in _vstSlots)
                 if (s.Broken && _vstCrashNotified.Add(s.Id))
@@ -751,6 +767,24 @@ public sealed partial class Engine
                     shouldEnd = true;
                 }
             }
+        }
+
+        if (outputFault != null)
+        {
+            // V4.6.4：设备故障后自动回退到默认可用设备（无感恢复），让用户点击播放即可续播。
+            // SelectBackend 内部有设备失效回退逻辑（V3.5.2）：优先 WASAPI 默认输出。
+            string newDevice = "";
+            try
+            {
+                SelectBackend("wasapi", null, exclusive: false); // 共享默认输出（最稳，不占独占）
+                newDevice = _backend?.DeviceName ?? "";
+                Console.Error.WriteLine("[engine] 输出设备故障，已自动切换到：" + newDevice);
+            }
+            catch (Exception ex) { Console.Error.WriteLine("[engine] 自动切换输出设备失败：" + ex.Message); }
+            // 事件带切换结果，渲染层据此提示「已切换到 XX，点击播放继续」
+            _rpc.Emit("output-fault", new { text = outputFault, device = _backendDeviceId ?? "", switchedTo = newDevice });
+            _rpc.Emit("state", new { state = "stopped" });
+            return;
         }
 
         _rpc.Emit("position", new { seconds = Math.Round(pos, 3), duration = dur });

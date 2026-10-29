@@ -100,16 +100,36 @@
       var qual = snap.stream.quality || '128k';
       if (window.mine.streamSongUrl && song && song.provider) {
         window.mine.streamSongUrl({ provider: song.provider, quality: qual, song: song }).then(function (r) {
-          if (!r || !r.playable || !r.url) return;
+          if (!r || !r.playable || !r.url) { proToast('续播失败：无法获取播放地址'); return; }
           return window.annieStreamPlay({
             url: r.url, headers: r.headers || null,
             title: snap.stream.title, artist: snap.stream.artist, album: snap.stream.album || '',
             cover: snap.stream.cover || '', duration: snap.stream.duration || 0,
-            provider: song.provider, quality: r.quality || '', song: song
-          }).then(function () {
+            provider: song.provider, quality: r.quality || '', song: song,
+            /* V4.6.4：续播补 onPlayed——此前缺失导致无歌词、不预取下一首（streaming.js doInject 全靠它） */
+            onPlayed: function () {
+              if (window.mine.streamLyric) {
+                window.mine.streamLyric({ provider: song.provider, song: song }).then(function (ly) {
+                  if (!ly || !ly.lrc) return;
+                  var st2 = window.state;
+                  if (window.annieStage && window.annieStage.setLyricText) window.annieStage.setLyricText(ly.lrc, ly.tlyric);
+                  if (st2 && st2.currentPath) {
+                    window.__annieStreamLrcByPath = window.__annieStreamLrcByPath || {};
+                    window.__annieStreamLrcByPath[st2.currentPath] = ly.lrc;
+                    window.__annieStreamTlyByPath = window.__annieStreamTlyByPath || {};
+                    window.__annieStreamTlyByPath[st2.currentPath] = ly.tlyric || '';
+                    try { document.dispatchEvent(new CustomEvent('annie-stream-lyric', { detail: { path: st2.currentPath } })); } catch (e) { }
+                  }
+                }).catch(function () { });
+              }
+              // AM 在线歌单队列预取下一首（续播落 AM 时队列由 AM 自己维护）
+              try { var AM = window.__annieAMInternal; if (AM && AM.maybePreloadNext) AM.maybePreloadNext(); } catch (e) { }
+            }
+          }).then(function (ok) {
+            if (ok === false) { proToast('续播失败：' + (window.__annieLastStreamError || '引擎未接受流地址')); return; }
             if (snap.position > 1) setTimeout(function () { try { window.mine.engine('seek', { seconds: snap.position }); } catch (e) { } }, 400);
           });
-        }).catch(function () { });
+        }).catch(function (e) { proToast('续播失败：' + ((e && e.message) || e)); });
       }
     } else {
       // 本地：恢复队列 + playAt(index) + seek 回断点
@@ -165,7 +185,17 @@
       // 切到「进入」文案 + 激活新主题（让出主线程一帧，防长任务卡死过渡动画）
       setTimeout(function () {
         if (stEl) stEl.textContent = '正在进入 ' + (THEME_NAME[theme] || theme) + '…';
-        apply(theme);
+        /* V4.6.4：mount() 抛异常必须有兜底——此前 apply 直接调用，异常逃逸后
+         * switching 永真、过渡屏永不淡出，切主题功能整体锁死只能重启。
+         * 现在：异常时收过渡屏 + 解锁 + 提示，用户可重试或切回。 */
+        try { apply(theme); }
+        catch (e) {
+          console.error('[theme] mount 失败', e);
+          if (sp) { sp.classList.remove('ts-on'); sp.classList.remove('bs-out'); }
+          switching = false;
+          try { proToast('主题切换失败：' + ((e && e.message) || e) + '，请重试或切换其他主题', 8000); } catch (e2) { }
+          return;
+        }
         // 等新主题首帧就绪 + 满足最短展示时间，再淡出过渡屏
         var wait = Math.max(0, MIN_SHOW - (Date.now() - t0));
         setTimeout(function () {

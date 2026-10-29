@@ -50,6 +50,7 @@ function dataDir() { return path.join(effectiveWrapperDir(), 'data'); } // 登�
 let svcProc = null;   // 服务进程句柄
 let svcStarting = null;
 let svcUrl = 'http://127.0.0.1:12340'; // 服务实际监听地址（启动时从输出解析，缺省 12340）
+let svcGen = 0;       // V4.6.4：stop/start 代际号——stop 使旧轮询/旧 close 回调失效
 
 /* 从 wrapper 输出解析实际监听地址（如 "Listening: http://127.0.0.1:12340" 或 "listening on 0.0.0.0:12340"） */
 function parseListenUrl(text) {
@@ -114,34 +115,47 @@ async function login(user, pass, code2fa) {
 function startService() {
   if (svcProc && !svcProc.killed) return Promise.resolve({ ok: true, already: true });
   if (svcStarting) return svcStarting;
-  svcStarting = new Promise((resolve) => {
-    try {
-      svcProc = spawn(exePath(), [], { cwd: effectiveWrapperDir(), windowsHide: true });
-      /* 从 wrapper 输出解析实际监听地址（启动脚本可能改端口） */
-      let outBuf = '';
-      const onData = (d) => {
-        outBuf += d.toString();
-        const u = parseListenUrl(outBuf);
-        if (u) svcUrl = u;
-      };
-      svcProc.stdout.on('data', onData);
-      svcProc.stderr.on('data', onData);
-      svcProc.on('error', (e) => { svcStarting = null; resolve({ ok: false, error: String(e && e.message || e) }); });
-      svcProc.on('close', () => { svcProc = null; });
-      // 等服务就绪（QEMU 虚拟机引导实测 ~15s，留 30 秒轮询 /status）
-      let tries = 0;
-      const t = setInterval(async () => {
-        tries++;
-        const st = await status();
-        if (st.ok) { clearInterval(t); svcStarting = null; resolve({ ok: true, url: svcUrl }); }
-        else if (tries > 60) { clearInterval(t); svcStarting = null; resolve({ ok: false, error: '服务启动超时（30 秒未就绪）' }); }
-      }, 500);
-    } catch (e) { svcStarting = null; resolve({ ok: false, error: String(e && e.message || e) }); }
-  });
+  const gen = ++svcGen; // V4.6.4：本次启动的代际号，stop 后旧轮询必须退出
+  svcStarting = (async () => {
+    // V4.6.4：若上一轮刚 stop（taskkill 异步），先等端口释放，避免新实例端口转发冲突
+    for (let i = 0; i < 10; i++) {
+      try { await fetch(svcUrl + '/status', { signal: AbortSignal.timeout(300) }); await new Promise(r => setTimeout(r, 300)); }
+      catch { break; } // 不可达 = 端口已释放
+    }
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn(exePath(), [], { cwd: effectiveWrapperDir(), windowsHide: true });
+        svcProc = proc;
+        /* 从 wrapper 输出解析实际监听地址（启动脚本可能改端口） */
+        let outBuf = '';
+        const onData = (d) => {
+          outBuf += d.toString();
+          const u = parseListenUrl(outBuf);
+          if (u) svcUrl = u;
+        };
+        proc.stdout.on('data', onData);
+        proc.stderr.on('data', onData);
+        proc.on('error', (e) => { if (svcStarting) svcStarting = null; resolve({ ok: false, error: String(e && e.message || e) }); });
+        // V4.6.4：close 回调身份比对——旧进程退出不得误清新进程句柄
+        proc.on('close', () => { if (svcProc === proc) svcProc = null; });
+        // 等服务就绪（QEMU 虚拟机引导实测 ~15s，留 30 秒轮询 /status）
+        let tries = 0;
+        const t = setInterval(async () => {
+          tries++;
+          if (gen !== svcGen) { clearInterval(t); svcStarting = null; resolve({ ok: false, error: '启动已被停止/替换' }); return; }
+          const st = await status();
+          if (st.ok) { clearInterval(t); svcStarting = null; resolve({ ok: true, url: svcUrl }); }
+          else if (tries > 60) { clearInterval(t); svcStarting = null; resolve({ ok: false, error: '服务启动超时（30 秒未就绪）' }); }
+        }, 500);
+      } catch (e) { svcStarting = null; resolve({ ok: false, error: String(e && e.message || e) }); }
+    });
+  })();
   return svcStarting;
 }
 
 function stopService() {
+  svcGen++; // V4.6.4：使进行中的启动轮询/旧 close 回调失效
+  svcStarting = null;
   try {
     if (svcProc && !svcProc.killed && svcProc.pid) {
       /* 必须杀进程树：Windows 下 svcProc.kill() 只杀 launcher，qemu-system 子进程

@@ -125,10 +125,14 @@
     renderStreamStatus('正在获取播放地址：' + song.name + '…');
     // V4.4：命中下一首预解析则跳过 IPC 请求（promise 链统一走同一个 then/catch）
     var preHit = consumePreload(song);
-    /* V4.6：Apple Music（provider 'am'）走自己的 songUrl（本地解密服务），不进洛雪 SDK */
+    /* V4.6：Apple Music（provider 'am'）走自己的 songUrl（本地解密服务），不进洛雪 SDK
+     * V4.6.4：localStorage 读取加兜底——隐私模式/存储被禁时 getItem 同步抛异常，
+     * 此前裸读在 urlP 构造处直接打断播放链（连错误提示都出不来）。 */
+    var playQ = 'aac';
+    try { playQ = localStorage.getItem('annieplayer.am.playq') === 'alac' ? 'alac' : 'aac'; } catch (e) { }
     var urlP = preHit ? Promise.resolve(preHit)
       : (song.provider === 'am'
-        ? window.mine.amSongUrl({ song: song, codec: (localStorage.getItem('annieplayer.am.playq') === 'alac' ? 'alac' : 'aac') })
+        ? window.mine.amSongUrl({ song: song, codec: playQ })
         : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }));
     urlP.then(function (r) {
       if (S.stIndex !== i || S._playList !== list) return;
@@ -711,23 +715,43 @@
     return null;
   }
 
+  /* V4.6.4：当前下载上下文的歌单/专辑名（仅在对应详情视图内非空）——
+   * 用于批量/多选/单曲下载自动建子文件夹。以 detailId 非空为门槛，离开详情即失效。 */
+  function currentDlGroupDir() {
+    // V4.6.4：自制在线歌单视图——用本歌单名建子文件夹
+    if (S.view && S.view.indexOf('spl:') === 0) {
+      var pl = (S.streamPlaylists || []).find(function (p) { return p.id === S.view.slice(4); });
+      if (pl && pl.name) return pl.name;
+    }
+    /* V4.6.4 修正：必须「当前就停留在该详情页签」才算——此前只看 detailId，
+     * 而切去搜索页时 slDetailId/abDetailId 并未清空，导致搜索单曲被误存进上一个歌单/专辑文件夹。
+     * 现在要求 stTab 与详情所属页签一致（歌单=lists，专辑=albums），离开即失效。 */
+    if (S.stTab === 'lists' && S.slDetailId && S.slDetailName) return S.slDetailName;               // 歌单详情
+    if (S.stTab === 'albums' && S.abDetailId && S.abDetailInfo && S.abDetailInfo.name) return S.abDetailInfo.name; // 专辑详情
+    return '';
+  }
+
   /* V4.3.22：下载统一入口——进主进程任务队列（下载情况视图管理，支持并发/暂停/重试）
-   * V4.6.3：quality 由音质弹窗选定（锁档）；传函数则按曲逐个解析（多选电狗策略）；缺省回退当前播放音质档 */
+   * V4.6.3：quality 由音质弹窗选定（锁档）；传函数则按曲逐个解析（多选电狗策略）；缺省回退当前播放音质档
+   * V4.6.4：自动附 groupDir（歌单/专辑名）→ 主进程在下载目录下建同名子文件夹 */
   function queueDownloads(songs, quality, toastNote) {
     if (!window.mine.dlAdd || !songs || !songs.length) return;
     var asu = (window.annieSettings && window.annieSettings.ui) || {};
+    var groupDir = currentDlGroupDir();
     window.mine.dlAdd(songs.map(function (song) {
       return {
         provider: song.provider || S.stProvider,
         quality: (typeof quality === 'function' ? quality(song) : (quality || S.stQuality)),
         song: song,
+        groupDir: groupDir,
         saveLrc: asu.saveLrc !== false, saveCover: asu.saveCover !== false
       };
     })).then(function (r) {
       try {
         if (typeof proToast === 'function') {
           proToast('已加入下载队列 ' + (r ? r.added : songs.length) + ' 首' +
-            (r && r.skipped ? '（队列中已存在 ' + r.skipped + ' 首）' : '') + (toastNote || '') + '，见「下载情况」');
+            (r && r.skipped ? '（队列中已存在 ' + r.skipped + ' 首）' : '') + (toastNote || '') +
+            (groupDir ? '，存入「' + groupDir + '」文件夹' : '') + '，见「下载情况」');
         }
       } catch (e) { }
     }).catch(function () { });
@@ -1192,6 +1216,15 @@
     playStreamAt(i, list);
   }
 
+  /* V4.6.4：自制歌单多选切换（对齐流媒体 toggleSel，作用于 S.splSel） */
+  function toggleSplSel(song, tr, ck) {
+    if (!S.splSel || !(S.splSel instanceof Set)) S.splSel = new Set();
+    if (S.splSel.has(song)) { S.splSel.delete(song); tr.classList.remove('sel'); if (ck) ck.checked = false; }
+    else { S.splSel.add(song); tr.classList.add('sel'); if (ck) ck.checked = true; }
+    var cnt = document.querySelector('.am-ms-count');
+    if (cnt) cnt.textContent = '已选 ' + S.splSel.size + ' 首';
+  }
+
   function renderSplView(c) {
     var pl = currentSpl();
     if (!pl) { S.view = 'stream'; renderView(); return; }
@@ -1225,6 +1258,21 @@
     var bShuffle = el('button', 'am-btn', '🔀 随机播放');
     bShuffle.onclick = function () { if (pl.items.length) playSplAt(pl, Math.floor(Math.random() * pl.items.length)); };
     acts.appendChild(bPlay); acts.appendChild(bShuffle);
+    // V4.6.4：自制在线歌单对齐流媒体歌单——多选模式 + 批量下载（此前只有单曲下载按钮）
+    var bMulti = el('button', 'am-btn', '☑ 多选');
+    bMulti.onclick = function () {
+      S.splMulti = true; S.splSel = new Set();
+      renderView();
+    };
+    acts.appendChild(bMulti);
+    var bDlAll = el('button', 'am-btn', '⬇ 下载全部');
+    bDlAll.title = '按各曲支持的最高音质批量下载（洛雪电狗策略），存入本歌单同名文件夹';
+    bDlAll.onclick = function () {
+      if (!pl.items.length) { stToast('歌单还是空的'); return; }
+      var songs = pl.items.map(function (it) { if (!it.song.provider) it.song.provider = it.provider; return it.song; });
+      queueDownloads(songs, function (song) { return bestDlType(song) || S.stQuality; }, '（按各曲最高音质）');
+    };
+    acts.appendChild(bDlAll);
     // V4.4.8：在线歌单排序改用和「播放列表」同一套胶囊 + 弹层
     //（原来这里是原生 select，下拉列表由系统绘制，跟皮肤完全不统一）
     var SPL_SORT_OPTS = [['default', '平台原始顺序'], ['azArtist', '演唱者 A–Z']];
@@ -1272,6 +1320,35 @@
     R.stStatus = el('div', 'am-st-status'); // playStreamAt 的解析进度显示位
     c.appendChild(R.stStatus);
 
+    /* V4.6.4：多选工具条（对齐流媒体歌单 renderMsBar）——全选/下载选中/退出。
+     * 自制歌单多选集合用 S.splSel（歌曲对象引用），与流媒体 S.stSel 隔离。 */
+    if (S.splMulti) {
+      if (!S.splSel || !(S.splSel instanceof Set)) S.splSel = new Set();
+      var msBar = el('div', 'am-ms-bar');
+      var bAll = el('button', 'am-btn', (S.splSel.size >= pl.items.length && pl.items.length) ? '☐ 取消全选' : '☑ 全选');
+      bAll.onclick = function () {
+        if (S.splSel.size >= pl.items.length) S.splSel.clear();
+        else pl.items.forEach(function (it) { S.splSel.add(it.song); });
+        renderView();
+      };
+      msBar.appendChild(bAll);
+      var bDlSel = el('button', 'am-btn', '⬇ 下载选中');
+      bDlSel.onclick = function () {
+        if (!S.splSel.size) { stToast('先勾选要下载的歌曲'); return; }
+        var songs = Array.from(S.splSel);
+        songs.forEach(function (s) { if (!s.provider) s.provider = S.stProvider; });
+        queueDownloads(songs, function (song) { return bestDlType(song) || S.stQuality; }, '（按各曲最高音质）');
+        S.splMulti = false; S.splSel = new Set();
+        renderView();
+      };
+      msBar.appendChild(bDlSel);
+      var bExitMs = el('button', 'am-btn', '✕ 退出多选');
+      bExitMs.onclick = function () { S.splMulti = false; S.splSel = new Set(); renderView(); };
+      msBar.appendChild(bExitMs);
+      msBar.appendChild(el('span', 'am-ms-count', '已选 ' + S.splSel.size + ' 首'));
+      c.appendChild(msBar);
+    }
+
     // V4.3.26：表格渲染抽成函数——搜索过滤时单独重建表格区（不动搜索框，保焦点）
     var tbHost = el('div');
     c.appendChild(tbHost);
@@ -1308,7 +1385,7 @@
       }
       if (q) tbHost.appendChild(el('div', 'am-pl-meta', '匹配 ' + rows.length + ' / ' + pl.items.length + ' 首'));
       var tb = el('table', 'am-table');
-      tb.innerHTML = '<thead><tr><th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:64px">平台</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
+      tb.innerHTML = '<thead><tr>' + (S.splMulti ? '<th style="width:34px"></th>' : '') + '<th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:64px">平台</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
       var body = el('tbody');
       rows.forEach(function (pair) {
         var i = pair[0], it = pair[1];
@@ -1317,8 +1394,16 @@
         // V4.3.26：cur 高亮按歌曲身份匹配（歌单编辑后 _playList 快照 song 与新 item.song 引用不同，=== 会失配）
         var curSong = (state.currentStream && state.currentStream.song) || (S._playList && S._playList[S.stIndex]);
         var cur = !!(curSong && songKey(curSong) === songKey(song));
-        var tr = el('tr', 'am-tr' + (cur ? ' cur' : ''));
+        var tr = el('tr', 'am-tr' + (cur && !S.splMulti ? ' cur' : '') + (S.splMulti && S.splSel && S.splSel.has(song) ? ' sel' : ''));
         tr.dataset.st = i;
+        // V4.6.4：多选模式行首复选框（对齐流媒体歌单）
+        if (S.splMulti) {
+          var tdCk = el('td');
+          var ck = document.createElement('input');
+          ck.type = 'checkbox'; ck.checked = !!(S.splSel && S.splSel.has(song)); ck.className = 'am-ms-ck';
+          ck.onclick = function (e) { e.stopPropagation(); toggleSplSel(song, tr, ck); };
+          tdCk.appendChild(ck); tr.appendChild(tdCk);
+        }
         var tdCover = el('td');
         var img = el('img', 'am-c-cover'); img.alt = ''; img.loading = 'lazy';
         if (song.cover) { img.src = song.cover; img.onerror = function () { img.style.visibility = 'hidden'; }; }
@@ -1361,8 +1446,29 @@
           });
         };
         tdRm.appendChild(bRm); tr.appendChild(tdRm);
-        tr.onclick = function () { playSplAt(pl, i); };
-        tr.ondblclick = function () { playSplAt(pl, i); };
+        if (S.splMulti) {
+          tr.onclick = function () { toggleSplSel(song, tr, tr.querySelector('.am-ms-ck')); };
+        } else {
+          tr.onclick = function () { playSplAt(pl, i); };
+          tr.ondblclick = function () { playSplAt(pl, i); };
+          // V4.6.4：右键 多选/下载（对齐流媒体歌单 openStRowMenu，复用 R.pop）
+          tr.oncontextmenu = function (e) {
+            e.preventDefault();
+            var x = e.clientX, y = e.clientY;
+            var pop = R.pop;
+            pop.innerHTML = '';
+            var b1 = el('button', 'am-pop-item', '☑ 多选');
+            b1.onclick = function () { pop.classList.remove('on'); S.splMulti = true; S.splSel = new Set([song]); renderView(); };
+            pop.appendChild(b1);
+            var b2 = el('button', 'am-pop-item', '⬇ 下载');
+            b2.onclick = function () { pop.classList.remove('on'); pickDlQuality([song], x, y); };
+            pop.appendChild(b2);
+            pop.classList.add('on');
+            var w = pop.offsetWidth, h = pop.offsetHeight;
+            pop.style.left = Math.min(x, window.innerWidth - w - 12) + 'px';
+            pop.style.top = Math.min(y, window.innerHeight - h - 12) + 'px';
+          };
+        }
         body.appendChild(tr);
       });
       tb.appendChild(body);

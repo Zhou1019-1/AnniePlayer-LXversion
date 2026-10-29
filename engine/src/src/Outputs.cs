@@ -44,6 +44,14 @@ public interface IOutputBackend : IDisposable
     void Play();
     void Pause();
     void Stop();
+
+    /// <summary>
+    /// V4.6.4：取出并清除一次「输出设备运行期故障」（设备拔出/独占流异常停止）。
+    /// 返回 null = 无故障。此前引擎对运行期设备故障完全无感知（无声假播放），
+    /// 由 Engine 的 10Hz 定时器轮询此方法转成 error 事件广播给渲染层。
+    /// 默认实现 = 无故障（不支持运行期检测的后端无需实现）。
+    /// </summary>
+    string? ConsumeOutputFault() => null;
 }
 
 /// <summary>
@@ -325,6 +333,9 @@ public sealed class PcmFloatSource : IWaveProvider
                         g *= fadeFrom + (fadeTo - fadeFrom) * t;
                     }
                     float v = f[i] * g;
+                    // V4.6.4：NaN 隔离——比较对 NaN 全 false，limiter 会原样放行 NaN 样本到输出，
+                    // 异常音频/VST 输出引入的 NaN 直接置静音（单样本，不影响后续）。
+                    if (float.IsNaN(v)) { f[i] = 0f; continue; }
                     // Pro：软限幅器（tanh 软膝，|v|≤1 时近似线性，超限平滑压缩到 ±1 内）
                     if (limiter && (v > 1f || v < -1f)) { clipBlock = true; v = (float)Math.Tanh(v); }
                     f[i] = v;
@@ -440,6 +451,10 @@ public sealed class WasapiExclusiveBackend : IOutputBackend
     private readonly AudioClientShareMode _shareMode; // V1.1.9：Exclusive（默认）| Shared
     private WasapiOut? _out;
     private IWaveProvider? _source;
+    // V4.6.4：运行期故障标志（音频线程/设备回调线程写，RPC 定时器线程读；volatile 足够）
+    private volatile string? _outputFault;
+    // 期望停止（Pause/Stop/换源）期间忽略 PlaybackStopped——只有「我认为还在播却停了」才是故障
+    private volatile bool _expectStop;
 
     public string Kind => "wasapi";
     public string DeviceName { get; }
@@ -584,6 +599,9 @@ public sealed class WasapiExclusiveBackend : IOutputBackend
             try
             {
                 _out = new WasapiOut(_device, _shareMode, true, Math.Clamp(BufferMs, 50, 500));
+                // V4.6.4：订阅运行期停止事件——设备拔出/独占被抢时 NAudio 触发 PlaybackStopped，
+                // 此前无人订阅 → 引擎保持 playing 无声假播放。仅在非期望停止时记故障。
+                _out.PlaybackStopped += OnPlaybackStopped;
                 _out.Init(provider);
                 ActiveFormat = fmt;
                 return;
@@ -604,14 +622,26 @@ public sealed class WasapiExclusiveBackend : IOutputBackend
         }
     }
 
-    public void Play() => _out?.Play();
+    public void Play() { _expectStop = false; _out?.Play(); }
     // V1.1.8：暂停 = 干净停流（WasapiOut.Stop：停音频线程 + audioClient.Stop）但**不释放设备句柄**。
     // 真 Pause()（只置状态）在 WASAPI 独占+事件驱动下会导致：缓冲不被填充 → 硬件持续消费 → 下溢
     // → 事件流错乱，恢复后音频卡顿（只有重新起流才恢复，用户实测）。Stop 保留设备独占锁，
     // 不触发设备开关（音频服务安全），Resume 时 Play() 从 Stopped 启动新线程重新 Start，干净恢复。
-    public void Pause() => SafeStop(_out, dispose: false);
-    public void Stop() { var o = _out; _out = null; SafeStop(o, dispose: true); }
+    public void Pause() { _expectStop = true; SafeStop(_out, dispose: false); }
+    public void Stop() { _expectStop = true; var o = _out; _out = null; SafeStop(o, dispose: true); }
     public void Dispose() => Stop();
+
+    /// <summary>V4.6.4：取出并清除一次输出故障（Engine 10Hz 轮询）。</summary>
+    public string? ConsumeOutputFault() { var f = _outputFault; _outputFault = null; return f; }
+
+    private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        // 期望停止（Pause/Stop/换源）不记故障；异常停止且非期望 → 记故障等 Engine 轮询取走
+        string? reason = null;
+        if (e.Exception != null) reason = "输出设备错误：" + e.Exception.Message;
+        else if (!_expectStop) reason = "输出设备已断开或停止（可能被拔出/独占被其他应用抢占）";
+        if (reason != null && !_expectStop) _outputFault = reason;
+    }
 
     /// <summary>
     /// 防死锁停止：NAudio WasapiOut（Exclusive + 事件驱动）的 Stop 会同步等待音频线程退出。
@@ -729,6 +759,13 @@ public sealed class AsioBackend : IOutputBackend
     // 驱动拒绝源采样率时的回退表（高→低，PCM/DSD 两族都覆盖）
     private static readonly int[] AsioFallbackRates = { 768000, 705600, 384000, 352800, 192000, 176400, 96000, 88200, 48000, 44100 };
 
+    // V4.6.4：ASIO 运行期故障检测——NAudio AsioOut 无 PlaybackStopped，设备拔出后仍「假播放」。
+    // 播放期间每 2s 调驱动 GetSampleRate() 探活，拔出/驱动崩即抛异常 → 置 fault 由 Engine 轮询消费。
+    private volatile string? _outputFault;
+    private Timer? _aliveTimer;
+    private volatile bool _expectStop;   // 期望停止（Pause/Stop/换源）期间不探活，避免误报
+    private volatile bool _playing;      // 仅播放中探活
+
     public string Kind => "asio";
     public string DeviceName => _driverName;
     public WaveFormat ActiveFormat { get; private set; } = new WaveFormat(44100, 16, 2);
@@ -736,6 +773,61 @@ public sealed class AsioBackend : IOutputBackend
     public int RequestedRate { get; private set; }
 
     public AsioBackend(string driverName) { _driverName = driverName; }
+
+    /// <summary>V4.6.4：取出并清除一次 ASIO 运行期故障（设备拔出/驱动异常）。</summary>
+    public string? ConsumeOutputFault()
+    {
+        var f = _outputFault;
+        _outputFault = null;
+        return f;
+    }
+
+    private void StartAliveWatch()
+    {
+        StopAliveWatch();
+        _aliveTimer = new Timer(_ => ProbeAlive(), null, 2000, 2000);
+    }
+    private void StopAliveWatch()
+    {
+        try { _aliveTimer?.Dispose(); } catch { }
+        _aliveTimer = null;
+    }
+    private void ProbeAlive()
+    {
+        if (!_playing || _expectStop || _asio is null) return;
+        // V4.6.4 修正：探活必须走 STA 线程（AsioSta.Invoke）——ASIO COM 驱动在非 STA 线程
+        // 直接 0x80004002「STAThread is set」；且 ASE_NotPresent（被独占占用）≠ 设备拔出。
+        // 此前用 Timer 线程池线程 + 把 NotPresent 当故障，导致设备明明在却误判拔出、误切系统默认。
+        try
+        {
+            // 探活用「构造 AsioOut 但不 Init/Play」——诊断包实锤：真拔出时构造函数报
+            // "No device is connected to the PC"，而被自己独占占用时报 ASE_NotPresent。
+            // GetSampleRate 两种都报 NotPresent 无法区分，故改用构造函数探测。
+            // 构造后立即 Dispose，不 Init 不占用，不影响正在播放的 _asio 实例。
+            AsioSta.Invoke(() =>
+            {
+                AsioOut? probe = null;
+                try { probe = new AsioOut(_driverName); }
+                finally { try { probe?.Dispose(); } catch { } }
+            });
+        }
+        catch (Exception ex)
+        {
+            var msg = ex.Message ?? "";
+            if (!_playing || _expectStop) return; // 探活期间被正常停止，忽略
+            // 关键区分（诊断包实锤）：
+            // · ASE_NotPresent = 设备被独占占用（正是我们自己 _asio 持有）→ 设备在，正常，忽略。
+            // · "No device is connected" = 设备真拔出（驱动明确报无连接）→ 真故障。
+            bool reallyGone = msg.IndexOf("No device is connected", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("not connected", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("0x8007001F", StringComparison.OrdinalIgnoreCase) >= 0; // ERROR_DEVICE_NOT_CONNECTED
+            if (!reallyGone) return;
+            Console.Error.WriteLine($"[asio] 驱动 [{_driverName}] 探活判定设备已拔出：{msg}");
+            _outputFault = $"ASIO 设备 [{_driverName}] 已断开或驱动异常";
+            _playing = false; // 只报一次
+            StopAliveWatch();
+        }
+    }
 
     public static string[] Enumerate()
     {
@@ -910,10 +1002,21 @@ public sealed class AsioBackend : IOutputBackend
 
     public void ShowControlPanel() { try { AsioSta.Invoke(() => _asio?.ShowControlPanel()); } catch { } }
 
-    public void Play() => AsioSta.Invoke(() => _asio?.Play());
-    public void Pause() => AsioSta.Invoke(() => _asio?.Stop());
+    public void Play() => AsioSta.Invoke(() =>
+    {
+        _expectStop = false;
+        _asio?.Play();
+        _playing = true;
+        StartAliveWatch(); // V4.6.4：起播开启 ASIO 驱动探活（设备拔出检测）
+    });
+    public void Pause() => AsioSta.Invoke(() =>
+    {
+        _expectStop = true; _playing = false; StopAliveWatch();
+        try { _asio?.Stop(); } catch { }
+    });
     public void Stop() => AsioSta.Invoke(() =>
     {
+        _expectStop = true; _playing = false; StopAliveWatch();
         try { _asio?.Stop(); } catch { }
         try { _asio?.Dispose(); } catch { }
         _asio = null;

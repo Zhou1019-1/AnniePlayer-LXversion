@@ -28,7 +28,7 @@ function keyOf(ck) {
 function idxPath() { return path.join(cacheDir(), 'stream-cache.json'); }
 function loadIdx() { try { return JSON.parse(fs.readFileSync(idxPath(), 'utf8')) || {}; } catch { return {}; } }
 function saveIdx(idx) {
-  try { fs.mkdirSync(cacheDir(), { recursive: true }); fs.writeFileSync(idxPath(), JSON.stringify(idx)); } catch { }
+  try { fs.mkdirSync(cacheDir(), { recursive: true }); require('./jsonFile').writeJsonAtomic(idxPath(), idx); } catch { }
 }
 function setDir(dir) {
   const st = loadStore();
@@ -90,13 +90,16 @@ function fill(ck) {
       const size = fs.statSync(part).size;
       if (!size) throw new Error('empty');
       try { fs.renameSync(part, fin); } catch { fs.copyFileSync(part, fin); fs.unlinkSync(part); }
-      // V4.4：条目显式带 provider/quality（分组查看/分组清理用；旧条目靠 parseEntry 从 key 兜底解析）
-      idx[key] = {
+      /* V4.6.4：落盘前重新读索引再 merge——旧实现用网络等待前的旧快照整体覆盖，
+       * 等待期间其他 key 的 fill/lookup(lastUse)/清理写盘全被回滚丢失。
+       * 重新 load 后若条目已被并发写入则保留（inflight 同 key 去重，理论上不会撞）。 */
+      const idx2 = loadIdx();
+      idx2[key] = {
         file, size, lastUse: Date.now(), title: ck.title || '', artist: ck.artist || '',
         provider: ck.provider || '', quality: ck.quality || ''
       };
-      saveIdx(idx);
-      enforceCap(idx);
+      saveIdx(idx2);
+      enforceCap(idx2);
       return { ok: true, size };
     } catch (e) {
       try { fs.unlinkSync(part); } catch { }

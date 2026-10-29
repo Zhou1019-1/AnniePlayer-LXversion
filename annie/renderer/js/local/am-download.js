@@ -81,6 +81,11 @@
       tabs.appendChild(chip);
     });
     bar.appendChild(tabs);
+    // V4.6.4：一键打开下载根目录——批量下载歌单后直达文件夹，不用逐个点 📂
+    var bRoot = el('button', 'am-btn', '📂 打开下载目录');
+    bRoot.title = '在文件管理器中打开下载保存目录';
+    bRoot.onclick = function () { if (window.mine.dlOpenRoot) window.mine.dlOpenRoot(); };
+    bar.appendChild(bRoot);
     if (dlTab === 'done' && dlTasks.some(function (t) { return t.status === 'done'; })) {
       var bc = el('button', 'am-btn', '清空已完成');
       bc.onclick = function () { window.mine.dlClear(['done']); };
@@ -151,7 +156,8 @@
       if (t.status === 'downloading' || t.status === 'waiting') ops.appendChild(opBtn('⏸', '暂停', function () { window.mine.dlPause(t.id); }));
       if (t.status === 'paused') ops.appendChild(opBtn('▶', '继续', function () { window.mine.dlResume(t.id); }));
       if (t.status === 'error') ops.appendChild(opBtn('🔁', '重试', function () { window.mine.dlResume(t.id); }));
-      if (t.status === 'done') ops.appendChild(opBtn('📂', '打开所在文件夹', function () { window.mine.dlOpenFolder(t.id); }));
+      // V4.6.4：歌单/专辑任务提示「打开歌单文件夹」（主进程据此直接开子目录），单曲仍「定位文件」
+      if (t.status === 'done') ops.appendChild(opBtn('📂', t.groupDir ? ('打开「' + t.groupDir + '」文件夹') : '在文件夹中定位', function () { window.mine.dlOpenFolder(t.id); }));
       ops.appendChild(opBtn('✕', '移除任务', function () { window.mine.dlRemove(t.id); }));
       tdO.appendChild(ops);
       tr.appendChild(tdO);

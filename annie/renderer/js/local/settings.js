@@ -4217,14 +4217,19 @@
     },
     applyAll: applyAll,
     save: save,
-    /* Pro beat0.0.1：命令面板用——配色切换与任意字段更新 */
+    /* Pro beat0.0.1：命令面板用——配色切换与任意字段更新
+     * V4.6.4：补 applyPalette/applyAccent——此前只 applyVisual（粒子参数），
+     * 命令面板切配色/强调色不立即生效，要重开设置面板或重启才看到。 */
     setPalette: function (k) {
       ui.palette = k;
-      save(); applyVisual();
+      save(); applyPalette(); applyVisual();
     },
     update: function (patch) {
       for (var k in patch) { if (patch[k] !== undefined) ui[k] = patch[k]; }
-      save(); applyVisual();
+      save();
+      if ('palette' in patch) applyPalette();
+      if ('accent' in patch) applyAccent();
+      applyVisual();
     },
     hydrate: function (saved) {
       if (saved && typeof saved === 'object') {

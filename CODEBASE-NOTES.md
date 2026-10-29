@@ -334,15 +334,29 @@
 
 ### 🔍 待验证（暂未修，下轮候选）
 - 【功能储备】SMTC ↔ Wallpaper Engine 联动（用户 2026-10-09 提出，先记下来慢慢做）：mediaSession.js 已走 Chromium Media Session → Windows SMTC（曲名/封面/进度/控制，不占音频管线，独占/ASIO 下 WE 也能读到）；待实测：①无 <audio> 发声（C# 引擎出声）时 Chromium 是否真的激活 SMTC（不激活则主进程 WinRT 原生注册兜底）②封面 dataURL 建议压 256×256（WE 官方建议）。WE 频谱类壁纸靠 loopback 抓 PCM，独占下物理无解（FB2K 同），要做得引擎旁路 PCM 给虚拟声卡。
-- 扫描竞态：watchScanPending 与手动扫描互截（main.js:458-497/601-635）；scanWorker cancelled 单标志互踩（scanWorker.js:16,30,120）。
-- app:relaunch 走 app.exit(0)：不触发 before-quit → flushStore/引擎退出等待全跳过，AnnieEngine.exe 孤儿残留（main.js:1500）。
-- 流媒体跨主题续播接管链断档（三层补丁放行落到陈旧 streamState）。
-- theme.js 续播流媒体未传 onPlayed → 无歌词/不预取下一首（streaming.js:381 注入全靠它）。
-- 下载扩展名回退可产非法路径（streaming/index.js:151,161）；引擎崩溃自愈对流媒体用过期 URL 重播（player.js:1380-1393）。
-- 非原子写四处：beat-cache.json / dl-tasks.json / stream-settings.json / stream-sources.json。
-- 设置 setPalette/update 不调 applyPalette/applyAccent（settings.js:2883-2890，命令面板入口）；主题切换 switching 锁依赖 mount 不抛异常（theme.js:143-175）。
-- ~~FB2K 右键菜单无歌单收敛~~ ✅已修：ctxSubMenu 二级浮层（fb2k.js:1456 ctxMenu 支持 {sub,items} 项；本地/流媒体歌单 >8 收敛，子面板挂菜单项内部 fixed 定位 + 翻左避让）；拖拽缺 pointercancel（fb2k.js:1933+/am.js:401+/player.js:1496+）仍待验证。
-- qobuz 读取类端点不校验 HTTP status → token 过期自动重登可能不生效（qobuz/api.js:218-231）。
+- ~~扫描竞态：watchScanPending 与手动扫描互截；scanWorker cancelled 单标志互踩~~ ✅已修（V4.6.4 P0-3）：scanWorker 取消按 jobId 作用域化（cancelJobs Set + globalCancelSeq 代际号，scanWorker.js:16-43）；主线程三处「cancel+scan」连发改为带旧 jobId 的定点取消（main.js:517-522/762-768/779-786），手动扫描/重扫顶替监听扫描时复位 watchScanPending+libWatchRunning。测试 scripts/scan-worker-cancel-test.js 5/5。
+- ~~app:relaunch 走 app.exit(0)：不触发 before-quit~~ ✅已修（V4.6.4 P0-1，main.js:1850-1859）：先同步 flushStore 再 app.quit() 走完整 before-quit 链（等引擎退出后 exit）。
+- ~~流媒体跨主题续播接管链断档~~ 🔍部分缓解（V4.6.4）：theme.js 续播已补 onPlayed（歌词+AM 预取），自然结束连播仍依赖 AM/FB2K 各自队列（legacy streamState 跨主题不重建属设计）。
+- ~~theme.js 续播流媒体未传 onPlayed~~ ✅已修（V4.6.4 P1-4a，theme.js:104-131）：onPlayed 取歌词注入舞台+AM 缓存+广播 annie-stream-lyric + AM.maybePreloadNext；false/异常均 proToast。
+- ~~下载扩展名回退可产非法路径~~ ✅已修（V4.6.4 P1-7，streaming/index.js:186-195）：KNOWN_EXT 白名单 12 种，不匹配回退 mp3。
+- ~~引擎崩溃自愈对流媒体用过期 URL 重播~~ ✅已修（V4.6.4 P1-4b，player.js:1562-1577）：带 song 的洛雪流媒体先 streamSongUrl 重新取址再播+seek 回断点；Qobuz/am 仍原路径。
+- 播放 false 反馈补齐（V4.6.4 P1-4c）：streaming.js:433-435 / am-qobuz.js:137-139 / theme.js——6 个 annieStreamPlay 调用点全部有失败反馈。
+- ~~引擎设备拔出无声假播放~~ ✅已修（V4.6.4 P1-5）：IOutputBackend.ConsumeOutputFault() 默认方法 + WasapiBackend 订阅 PlaybackStopped（_expectStop 区分期望停止）+ Engine TickPosition 轮询发 output-fault 事件。**ASIO 补充**（V4.6.4）：NAudio AsioOut 无 PlaybackStopped，改为播放期 2s 定时探活（ProbeAlive 调驱动 GetSampleRate）；Play 起播 StartAliveWatch，Pause/Stop 置 _expectStop+StopAliveWatch 防误报。**⚠️ 两个血泪教训**（诊断包实锤）：① 探活必须走 **AsioSta.Invoke（STA 线程）**——ASIO COM 驱动在 Timer 线程池线程上直接 `0x80004002 Unable to instantiate ASIO / STAThread is set`；② **ASE_NotPresent ≠ 设备拔出**——独占模式下设备被自己的 `_asio` 实例持有，第二个 COM 句柄查询必报 `ASE_NotPresent`（错误信息含 NotPresent 要 return 忽略，这是「被占用=设备在」的正常信号）。初版两错叠加 → 正常播放被误判拔出、误切系统默认音箱。真拔出靠非 NotPresent 的 HRESULT 异常判定。
+- **设备拔出无感恢复 + 一键续播**（V4.6.4 增强）：根因=output-fault 后 _backend 留死句柄，resume 在死设备上必然失败被 catch 吞掉 = 播放键失效。修复三层：① 引擎 output-fault 时自动 SelectBackend("wasapi",null,exclusive:false) 回退共享默认输出（复用 V3.5.2 设备失效回退），事件带 switchedTo（Engine.Playback.cs:772-787）；② 渲染层 output-fault 存 deviceFaultResume 快照（position/path/stream）+ 弹窗「已切换到 XX，已暂停，点击 ▶ 继续」+ 同步持久化 backend='wasapi' 让设置界面刷新（player.js:1595-1617）；③ 播放键续播。**⚠️ 关键教训**：续播逻辑必须抽成全局 `window.annieDeviceFaultResume()`（player.js:1692-1725）——**AM 主题播放键走 am.js:468 togglePlay（R.btnPlay.onclick），FB2K 走 fb2k.js:1991 transportPlayPause，都不经过 player.js 的 $('#btn-play').onclick**！只改 player.js 在 AM 主题下完全无效。三处播放键（player.js/am.js/fb2k.js）都需先调 `if(window.annieDeviceFaultResume && !state.playing && state.deviceFaultResume){...return}` 接管。续播：洛雪流媒体 streamSongUrl 重新取址→annieStreamPlay→600ms seek 回断点；Qobuz/am 重播原 URL；本地 applyAudioSettings→offset play。
+- ~~ffmpeg stderr 无上限/无超时~~ ✅已修（V4.6.4 P1-6）：Decode.cs 逐行读+8KB 环形；tagWriter 4KB 截断+120s 超时杀树；loudness 16KB 截断+超时杀树；analyzer probeCodec stdout 64KB+stderr 消费+30s 超时。
+- ~~qobuz 读取类端点不校验 HTTP status~~ ✅已修（V4.6.4 P1-8，qobuz/api.js:218-225）：_body() 统一校验 401→AUTH 触发 withAuth 重登，8 个读取端点全切换。
+- 歌单/专辑批量下载自动建子文件夹（V4.6.4 新功能）：渲染层 am-stream.js currentDlGroupDir()（spl: 自制歌单名 / stTab==='lists'+slDetailId 歌单名 / stTab==='albums'+abDetailId 专辑名）→ queueDownloads 附 groupDir → dlManager 任务快照存 groupDir（续传透传）→ streaming/index.js sanitizeGroupDir()（剥分隔符/保留名/限长80）拼 targetDir + mkdir recursive。toast 提示存入的文件夹名。搜索视图/无上下文不建（保持旧行为）。Qobuz/AM 无国内批量下载入口不受影响。**修正**：歌单/专辑分支加了 stTab 页签门槛——此前只看 detailId，切去搜索页时 detailId 未清空导致搜索单曲误存进上一歌单文件夹；自制歌单 spl: 分支不受此影响（S.view 切走即失效）。**修正2**：sanitizeGroupDir 空输入先返回 ''——此前复用 sanitizeFileName('') 回退「未命名」，导致搜索单曲（groupDir=''）被误建「未命名」文件夹；纯非法字符输入回退「未命名」也视为无效不建。
+- 自制在线歌单多选批量下载（V4.6.4，renderSplView 对齐流媒体 renderSongsTable）：头部加「☑多选」「⬇下载全部」按钮；多选工具条（全选/下载选中/退出，S.splSel 歌曲对象引用，与 S.stSel 隔离）；行首复选框 am-ms-ck + toggleSplSel；右键 多选/下载菜单（复用 R.pop）；多选时点击行=切换选中不播放。电狗策略 bestDlType 取各曲最高音质。语法 173 文件 0 失败。
+- 下载情况视图便捷入口（V4.6.4 小而雅）：头部加「📂打开下载目录」（dlManager.openRoot → dl:openRoot IPC → dlOpenRoot，shell.openPath 根目录+mkdir 兜底）；已完成任务若 t.groupDir 非空，openFolder 直接 shell.openPath 歌单子目录（不再定位单文件），按钮 title 显示「打开「歌单名」文件夹」。链路 dlManager.js:202-219 / main.js:2292 / preload.js:204 / am-download.js:85-89,160。
+- ~~非原子写四处：beat-cache.json / dl-tasks.json / stream-settings.json / stream-sources.json~~ ✅已修（V4.6.4 P0-2）：新增纯 Node 模块 `annie/main/jsonFile.js`（writeJsonAtomic/tryWriteJsonAtomic/readJson，tmp+rename，无 electron 依赖符合规范12），五处写盘全部切换（含 streamCache.js saveIdx 顺带）。测试 scripts/json-file-test.js 9/9。注意：streamCache fill 的旧快照覆盖问题（loadIdx→网络等待→saveIdx）未修，留待下轮。
+- ~~设置 setPalette/update 不调 applyPalette/applyAccent~~ ✅已修（V4.6.4 P2-2，settings.js:4220-4234）：setPalette 补 applyPalette，update 按 patch 键补 applyPalette/applyAccent。
+- ~~主题切换 switching 锁依赖 mount 不抛异常~~ ✅已修（V4.6.4 P2-1，theme.js:186-199）：apply 包 try/catch，mount 异常时收过渡屏+解锁+proToast，不再永久锁死。
+- ~~streamCache 索引旧快照覆盖~~ ✅已修（V4.6.4 P2-3，streamCache.js:94-105）：fill 落盘前重新 loadIdx 再 merge 自己的条目，不再用网络等待前的旧快照整体覆盖。
+- ~~amWrapper stop/start 竞态~~ ✅已修（V4.6.4 P2-4，amWrapper.js:114-160）：svcGen 代际号使旧轮询/close 回调失效，close 身份比对防误清新句柄，start 先等端口释放，stop 清 svcStarting。
+- ~~拖拽缺 pointercancel~~ ✅已修（V4.6.4 P2-5）：am.js:530-546（进度）、player.js:1720-1727（粒子进度）、fb2k.js:2110-2125（进度）/2163-2170（音量）/2207-2213（栏宽）全部补 cancel 监听；进度类 cancel 只复位不 seek，栏宽按已拖宽度收尾。
+- ~~DSP NaN 穿透~~ ✅已修（V4.6.4 P2-6）：Eq.cs:48-50（Update 非有限值按 0dB）+ ProcessFrame NaN 隔离清 _z 状态；Peq.cs:17-22（Band 构造非有限回退默认）+ ProcessFrame 同款隔离；Outputs.cs:337-339 limiter 前 NaN 样本置静音。
+- ~~localStorage 裸读~~ ✅已修（V4.6.4 P2-7）：am-stream.js:130-135（AM 音质读取兜底 aac）、am-dom.js:38-43（侧栏/歌词宽度初始化 try/catch）。
+- ~~FB2K 右键菜单无歌单收敛~~ ✅已修：ctxSubMenu 二级浮层（fb2k.js:1456 ctxMenu 支持 {sub,items} 项；本地/流媒体歌单 >8 收敛，子面板挂菜单项内部 fixed 定位 + 翻左避让）。
 
 ---
 

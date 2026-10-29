@@ -214,20 +214,30 @@ class QobuzClient {
     return body; // { url, format_id, mime_type, sampling_rate, bit_depth, ... }
   }
 
+  /* V4.6.4：读取端点统一 HTTP status 校验——此前只取 .body，
+   * token 过期时 401 不会转成 AUTH 异常 → withAuth 自动重登失效，用户看到「歌单空了/搜不到歌」。
+   * 现在 401 → AUTH（触发 qobuz/index.js withAuth 重登重试），其余非 200 → 带状态码报错。 */
+  async _body(epoint, params) {
+    const r = await this._api(epoint, params);
+    if (r.status === 401) throw Object.assign(new Error('登录态失效（401）'), { code: 'AUTH' });
+    if (r.status !== 200 || !r.body) throw new Error(epoint + ' 失败 HTTP ' + r.status);
+    return r.body;
+  }
+
   // ---- 元数据/搜索封装（与 streamrip 端点一致）----
-  async albumGet(id) { return (await this._api('album/get', { app_id: this.appId, album_id: id, limit: 500, offset: 0 })).body; }
-  async trackGet(id) { return (await this._api('track/get', { app_id: this.appId, track_id: id })).body; }
-  async playlistGet(id) { return (await this._api('playlist/get', { app_id: this.appId, playlist_id: id, extra: 'tracks', limit: 500, offset: 0 })).body; }
-  async artistGet(id) { return (await this._api('artist/get', { app_id: this.appId, artist_id: id, extra: 'albums', limit: 500, offset: 0 })).body; }
-  async labelGet(id) { return (await this._api('label/get', { app_id: this.appId, label_id: id, extra: 'albums', limit: 500, offset: 0 })).body; }
+  async albumGet(id) { return this._body('album/get', { app_id: this.appId, album_id: id, limit: 500, offset: 0 }); }
+  async trackGet(id) { return this._body('track/get', { app_id: this.appId, track_id: id }); }
+  async playlistGet(id) { return this._body('playlist/get', { app_id: this.appId, playlist_id: id, extra: 'tracks', limit: 500, offset: 0 }); }
+  async artistGet(id) { return this._body('artist/get', { app_id: this.appId, artist_id: id, extra: 'albums', limit: 500, offset: 0 }); }
+  async labelGet(id) { return this._body('label/get', { app_id: this.appId, label_id: id, extra: 'albums', limit: 500, offset: 0 }); }
   async search(type, query, limit) { // type: artist/album/track/playlist
-    return (await this._api(type + '/search', { query, limit: limit || 50 })).body;
+    return this._body(type + '/search', { query, limit: limit || 50 });
   }
   async favorites(type, limit) { // type: track/artist/album
-    return (await this._api('favorite/getUserFavorites', { type: type + 's', limit: limit || 500 })).body;
+    return this._body('favorite/getUserFavorites', { type: type + 's', limit: limit || 500 });
   }
   async userPlaylists(limit) {
-    return (await this._api('playlist/getUserPlaylists', { limit: limit || 500 })).body;
+    return this._body('playlist/getUserPlaylists', { limit: limit || 500 });
   }
 
   /* 收藏写入（QBDLX 未做，官方 Web API 同款）。专辑/单曲/艺人走 favorite/*，歌单走 playlist/subscribe */

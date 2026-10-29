@@ -26,8 +26,12 @@ function analyzeTrack(filePath) {
       ], { windowsHide: true });
     } catch { resolve(null); return; }
     let err = '';
-    proc.stderr.on('data', (d) => { err += d.toString(); });
-    const killer = setTimeout(() => { try { proc.kill(); } catch { } }, 120000); // 单轨 2 分钟兜底
+    // V4.6.4：stderr 环形截断（保留尾部 Summary 段，ebur128 结果在末尾）+ 超时杀进程树
+    proc.stderr.on('data', (d) => { err += d.toString(); if (err.length > 16000) err = err.slice(-16000); });
+    const killer = setTimeout(() => {
+      try { require('child_process').execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], () => { }); } catch { }
+      try { proc.kill(); } catch { }
+    }, 120000); // 单轨 2 分钟兜底
     proc.on('close', () => {
       clearTimeout(killer);
       // Summary 段：I: -14.2 LUFS；True peak: -1.0 dBFS

@@ -44,7 +44,10 @@ public sealed class EqChain
         var set = new CoeffSet();
         for (int b = 0; b < BandCount; b++)
         {
-            double db = b < gains.Length ? Math.Clamp(gains[b], -12.0, 12.0) : 0.0;
+            // V4.6.4：NaN 防护——Math.Clamp(NaN) 原样通过（上下界比较均 false），
+            // 会污染 biquad 系数→滤波状态 NaN 化→整曲白噪。非有限值按 0dB 处理。
+            double raw = b < gains.Length ? gains[b] : 0.0;
+            double db = double.IsFinite(raw) ? Math.Clamp(raw, -12.0, 12.0) : 0.0;
             // V4.4.5：奈奎斯特保护——频段 ≥ 0.45×采样率时 biquad 系数数学越界（A2 可超稳定域 → 发散破音）。
             // 22.05k/32k 低采样率源（老网络流/低码率有声书）上 12.5k/16k 段会触发；置全通系数跳过该段。
             if (Frequencies[b] >= SampleRate * 0.45)
@@ -86,8 +89,11 @@ public sealed class EqChain
                 _z[b, ch, 1] = _z[b, ch, 0]; _z[b, ch, 0] = x;
                 _z[b, ch, 3] = _z[b, ch, 2]; _z[b, ch, 2] = y;
                 // Pro beat0.0.1：段间不再硬削波（削波防护上移到输出前：自动前级补偿 + 软限幅器），
-                // 仅保留 ±4 安全钳位防滤波器异常发散
-                frame[ch] = y > 4.0f ? 4.0f : (y < -4.0f ? -4.0f : (float)y);
+                // 仅保留 ±4 安全钳位防滤波器异常发散。
+                // V4.6.4：NaN 隔离——比较对 NaN 全 false 会原样写回并污染 _z 状态（永久白噪），
+                // 检测到 NaN 时清零该段状态并输出静音（下一帧干净样本可恢复）。
+                if (double.IsNaN(y)) { _z[b, ch, 0] = _z[b, ch, 1] = _z[b, ch, 2] = _z[b, ch, 3] = 0; frame[ch] = 0f; }
+                else frame[ch] = y > 4.0f ? 4.0f : (y < -4.0f ? -4.0f : (float)y);
             }
         }
     }

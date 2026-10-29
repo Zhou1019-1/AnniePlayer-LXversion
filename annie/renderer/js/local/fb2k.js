@@ -1989,6 +1989,8 @@
 
   /* ================= 传输 / 进度 / 音量 ================= */
   function transportPlayPause() {
+    // V4.6.4：设备故障后的续播接管（拔出设备自动切换后，resume 死流无效，需从断点重新起播）
+    if (window.annieDeviceFaultResume && !state.playing && state.deviceFaultResume) { window.annieDeviceFaultResume(); return; }
     if (state.currentPath) window.mine.engine(state.playing ? 'pause' : 'resume').catch(function () { });
     else if (S.tracks.length) { state.queue = S.tracks; playAt(0); }
   }
@@ -2107,15 +2109,21 @@
         R.tCur.textContent = fmtHMS(sec);
       };
       seek(e);
-      var up = function () {
+      var cleanup = function () {
         window.removeEventListener('pointermove', seek);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cancel);
         state.seeking = false;
+      };
+      var up = function () {
+        cleanup();
         if (typeof proToast === 'function') proToast('正在跳转…'); // 网络流 seek 需重新拉流（数秒）
         seekTo(sec);
       };
+      var cancel = function () { cleanup(); }; // V4.6.4：pointercancel 复位不 seek
       window.addEventListener('pointermove', seek);
       window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cancel);
     });
   }
 
@@ -2153,12 +2161,16 @@
         setVolumeUI(g);
       };
       set(e);
-      var up = function () {
+      var cleanup = function () {
         window.removeEventListener('pointermove', set);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cancel);
       };
+      var up = function () { cleanup(); };
+      var cancel = function () { cleanup(); }; // V4.6.4：pointercancel 清理残留监听
       window.addEventListener('pointermove', set);
       window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cancel);
     });
   }
 
@@ -2195,11 +2207,15 @@
         r.classList.remove('on');
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cancel);
         LS.set('annieplayer.fb2k.leftW', S.leftW);
         LS.set('annieplayer.fb2k.rightW', S.rightW);
       };
+      // V4.6.4：pointercancel 按已拖到的宽度收尾（与 up 同语义，不丢用户调整）
+      var cancel = function () { up(); };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cancel);
       e.preventDefault();
     });
     return r;

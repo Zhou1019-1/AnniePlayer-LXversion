@@ -28,7 +28,7 @@ function init(app) {
 }
 
 function saveStreamSettings() {
-  try { fs.writeFileSync(settingsFile, JSON.stringify(streamSettings, null, 2), 'utf8'); } catch { }
+  try { require('../jsonFile').writeJsonAtomic(settingsFile, streamSettings, 2); } catch { }
 }
 
 async function search({ provider, keywords, page, limit }) {
@@ -144,6 +144,22 @@ function baseNameFor(song, fmt) {
   if (fmt === 'name') return name;
   return `${artist} - ${name}`;
 }
+/* V4.6.4：歌单/专辑名清洗为合法的一级子目录名。
+ * 复用 sanitizeFileName 去非法字符，再额外剥路径分隔符（防穿越）、去首尾点/空格、
+ * 拦 Windows 保留名（CON/PRN/AUX/NUL/COM1-9/LPT1-9），限长 80 字符。 */
+function sanitizeGroupDir(name) {
+  // V4.6.4 修正：空输入必须先直接返回 ''——此前复用 sanitizeFileName('') 会返回「未命名」，
+  // 导致搜索单曲（groupDir=''）被误建「未命名」文件夹。空 = 不建子目录（落根目录）。
+  const raw = String(name == null ? '' : name).trim();
+  if (!raw) return '';
+  let s = sanitizeFileName(raw);
+  // sanitizeFileName 对纯非法字符输入也会回退「未命名」——此时视为无效目录名，不建
+  if (s === '未命名') return '';
+  s = s.replace(/[\/\\]+/g, '_').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80).trim();
+  if (!s) return '';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = '_' + s;
+  return s;
+}
 /* V4.6.3：落盘前魔数嗅探——URL 层校验只能看扩展名/Content-Type，无扩展名或
  * Content-Type 伪装时加密流（QQ mflac/mgg 实测漏网）会混进来；容器头不符
  * 视为下载失败（删半成品抛错，任务层据此换源）。 */
@@ -182,12 +198,25 @@ async function download(params, onProgress) {
    * - 网络错误重试最多 3 次（洛雪 tryNum 同款） */
   const getUrl = () => songUrl({ provider: params.provider, song: params.song, quality: params.quality, lockType: true });
   let r = await getUrl();
-  if (!r || !r.playable || !r.url) throw new Error((r && r.message) || '无法获取下载地址');
-  const song = params.song || {};
-  const ext = (r.format && /^[a-z0-9]+$/i.test(r.format) ? r.format : (r.url.split('?')[0].split('.').pop() || 'mp3')).toLowerCase();
+    if (!r || !r.playable || !r.url) throw new Error((r && r.message) || '无法获取下载地址');
+    const song = params.song || {};
+    /* V4.6.4：URL 扩展名回退必须白名单校验——此前无扩展名 URL（如 https://host/stream）
+     * 会把域名残余（含 / : .）拼进文件名产非法路径。只接受已知音频扩展名，否则回退 mp3。 */
+    const KNOWN_EXT = ['mp3', 'flac', 'ape', 'wav', 'ogg', 'm4a', 'aac', 'wma', 'opus', 'aiff', 'dsf', 'dff'];
+    let ext = '';
+    if (r.format && /^[a-z0-9]+$/i.test(r.format)) ext = r.format.toLowerCase();
+    else {
+      const m = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(r.url.split('?')[0].split('#')[0]);
+      if (m && KNOWN_EXT.indexOf(m[1].toLowerCase()) >= 0) ext = m[1].toLowerCase();
+    }
+    if (!ext || !/^[a-z0-9]+$/.test(ext)) ext = 'mp3';
   const fileName = baseNameFor(song, params.fileNameFmt) + '.' + ext;
+  /* V4.6.4：歌单/专辑批量下载自动建子文件夹——渲染层传 groupDir（歌单名/专辑名），
+   * 清洗 Windows 非法字符与保留名后拼为下载目录下的一级子目录。空/非法则不建（保持旧行为）。 */
+  const groupDir = sanitizeGroupDir(params.groupDir);
+  const targetDir = groupDir ? path.join(downloadDir(), groupDir) : downloadDir();
   // 续传任务带 destPath（dlManager 持久化的既定目标路径），跳过撞名处理直接续同一文件
-  let dest = params.destPath || path.join(downloadDir(), fileName);
+  let dest = params.destPath || path.join(targetDir, fileName);
   // V4.3.22：设置「下载目录存在同名文件时跳过下载此任务」
   if (!params.destPath && params.skipExisting && fs.existsSync(dest)) {
     let size = 0; try { size = fs.statSync(dest).size; } catch { }
@@ -198,10 +227,12 @@ async function download(params, onProgress) {
     let n = 1;
     // 撞名避让同时看完成品与半成品（另一个任务的 .part 不能抢）
     while (fs.existsSync(dest) || fs.existsSync(partOf(dest))) {
-      dest = path.join(downloadDir(), fileName.replace(new RegExp(`\\.${ext}$`), ` (${n++}).${ext}`));
+      dest = path.join(targetDir, fileName.replace(new RegExp(`\\.${ext}$`), ` (${n++}).${ext}`));
     }
   }
   if (params.onDest) { try { params.onDest(dest); } catch { } }
+  // V4.6.4：groupDir 子目录可能不存在，写盘前确保目录已建（递归，幂等）
+  try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch { }
   const part = partOf(dest);
 
   const baseHeaders = {};

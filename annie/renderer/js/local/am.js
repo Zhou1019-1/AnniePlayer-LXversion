@@ -466,6 +466,11 @@
     try { if (window.__annieQueueJumpCur) window.__annieQueueJumpCur(); } catch (e2) { }
   }
   function togglePlay() {
+    // V4.6.4：设备故障后的续播接管（拔出设备自动切换后，resume 死流无效，需从断点重新起播）
+    if (window.annieDeviceFaultResume && !state.playing && state.deviceFaultResume) {
+      window.annieDeviceFaultResume();
+      return;
+    }
     if (!state.currentPath && allTracks().length) { playList(allTracks(), 0); return; }
     window.mine.engine(state.playing ? 'pause' : 'resume').catch(function () { });
   }
@@ -527,16 +532,24 @@
       state.seeking = true;
       var frac = preview(e);
       var move = function (ev) { frac = preview(ev); };
-      var up = function () {
+      var cleanup = function () {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cancel);
         state.seeking = false;
         tip.style.display = 'none';
+      };
+      var up = function () {
+        cleanup();
         seek(frac * S.dur);
         if (hooks && hooks.onSeek) hooks.onSeek(fromPos, frac * S.dur);
       };
+      // V4.6.4：pointercancel（系统手势/触摸被抢/窗口失焦）——只复位不 seek，
+      // 此前缺此监听：cancel 后无 pointerup，move 监听残留 + state.seeking 永真（进度条冻结）
+      var cancel = function () { cleanup(); };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cancel);
     });
   }
 

@@ -515,9 +515,10 @@ function applyWatchChanges() {
     // V4.3.10：全量 diff 扫描挪到 Worker（原来在主进程同步遍历整个媒体库，
     // 2 万首的库直接把主线程堵死 → Windows 判「应用程序挂起」强杀）
     watchScanPending = true;
+    const prevJob = scanJobId; // V4.6.4：定点取消上一个扫描，不再用全局 cancel（会误杀 meta 任务）
     scanJobId++;
     scannedTracks = [];
-    w.postMessage({ type: 'cancel' });
+    w.postMessage({ type: 'cancel', kind: 'scan', jobId: prevJob });
     w.postMessage({ type: 'scan', jobId: scanJobId, folders: store.folders });
     return; // 收尾在 Worker 'done'/'cancelled'/'error' 消息处（finishScanIfReady 等）
   }
@@ -757,9 +758,12 @@ function registerIpc() {
       broadcastScan({ type: 'done', found: tracks.length, fallback: true });
       return { ok: true, fallback: true };
     }
+    // V4.6.4：手动扫描若顶替了监听扫描，必须复位 watch 状态——否则本次进度事件被静默吞掉
+    watchScanPending = false; libWatchRunning = false;
+    const prevJob = scanJobId;
     scanJobId++;
     scannedTracks = [];
-    w.postMessage({ type: 'cancel' }); // 终止上一个任务
+    w.postMessage({ type: 'cancel', kind: 'scan', jobId: prevJob }); // 定点终止上一个扫描任务
     w.postMessage({ type: 'scan', jobId: scanJobId, folders: store.folders });
     return { ok: true, jobId: scanJobId };
   });
@@ -772,9 +776,11 @@ function registerIpc() {
     const store = loadStore();
     const w = ensureScanWorker();
     if (w) {
+      watchScanPending = false; libWatchRunning = false; // V4.6.4：同 lib:scanStart，顶替监听扫描须复位
+      const prevJob = scanJobId;
       scanJobId++;
       scannedTracks = [];
-      w.postMessage({ type: 'cancel' });
+      w.postMessage({ type: 'cancel', kind: 'scan', jobId: prevJob });
       w.postMessage({ type: 'scan', jobId: scanJobId, folders: store.folders });
       return { ok: true, jobId: scanJobId };
     }
@@ -1268,7 +1274,7 @@ function registerIpc() {
           keys.sort((a, b) => (c[a].at || 0) - (c[b].at || 0));
           for (const k of keys.slice(0, keys.length - 300)) delete c[k];
         }
-        fs.writeFileSync(beatCacheFile(), JSON.stringify(c));
+        require('./jsonFile').writeJsonAtomic(beatCacheFile(), c);
       } catch (e) { }
     }, 800);
   }
@@ -1847,7 +1853,16 @@ function registerIpc() {
     broadcastScan({ type: 'done', found: (store.tracks || []).length, fallback: true });
     return { ok: true, restored, total, missing };
   });
-  ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
+  /* V4.6.4：重启必须走完整退出链——旧实现 app.exit(0) 不触发 before-quit，
+   * 跳过 flushStore（备份导入后重启恢复会丢未落盘数据）与引擎退出等待（AnnieEngine 孤儿）。
+   * 现在：先同步落盘 → app.quit() 由 before-quit 拦截等引擎退出 → 最终 app.exit(0) 退出当前实例；
+   * app.relaunch() 注册的新实例不受影响。 */
+  ipcMain.handle('app:relaunch', () => {
+    try { flushStore(); } catch { }
+    app.relaunch();
+    app.quit();
+    return { ok: true };
+  });
 
   /* ---------------- V4.4.2：媒体库体检（Slice A：H1-H9；只扫描出报告，修复须渲染层逐项确认） ----------------
    * 进度/结束走 health:event（对齐 fakescan 模式）；修复前生成撤销快照存 store.healthUndo，
@@ -2274,6 +2289,7 @@ ipcMain.handle('stream:albumSongs', (_e, params) => streaming.albumSongs(params)
   ipcMain.handle('dl:clear', (_e, statuses) => dlManager.clear(statuses));
   ipcMain.handle('dl:retryAll', () => dlManager.retryAll());
   ipcMain.handle('dl:openFolder', (_e, id) => dlManager.openFolder(id));
+  ipcMain.handle('dl:openRoot', () => dlManager.openRoot()); // V4.6.4：打开下载根目录
   ipcMain.handle('dl:settings:get', () => dlManager.getSettings());
   ipcMain.handle('dl:settings:set', (_e, patch) => dlManager.setSettings(patch));
 

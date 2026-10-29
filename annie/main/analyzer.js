@@ -129,14 +129,23 @@ function probeCodec(input, headers) {
     args.push('-show_entries', 'stream=codec_name,sample_rate,bits_per_sample', '-of', 'json', input);
     let out = '';
     const proc = spawn(resolveTool('ffprobe.exe'), args, { windowsHide: true });
-    proc.stdout.on('data', d => { out += d; });
-    proc.on('error', () => resolve(null));
+    // V4.6.4：stdout 上限（正常输出 <4KB，畸形文件防爆）+ stderr 消费（防管道缓冲堵死子进程）
+    // + 30s 超时杀进程树（此前无超时，ffprobe 卡死会悬挂 Promise）
+    proc.stdout.on('data', d => { if (out.length < 65536) out += d; });
+    proc.stderr.on('data', () => { });
+    let settled = false;
+    const finish = (v) => { if (settled) return; settled = true; clearTimeout(killer); resolve(v); };
+    const killer = setTimeout(() => {
+      try { require('child_process').execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], () => { }); } catch { }
+      try { proc.kill(); } catch { }
+    }, 30000);
+    proc.on('error', () => finish(null));
     proc.on('close', () => {
       try {
         const j = JSON.parse(out);
         const s = (j.streams || []).find(x => x.sample_rate);
-        resolve(s ? { codec: s.codec_name || '', sampleRate: Number(s.sample_rate) || 0, bitDepth: Number(s.bits_per_sample) || 0 } : null);
-      } catch { resolve(null); }
+        finish(s ? { codec: s.codec_name || '', sampleRate: Number(s.sample_rate) || 0, bitDepth: Number(s.bits_per_sample) || 0 } : null);
+      } catch { finish(null); }
     });
   });
 }

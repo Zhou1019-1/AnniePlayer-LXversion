@@ -430,7 +430,9 @@ async function playStreamAt(i) {
       quality: r.quality || '',
       song: song, // 原始完整歌曲对象（含 songmid/hash 等平台字段）：主题切换续播需用它重取 URL
       onPlayed: doInject,
-    });
+    }).then((ok) => { // V4.6.4：返回 false 必须有用户可见反馈（此前静默失败）
+      if (ok === false) setStreamStatus(`${song.name}：播放失败（${window.__annieLastStreamError || '引擎未接受流地址'}）`, true);
+    }).catch((e) => setStreamStatus(`${song.name}：播放失败（${(e && e.message) || e}）`, true));
   } else {
     doInject();
   }

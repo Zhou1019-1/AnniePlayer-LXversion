@@ -13,11 +13,30 @@ const AUDIO_EXTS = new Set([
   '.tta', '.wv', '.mka', '.mp2'
 ]);
 
-let cancelled = false;
+/* V4.6.4：取消标志按 jobId 作用域化——此前单一 cancelled 被 scan/metaBatch 共用，
+ * 主线程「cancel + scan」连发时新任务开头 cancelled=false 会把旧任务的取消状态洗掉，
+ * 且 meta 任务会误取消正在进行的 scan。现在：
+ * - cancel 带 jobId：只取消该任务（cancelJobs 集合，任务内只查自己）；
+ * - cancel 不带 jobId：取消当前正在运行的全部任务（向后兼容 lib:scanCancel）。 */
+let globalCancelSeq = 0;            // 无 jobId cancel 的代际号
+const cancelJobs = new Set();       // 被取消的 jobId（按任务类型前缀防 scan/meta 撞号）
+const jobStartSeq = new Map();      // jobKey -> 任务启动时的 globalCancelSeq
+
+function jobKey(kind, jobId) { return kind + ':' + jobId; }
+function isCancelled(kind, jobId) {
+  const k = jobKey(kind, jobId);
+  if (cancelJobs.has(k)) return true;
+  const start = jobStartSeq.get(k);
+  return start !== undefined && globalCancelSeq > start;
+}
 
 parentPort.on('message', (msg) => {
   if (!msg || !msg.type) return;
-  if (msg.type === 'cancel') { cancelled = true; return; }
+  if (msg.type === 'cancel') {
+    if (msg.jobId !== undefined && msg.jobId !== null) cancelJobs.add(jobKey(msg.kind || 'scan', msg.jobId));
+    else globalCancelSeq++;
+    return;
+  }
   if (msg.type === 'scan') scan(msg.jobId, msg.folders || []);
   else if (msg.type === 'meta') metaBatch(msg.jobId, msg.paths || []);
 });
@@ -27,7 +46,10 @@ parentPort.on('message', (msg) => {
 const yieldLoop = () => new Promise(r => setImmediate(r));
 
 async function scan(jobId, folders) {
-  cancelled = false;
+  const JK = jobKey('scan', jobId);
+  jobStartSeq.set(JK, globalCancelSeq);
+  cancelJobs.delete(JK); // 同号新任务复位（主线程 cancel 旧 jobId 不会带新号，双保险）
+  const cancelled = () => isCancelled('scan', jobId);
   const post = (m) => parentPort.postMessage(Object.assign({ jobId, kind: 'scan' }, m));
   let found = 0, sinceYield = 0;
   let batch = [];
@@ -41,11 +63,11 @@ async function scan(jobId, folders) {
   const fplFiles = []; // V4.3.22：扫描中收集 foobar2000 .fpl（主线程解析建/更新播放列表）
 
   async function walk(dir, depth) {
-    if (cancelled || depth > 12) return;
+    if (cancelled() || depth > 12) return;
     let ents;
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
-      if (cancelled) return;
+      if (cancelled()) return;
       if (++sinceYield >= 200) { sinceYield = 0; await yieldLoop(); }
       try {
         const full = path.join(dir, e.name);
@@ -74,12 +96,12 @@ async function scan(jobId, folders) {
   }
 
   for (const f of folders) {
-    if (cancelled) break;
+    if (cancelled()) break;
     await walk(f, 0);
   }
 
   /* Pro beat0.0.1：CUE 分轨——整轨文件隐藏，替换为虚拟分轨 */
-  if (!cancelled && cueFiles.length) {
+  if (!cancelled() && cueFiles.length) {
     try {
       const { decodeCue, parseCueText } = require('./cueParser');
       const hidden = [], virtuals = [];
@@ -109,15 +131,19 @@ async function scan(jobId, folders) {
   }
 
   /* SVLX 1.2.0：SACD ISO——交给主线程用 sacd_extract 探测分轨 */
-  if (!cancelled && isoFiles.length) post({ type: 'isoFound', isos: isoFiles });
+  if (!cancelled() && isoFiles.length) post({ type: 'isoFound', isos: isoFiles });
 
   flush();
-  post({ type: cancelled ? 'cancelled' : 'done', found, fpls: fplFiles });
+  post({ type: cancelled() ? 'cancelled' : 'done', found, fpls: fplFiles });
+  jobStartSeq.delete(JK); cancelJobs.delete(JK);
 }
 
 /* ---------------- 元数据批量解析（并发 4，50 条一批回传） ---------------- */
 async function metaBatch(jobId, paths) {
-  cancelled = false;
+  const JK = jobKey('meta', jobId);
+  jobStartSeq.set(JK, globalCancelSeq);
+  cancelJobs.delete(JK);
+  const cancelled = () => isCancelled('meta', jobId);
   const post = (m) => parentPort.postMessage(Object.assign({ jobId, kind: 'meta' }, m));
   let mm;
   try { mm = require('music-metadata'); } catch (e) { post({ type: 'error', message: 'music-metadata 不可用: ' + e.message }); return; }
@@ -127,7 +153,7 @@ async function metaBatch(jobId, paths) {
     if (Object.keys(batch).length) { post({ type: 'metaBatch', out: batch, done }); batch = {}; }
   };
   async function worker() {
-    while (idx < paths.length && !cancelled) {
+    while (idx < paths.length && !cancelled()) {
       const p = paths[idx++];
       try {
         const m = await mm.parseFile(p, { duration: true, skipCovers: true });
@@ -169,5 +195,6 @@ async function metaBatch(jobId, paths) {
   for (let i = 0; i < 4; i++) workers.push(worker());
   await Promise.all(workers);
   flush();
-  post({ type: cancelled ? 'cancelled' : 'metaDone', done });
+  post({ type: cancelled() ? 'cancelled' : 'metaDone', done });
+  jobStartSeq.delete(JK); cancelJobs.delete(JK);
 }

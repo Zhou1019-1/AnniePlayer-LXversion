@@ -1559,7 +1559,23 @@ window.mine.onEngineEvent((event, d) => {
       if (d.ok) {
         $('#tb-backend').textContent = '引擎已自动恢复';
         proToast('音频引擎已自动恢复');
-        if (state.currentPath) {
+        if (state.currentStream && state.currentStream.song && state.currentStream.provider && state.currentStream.provider !== 'am') {
+          /* V4.6.4：流媒体崩溃自愈必须重新取址——原实现直接重播 state.currentPath 里的
+           * 签名 URL（vkey/token 有时效），崩溃等待期间过期则必然无声失败。
+           * 仅洛雪五平台（带 song 原始对象）；Qobuz/am 无 song 走下方原路径。 */
+          const cs = state.currentStream;
+          const resumePos = state.position;
+          window.mine.streamSongUrl({ provider: cs.provider, quality: cs.quality || '128k', song: cs.song })
+            .then((r) => {
+              if (!r || !r.playable || !r.url) { proToast('引擎已恢复，但重新获取播放地址失败，请手动重播'); return; }
+              return window.annieStreamPlay(Object.assign({}, cs, { url: r.url, headers: r.headers || null, quality: r.quality || cs.quality, onPlayed: null }))
+                .then((ok) => {
+                  if (ok === false) { proToast('引擎已恢复，但流媒体重播失败，请手动重播'); return; }
+                  if (resumePos > 1) setTimeout(() => { try { window.mine.engine('seek', { seconds: resumePos }); } catch (e) { } }, 400);
+                });
+            })
+            .catch(() => { proToast('引擎已恢复，但流媒体重播失败，请手动重播'); });
+        } else if (state.currentPath) {
           const t = state.queue[state.index];
           const path = t && t.cue ? t.cue.src : state.currentPath;
           const off = (t && t.cue ? (t.cue.start || 0) : 0) + state.position;
@@ -1575,6 +1591,29 @@ window.mine.onEngineEvent((event, d) => {
       break;
     case 'notify': // Pro：引擎通知（DoP 回退 / Native 不支持等）
       proToast(d.text || '');
+      break;
+    case 'output-fault': // V4.6.4：输出设备运行期故障（拔出/独占被抢）
+      /* V4.6.4 无感恢复：引擎已自动切换到默认可用设备。记录断点快照供「点击播放续播」，
+       * 弹窗明确告知「已切换到 XX，已暂停，点击播放继续」——用户无需再进设置换设备。 */
+      state.deviceFaultResume = {
+        position: state.position,
+        path: state.currentPath,
+        stream: state.currentStream ? Object.assign({}, state.currentStream) : null
+      };
+      proToast(
+        (d.text || '输出设备已断开') +
+        (d.switchedTo ? '，已自动切换到「' + d.switchedTo + '」' : '') +
+        '。已暂停，点击 ▶ 播放即可继续', 12000);
+      // V4.6.4：同步设置里的输出设备——引擎已切到系统默认（wasapi 无 id），
+      // 但持久化 backend 仍是旧的 asio|xxx，设置界面不同步会显得「没切」。
+      // 覆盖为 wasapi（默认），并刷新设置 UI（若打开）。
+      if (d.switchedTo) {
+        try { state.library.backend = 'wasapi'; } catch { }
+        try { window.mine.saveSettings({ backend: 'wasapi' }); } catch { }
+      }
+      setChainPhase({ phase: 'device-changed' });
+      refreshDevices();
+      try { document.dispatchEvent(new CustomEvent('annie-devices-changed')); } catch { }
       break;
     case 'devices.changed': // V4.3.12：设备热插拔——实时刷新下拉列表（不自动切换输出）
       refreshDevices();
@@ -1638,9 +1677,51 @@ function startProgressInterp() {
 }
 
 $('#btn-play').onclick = async () => {
+  /* V4.6.4：设备故障后的「点击播放续播」——引擎已自动切换到可用设备并清空了死流，
+   * 此时 resume 无效（无 source），需从断点快照重新起播。
+   * 判断不依赖 state.playing（output-fault 与 stopped 事件有先后竞态），
+   * 只要快照存在且当前确已非播放中即续播。 */
+  if (await window.annieDeviceFaultResume()) return;
   if (state.currentPath) {
     try { await window.mine.engine(state.playing ? 'pause' : 'resume'); } catch { }
   } else if (state.queue.length) playAt(0);
+};
+
+/* V4.6.4：设备故障续播——抽成全局，player.js / am.js / fb2k.js 的播放键共用。
+ * 返回 true = 已接管（存在故障快照并触发续播）；false = 无快照，走正常 pause/resume。 */
+window.annieDeviceFaultResume = async function () {
+  if (!state.deviceFaultResume || state.playing) return false;
+  const snap = state.deviceFaultResume;
+  state.deviceFaultResume = null;
+  console.log('[deviceFaultResume] 开始续播', { pos: snap.position, hasStream: !!snap.stream, hasSong: !!(snap.stream && snap.stream.song), path: snap.path });
+  try {
+    if (snap.stream && snap.stream.song && snap.stream.provider && snap.stream.provider !== 'am') {
+      // 洛雪流媒体：重新取址（签名 URL 可能已过期）→ 起播 → seek 回断点
+      const cs = snap.stream;
+      const r = await window.mine.streamSongUrl({ provider: cs.provider, quality: cs.quality || '128k', song: cs.song });
+      if (!r || !r.playable || !r.url) { proToast('续播失败：无法获取播放地址，请手动重播'); return true; }
+      const ok = await window.annieStreamPlay(Object.assign({}, cs, { url: r.url, headers: r.headers || null, onPlayed: null }));
+      if (ok === false) { proToast('续播失败，请手动重播'); return true; }
+      if (snap.position > 1) setTimeout(() => { try { window.mine.engine('seek', { seconds: snap.position }); } catch (e) { } }, 600);
+    } else if (snap.stream) {
+      // Qobuz/am 无 song 对象：直接重播原 URL（URL 有效期较长），seek 回断点
+      const ok = await window.annieStreamPlay(Object.assign({}, snap.stream, { onPlayed: null }));
+      if (ok === false) { proToast('续播失败，请手动重播'); return true; }
+      if (snap.position > 1) setTimeout(() => { try { window.mine.engine('seek', { seconds: snap.position }); } catch (e) { } }, 600);
+    } else if (snap.path) {
+      // 本地曲：从断点重新 play
+      const t = state.queue[state.index];
+      const path = t && t.cue ? t.cue.src : snap.path;
+      const off = (t && t.cue ? (t.cue.start || 0) : 0) + snap.position;
+      await applyAudioSettings();
+      await window.mine.engine('volume.set', { gain: (+$('#volume').value) / 100 });
+      await window.mine.engine('play', { path, offsetSec: off, loudGain: loudGainFor(snap.path) }, 30000);
+    }
+  } catch (e) {
+    console.warn('[deviceFaultResume] 续播异常', e);
+    proToast('续播失败，请手动重播');
+  }
+  return true;
 };
 // 流媒体播放时 state.index = -1（不占用本地队列索引），下一首/上一首必须走
 // streaming.js 的播放队列（window.annieStream），否则会误播本地队列第 0 首。
@@ -1680,6 +1761,7 @@ $('#btn-stop').onclick = () => {
     const up = async () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
       state.seeking = false;
       // V1.1.4：seek 保护——锁定目标位置，引擎 seek 完成前旧 position 不拉回（见 position 处理）
       state.seekPending = true;
@@ -1693,8 +1775,16 @@ $('#btn-stop').onclick = () => {
       }
       catch { state.seekPending = false; clearTimeout(state.seekTimer); } // V1.1.5：seek 失败立即解除冻结，避免进度条锁死 10 秒
     };
+    // V4.6.4：pointercancel 复位（不 seek）——此前 cancel 后 seeking 永真、move 监听残留
+    const cancel = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      state.seeking = false;
+    };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
   });
 })();
 

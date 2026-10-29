@@ -81,10 +81,19 @@ public sealed class FfmpegPcmStream : IDisposable
         };
         var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 ffmpeg，请确认 ffmpeg.exe 在 PATH 或 engine/tools 下。");
         var stream = new FfmpegPcmStream(proc, capBytes);
-        // 异步吞掉 stderr，避免管道阻塞
+        // 异步吞掉 stderr，避免管道阻塞。
+        // V4.6.4：环形缓冲截断——此前 ReadToEndAsync 整个进程生命周期累积成单一字符串，
+        // 持续报错的流/长会话会无限涨内存。改为逐行读 + 保留尾部 8KB。
         _ = Task.Run(async () =>
         {
-            var err = await proc.StandardError.ReadToEndAsync();
+            var tail = new System.Text.StringBuilder();
+            string? line;
+            while ((line = await proc.StandardError.ReadLineAsync()) != null)
+            {
+                tail.AppendLine(line);
+                if (tail.Length > 8192) tail.Remove(0, tail.Length - 8192);
+            }
+            var err = tail.ToString();
             if (!string.IsNullOrWhiteSpace(err)) Console.Error.WriteLine("[ffmpeg] " + err.Trim());
         });
         return stream;

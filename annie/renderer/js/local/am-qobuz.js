@@ -134,7 +134,9 @@
         quality: 'Qobuz ' + (f.bit_depth || '?') + 'bit/' + (f.sampling_rate || '?') + 'kHz',
         qid: String(t.id), // V4.4.3：连播守卫身份（playNext 包装按 qid 比对队列当前项）
         onPlayed: function () { fetchLyric(t, album); }, // Qobuz 无歌词 API：播放确认后 LRCLIB→五源兜底匹配
-      });
+      }).then(function (ok) { // V4.6.4：false 反馈（此前静默失败）
+        if (ok === false) { QZ.err = '播放失败：' + (window.__annieLastStreamError || '引擎未接受流地址'); refresh(); }
+      }).catch(function (e) { setErr(e); refresh(); });
     }).catch(function (e) { setErr(e); refresh(); });
   }
 

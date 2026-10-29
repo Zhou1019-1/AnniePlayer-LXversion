@@ -15,9 +15,10 @@ public sealed class PeqChain
         public readonly double Freq, GainDb, Q;
         public Band(double f, double g, double q)
         {
-            Freq = Math.Clamp(f, 20.0, 20000.0);
-            GainDb = Math.Clamp(g, -24.0, 24.0);
-            Q = Math.Clamp(q, 0.3, 12.0);
+            // V4.6.4：NaN 防护——Math.Clamp(NaN) 原样通过，非有限值回退安全默认
+            Freq = double.IsFinite(f) ? Math.Clamp(f, 20.0, 20000.0) : 1000.0;
+            GainDb = double.IsFinite(g) ? Math.Clamp(g, -24.0, 24.0) : 0.0;
+            Q = double.IsFinite(q) ? Math.Clamp(q, 0.3, 12.0) : 1.0;
         }
     }
 
@@ -90,7 +91,9 @@ public sealed class PeqChain
                                       - k.A1 * _z[b, ch, 2] - k.A2 * _z[b, ch, 3];
                 _z[b, ch, 1] = _z[b, ch, 0]; _z[b, ch, 0] = x;
                 _z[b, ch, 3] = _z[b, ch, 2]; _z[b, ch, 2] = y;
-                frame[ch] = y > 4.0f ? 4.0f : (y < -4.0f ? -4.0f : (float)y); // ±4 安全钳位
+                // V4.6.4：NaN 隔离（同 Eq.cs）——防 _z 状态永久 NaN 化白噪
+                if (double.IsNaN(y)) { _z[b, ch, 0] = _z[b, ch, 1] = _z[b, ch, 2] = _z[b, ch, 3] = 0; frame[ch] = 0f; }
+                else frame[ch] = y > 4.0f ? 4.0f : (y < -4.0f ? -4.0f : (float)y); // ±4 安全钳位
             }
         }
     }

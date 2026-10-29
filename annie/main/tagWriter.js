@@ -157,22 +157,33 @@ async function writeTags(opts) {
   return new Promise((resolve) => {
     const proc = spawn(resolveTool('ffmpeg.exe'), args, { windowsHide: true });
     let errText = '';
-    proc.stderr.on('data', (d) => { errText += d; });
-    proc.on('error', (e) => { cleanup(coverFile); resolve({ ok: false, reason: 'spawn:' + e.message }); });
+    // V4.6.4：stderr 环形截断（此前无上限，持续报错会涨爆内存）+ 120s 超时杀进程树
+    // （此前无超时，畸形文件会让 ffmpeg 永久卡住、下载队列整体堵死）
+    proc.stderr.on('data', (d) => { errText += d; if (errText.length > 4000) errText = errText.slice(-4000); });
+    let timedOut = false;
+    const killer = setTimeout(() => {
+      timedOut = true;
+      try { require('child_process').execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], () => { }); } catch { }
+      try { proc.kill(); } catch { }
+    }, 120000);
+    let settled = false;
+    const finish = (r) => { if (settled) return; settled = true; clearTimeout(killer); resolve(r); };
+    proc.on('error', (e) => { cleanup(coverFile); finish({ ok: false, reason: 'spawn:' + e.message }); });
     proc.on('close', (code) => {
       cleanup(coverFile);
+      if (timedOut) { try { fs.unlinkSync(tmpOut); } catch { } finish({ ok: false, reason: 'ffmpeg-timeout(120s)' }); return; }
       if (code !== 0) {
         try { fs.unlinkSync(tmpOut); } catch { }
-        resolve({ ok: false, reason: 'ffmpeg-' + code + ':' + errText.split('\n')[0].trim() });
+        finish({ ok: false, reason: 'ffmpeg-' + code + ':' + errText.split('\n')[0].trim() });
         return;
       }
       // 原子替换
       try {
         fs.renameSync(tmpOut, dest);
-        resolve({ ok: true, tagged: true, cover: !!coverBuf });
+        finish({ ok: true, tagged: true, cover: !!coverBuf });
       } catch (e) {
         try { fs.unlinkSync(tmpOut); } catch { }
-        resolve({ ok: false, reason: 'rename:' + e.message });
+        finish({ ok: false, reason: 'rename:' + e.message });
       }
     });
   });

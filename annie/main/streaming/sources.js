@@ -229,7 +229,7 @@ function parseMeta(script, fallbackName) {
 }
 
 function saveRegistry() {
-  fs.writeFileSync(_registryFile, JSON.stringify(_registry, null, 2), 'utf8');
+  require('../jsonFile').writeJsonAtomic(_registryFile, _registry, 2);
 }
 
 function init(app) {

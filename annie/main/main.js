@@ -1202,6 +1202,16 @@ function registerIpc() {
     return { provider: String(song.provider), song, addedAt: Date.now() };
   };
   ipcMain.handle('spl:list', () => loadStore().streamPlaylists);
+  // 旧收藏只存当时的音质快照；打开自制歌单时按 songmid 补全 QQ 官方 Hi-Res 并持久化
+  ipcMain.handle('spl:refreshQuality', async (_e, id) => {
+    const store = loadStore();
+    const pl = store.streamPlaylists.find(p => p.id === id);
+    if (pl) {
+      await streaming.enrichSavedSongs(pl.items.map(it => it.song));
+      saveStore({ streamPlaylists: store.streamPlaylists });
+    }
+    return store.streamPlaylists;
+  });
   ipcMain.handle('spl:create', (_e, name) => {
     const store = loadStore();
     const pl = {

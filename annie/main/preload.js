@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('mine', {
   playlistReorderList: (ids) => ipcRenderer.invoke('lib:playlist:reorderList', ids),
   // V4.3.5：在线歌单（流媒体收藏）
   splList: () => ipcRenderer.invoke('spl:list'),
+  splRefreshQuality: (id) => ipcRenderer.invoke('spl:refreshQuality', id),
   splCreate: (name) => ipcRenderer.invoke('spl:create', name),
   splRename: (id, name) => ipcRenderer.invoke('spl:rename', id, name),
   splDelete: (id) => ipcRenderer.invoke('spl:delete', id),

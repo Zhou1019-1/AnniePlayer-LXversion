@@ -217,12 +217,13 @@ async function txBatchFileDetails(rawList) {
   return map;
 }
 
-/* 歌单/专辑/榜单共用：按官方单曲详情补齐真实 Hi-Res 档位与大小。每 50 首一批，避免整张大专辑请求过大。 */
+/* 歌单/专辑/榜单共用：按洛雪 tx/musicInfo 同款官方单曲详情补齐 Hi-Res。
+ * QQ musicu 对批量子请求有限制：实测 50 个返回 code=500000，20 个正常，故固定每 20 首一批。 */
 async function enrichTxInfos(infos) {
   const list = infos || [];
   const details = {};
-  for (let i = 0; i < list.length; i += 50) {
-    Object.assign(details, await txBatchFileDetails(list.slice(i, i + 50)).catch(() => ({})));
+  for (let i = 0; i < list.length; i += 20) {
+    Object.assign(details, await txBatchFileDetails(list.slice(i, i + 20)).catch(() => ({})));
   }
   return list.map(info => {
     const file = details[info.songmid];
@@ -237,6 +238,19 @@ async function enrichTxInfos(infos) {
     }
     return { ...info, types, _types, hiresDetailLoaded: true };
   });
+}
+
+/* 自制在线歌单保存的是 normalize 后歌曲快照：只刷新其中 QQ 曲目的官方音质字段，其他平台不动。 */
+async function enrichSavedSongs(songs) {
+  const txSongs = (songs || []).filter(song => song && song.provider === 'tx' && song.meta && song.meta.songmid);
+  if (!txSongs.length) return songs;
+  const infos = await enrichTxInfos(txSongs.map(song => song.meta));
+  txSongs.forEach((song, i) => {
+    const info = infos[i];
+    song.types = info.types || [];
+    song.meta = info;
+  });
+  return songs;
 }
 
 /** tx 免签搜索：洛雪内置的 DoSearchForQQMusicMobile 已被 QQ 风控（req.code=2001 反复重试后"搜索失败"）。
@@ -997,4 +1011,4 @@ async function hotComments({ songmid, name, artist, limit = 15 }) {
   };
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments, verifyUrlFormat, ENCRYPTED_EXT };
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments, verifyUrlFormat, enrichSavedSongs, ENCRYPTED_EXT };

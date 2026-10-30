@@ -39,6 +39,10 @@ async function songUrl(params) {
   return lxsdk.songUrl(params);
 }
 
+async function enrichSavedSongs(songs) {
+  return lxsdk.enrichSavedSongs(songs);
+}
+
 async function lyric(params) {
   return lxsdk.lyric(params);
 }
@@ -454,7 +458,7 @@ async function findOtherSource(song, excludeProvider) {
 }
 
 module.exports = {
-  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir, findOtherSource, probeDownloadedFile,
+  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir, findOtherSource, probeDownloadedFile, enrichSavedSongs,
   leaderboards, leaderboardList, songLists, songListSearch, songListDetail, albumSearch, albumSongs,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层

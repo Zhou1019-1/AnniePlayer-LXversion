@@ -709,13 +709,11 @@
    * 复用共享弹层 R.pop（外点关闭全局已注册——禁自建弹层+自挂监听，见 AGENTS.md）。 */
   var DL_QORDER = ['flac24bit', 'flac', '320k', '128k'];
   var DL_QLABEL = { flac24bit: '无损 Hi-Res', flac: '无损 FLAC', '320k': '高品 320K', '128k': '标准 128K' };
-  /* QQ 搜索常缺 size_hires，但 V6/V5 的 lossless 通道实际能返回 24bit（加州旅馆实测 24bit/48kHz）。
-   * 仅在下载时开放 Hi-Res 尝试；不参与列表徽标推断，实际位深由下载后的本地文件识别。 */
+  /* 下载档位严格以该曲官方详情补全后的 types 为准：QQ 无 size_hires 就是普通 FLAC，
+   * 不得因第三方音源可能返回 24bit 封装而给所有 QQ FLAC 开放 Hi-Res。详情缺失时同样保守不开放。 */
   function hasDlQuality(song, type) {
     var m = (song && song.meta) || song || {};
-    var avail = m.types || [];
-    if (avail.some(function (t) { return t && t.type === type; })) return true;
-    return !!(song && song.provider === 'tx' && type === 'flac24bit' && !m.hiresDetailLoaded && avail.some(function (t) { return t && t.type === 'flac'; }));
+    return (m.types || []).some(function (t) { return t && t.type === type; });
   }
   function pickDlQuality(songs, x, y, onPicked) {
     if (!window.mine.dlAdd || !songs || !songs.length) return;
@@ -1273,9 +1271,26 @@
     if (cnt) cnt.textContent = '已选 ' + S.splSel.size + ' 首';
   }
 
+  var splQualityRefreshed = Object.create(null);
+  function refreshSplQuality(pl) {
+    if (!window.mine.splRefreshQuality || splQualityRefreshed[pl.id]) return;
+    var needs = pl.items.some(function (it) {
+      var song = it && it.song;
+      var meta = song && (song.meta || song);
+      return song && (song.provider || it.provider) === 'tx' && !(meta && meta.hiresDetailLoaded);
+    });
+    splQualityRefreshed[pl.id] = true; // 每个歌单每次启动最多后台刷新一次，失败不循环重绘
+    if (!needs) return;
+    window.mine.splRefreshQuality(pl.id).then(function (pls) {
+      S.streamPlaylists = pls || [];
+      if (S.view === 'spl:' + pl.id) renderView();
+    }).catch(function () { splQualityRefreshed[pl.id] = false; });
+  }
+
   function renderSplView(c) {
     var pl = currentSpl();
     if (!pl) { S.view = 'stream'; renderView(); return; }
+    refreshSplQuality(pl);
     // 头部（沿用本地播放列表的 am-pl-* 样式）
     var head = el('div', 'am-pl-head');
     // 封面：用第一首「有封面」的曲目（整专收藏即专辑封面），http 图走代理；无封面回退 ☁️ 占位

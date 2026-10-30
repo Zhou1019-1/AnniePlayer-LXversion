@@ -2883,12 +2883,11 @@ function amModeSvg(id) {
     btn.style.position = 'relative';
     btn.style.top = (icon === '⏸' ? (isImm ? -2.6 : -2.9) : (isImm ? 0 : -0.9)) + 'px';
   }
-  /* V4.4.7（PR#6）：记住最后一次拿到的音质文本。引擎的 format 事件是「格式变化才发」，
-     一旦 S.fmt 被清空，同格式的下一首不会再发事件，徽标就一直不回来（只能重启）。 */
+  /* V4.4.7（PR#6）：只记住最后一次引擎实测格式。引擎的 format 事件是「格式变化才发」，
+     同格式切歌不会补发；在线的「音源·音质」是临时文案，不能进入此缓存污染本地徽标。 */
   var _fmtClearT = 0, _lastFmt = '';
   function refreshBadge() {
     clearTimeout(_fmtClearT);
-    if (S.fmt) _lastFmt = S.fmt;
     if (!R.npBadge) return;
     /* V4.4.8：按 np 实际可用宽度决定胶囊文案（短/长） */
     var _rootEl = document.getElementById('am-root');
@@ -3265,8 +3264,14 @@ function amModeSvg(id) {
         if (data.codec) parts.push(String(data.codec).toUpperCase());
         if (data.bitDepth) parts.push(data.bitDepth + 'bit');
         if (data.requestedRate) parts.push((data.requestedRate / 1000) + 'kHz');
-        if (state.currentStream && AM.updateStreamActualQuality) AM.updateStreamActualQuality(data);
-        S.fmt = parts.join(' · ');
+        _lastFmt = parts.join(' · ');
+        if (state.currentStream) {
+          // 在线顶栏保留「音源·音质」；引擎实测参数只同步列表，不覆盖来源文案
+          if (AM.updateStreamActualQuality) AM.updateStreamActualQuality(data);
+          if (!S.fmt) S.fmt = _lastFmt; // Qobuz 等未提供来源文案时才回退实测格式
+        } else {
+          S.fmt = _lastFmt; // 本地始终显示本曲真实格式
+        }
         refreshBadge();
         // 迷你/沉浸的参数行不走 syncAuxViews（它只在切歌/封面回调时跑），这里直接同步
         if (R.miniFmt) R.miniFmt.textContent = S.fmt;

@@ -1239,6 +1239,12 @@ async function playAt(i, offsetSec = 0) {
   state.index = i;
   state.currentPath = t.path;
   state.currentStream = null;
+  // AM：本地起播前丢弃在线「音源·音质」临时文案；随后由本曲引擎 format 事件写入真实格式
+  const amBridge = window.__annieAMInternal;
+  if (amBridge && amBridge.S) {
+    amBridge.S.fmt = '';
+    if (amBridge.refreshBadge) amBridge.refreshBadge();
+  }
   state.currentCue = t.cue ? { start: t.cue.start || 0, end: t.cue.end } : null; // Pro：CUE 分轨边界
   state.position = offsetSec;
   renderCurrentView();

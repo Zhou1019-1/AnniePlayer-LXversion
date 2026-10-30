@@ -184,6 +184,22 @@ function sniffMagicOk(filePath, ext) {
   }
 }
 
+/* 下载界面只信成品文件：FLAC 容器/请求档位不等于 Hi-Res，真实位深与采样率由 ffprobe 读取。 */
+async function probeDownloadedFile(filePath) {
+  const info = await require('../analyzer').probeCodec(filePath).catch(() => null);
+  if (!info) return {};
+  const codec = String(info.codec || '').toLowerCase();
+  const bitDepth = Number(info.bitDepth) || 0;
+  const sampleRate = Number(info.sampleRate) || 0;
+  const lossless = /flac|alac|wav|aiff|pcm|dsd|ape/.test(codec);
+  return {
+    actualCodec: codec,
+    actualBitDepth: bitDepth,
+    actualSampleRate: sampleRate,
+    actualQuality: lossless ? ((bitDepth === 1 || bitDepth >= 24 || sampleRate > 48000) ? 'flac24bit' : 'flac') : ''
+  };
+}
+
 async function download(params, onProgress) {
   /* V4.6：Apple Music 音源走章鱼解密链路（downloadTrack 直接拿 Buffer，含标签/封面/歌词全套），
      不走「songUrl → 拉 URL 流式写盘」通用路径 */
@@ -220,7 +236,8 @@ async function download(params, onProgress) {
   // V4.3.22：设置「下载目录存在同名文件时跳过下载此任务」
   if (!params.destPath && params.skipExisting && fs.existsSync(dest)) {
     let size = 0; try { size = fs.statSync(dest).size; } catch { }
-    return { ok: true, skipped: true, path: dest, size, quality: r.quality || '', level: r.level };
+    const actual = await probeDownloadedFile(dest);
+    return { ok: true, skipped: true, path: dest, size, quality: r.quality || '', level: r.level, ...actual };
   }
   const partOf = (p) => p + '.part';
   if (!params.destPath) {
@@ -336,7 +353,8 @@ async function download(params, onProgress) {
     lrcEncoding: params.lrcEncoding || 'utf8', // V4.3.22：洛雪「歌词文件编码 UTF-8/GBK」
   }).catch(() => false);
 
-  return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType, tagged: !!tagged };
+  const actual = await probeDownloadedFile(dest);
+  return { ok: true, path: dest, size: received, quality: r.quality || '', level: r.level, downgraded: !!r.downgraded, requestedType: r.requestedType, tagged: !!tagged, ...actual };
 }
 
 /**
@@ -436,7 +454,7 @@ async function findOtherSource(song, excludeProvider) {
 }
 
 module.exports = {
-  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir, findOtherSource,
+  init, search, songUrl, lyric, getPic, coverProxy, hotSearch, hotComments, download, downloadDir, setDownloadDir, findOtherSource, probeDownloadedFile,
   leaderboards, leaderboardList, songLists, songListSearch, songListDetail, albumSearch, albumSongs,
   PROVIDERS,
   sources, // 音源管理 API 透出给 IPC 层

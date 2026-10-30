@@ -3259,12 +3259,13 @@ function amModeSvg(id) {
       } else if (event === 'state') {
         refreshTransport();
         resumeHandleState(); // V4.4：恢复为暂停态时，引擎起播即暂停
-      } else if (event === 'format' && data && !state.currentStream) {
-        // 音质徽标：本地播放显示 编码 · 位深/采样率（流式音质由 playStreamAt 直接设置）
+      } else if (event === 'format' && data) {
+        // 本地与流媒体统一以引擎真实解码格式为准；QQ 元数据缺 size_hires 时也能如实显示 24bit
         var parts = [];
         if (data.codec) parts.push(String(data.codec).toUpperCase());
         if (data.bitDepth) parts.push(data.bitDepth + 'bit');
         if (data.requestedRate) parts.push((data.requestedRate / 1000) + 'kHz');
+        if (state.currentStream && AM.updateStreamActualQuality) AM.updateStreamActualQuality(data);
         S.fmt = parts.join(' · ');
         refreshBadge();
         // 迷你/沉浸的参数行不走 syncAuxViews（它只在切歌/封面回调时跑），这里直接同步

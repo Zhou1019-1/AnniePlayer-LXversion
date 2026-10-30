@@ -189,6 +189,56 @@ async function verifyUrlFormat(url, type) {
 
 /* ---------------- 对外 API ---------------- */
 
+/* 老搜索接口常漏 size_hires；QQ 单曲详情支持在一个 musicu 请求里批量查询。
+ * 只采用详情明确返回的 size_hires，普通 FLAC 不会被推断成 Hi-Res。 */
+async function txBatchFileDetails(rawList) {
+  const items = (rawList || []).filter(item => item && item.songmid);
+  if (!items.length) return {};
+  const body = { comm: { ct: '19', cv: '1859', uin: '0' } };
+  items.forEach((item, i) => {
+    body['req_' + i] = {
+      module: 'music.pf_song_detail_svr',
+      method: 'get_song_detail_yqq',
+      param: { song_type: 0, song_mid: item.songmid },
+    };
+  });
+  const { httpFetch } = require('./lx-http');
+  const resp = await httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+    method: 'post',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+    body,
+  }).promise;
+  const map = {};
+  items.forEach((item, i) => {
+    const req = resp && resp.body && resp.body['req_' + i];
+    const track = req && req.code === 0 && req.data && req.data.track_info;
+    if (track && track.mid === item.songmid && track.file) map[item.songmid] = track.file;
+  });
+  return map;
+}
+
+/* 歌单/专辑/榜单共用：按官方单曲详情补齐真实 Hi-Res 档位与大小。每 50 首一批，避免整张大专辑请求过大。 */
+async function enrichTxInfos(infos) {
+  const list = infos || [];
+  const details = {};
+  for (let i = 0; i < list.length; i += 50) {
+    Object.assign(details, await txBatchFileDetails(list.slice(i, i + 50)).catch(() => ({})));
+  }
+  return list.map(info => {
+    const file = details[info.songmid];
+    if (!file) return info;
+    const types = (info.types || []).filter(t => t.type !== 'flac24bit');
+    const _types = { ...(info._types || {}) };
+    delete _types.flac24bit;
+    if (file.size_hires) {
+      const size = fmtSize(file.size_hires);
+      types.push({ type: 'flac24bit', size });
+      _types.flac24bit = { size };
+    }
+    return { ...info, types, _types, hiresDetailLoaded: true };
+  });
+}
+
 /** tx 免签搜索：洛雪内置的 DoSearchForQQMusicMobile 已被 QQ 风控（req.code=2001 反复重试后"搜索失败"）。
  * 改用老版免签接口 c.y.qq.com/soso/fcgi-bin/client_search_cp（实测可用，含 size128/320/flac 与 songmid/media_mid）。 */
 async function txSearchFallback(keywords, page, limit) {
@@ -205,16 +255,19 @@ async function txSearchFallback(keywords, page, limit) {
     throw new Error('tx 搜索失败: ' + ((body && body.code) || 'no-data'));
   }
   const rawList = body.data.song.list || [];
+  // 批量补 Hi-Res 真实大小；详情接口失败时回退旧搜索字段，不影响搜索本身
+  const detailFiles = await txBatchFileDetails(rawList).catch(() => ({}));
   const list = [];
   for (const item of rawList) {
     if (!item.songmid || !item.strMediaMid || !item.media_mid) continue;
     const types = [];
     const _types = {};
+    const detail = detailFiles[item.songmid] || null;
     const file = {
       size_128mp3: item.size128 || 0,
       size_320mp3: item.size320 || 0,
       size_flac: item.sizeflac || 0,
-      size_hires: item.sizehires || 0,
+      size_hires: (detail && detail.size_hires) || item.sizehires || 0,
       media_mid: item.strMediaMid || item.media_mid,
     };
     if (file.size_128mp3 != 0) { types.push({ type: '128k', size: fmtSize(file.size_128mp3) }); _types['128k'] = { size: fmtSize(file.size_128mp3) }; }
@@ -237,6 +290,7 @@ async function txSearchFallback(keywords, page, limit) {
       songmid: item.songmid,
       img: albumMid ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg` : '',
       types, _types, typeUrl: {},
+      hiresDetailLoaded: !!detail, // 已确认无 size_hires 时，下载弹窗不再凭空补 Hi-Res 档
       // 附加：碟号/曲目号/发行时间（免签接口独有，写下载标签用）
       belongCD: item.belongCD != null ? String(item.belongCD) : '',
       cdIdx: item.cdIdx != null ? String(item.cdIdx) : '',
@@ -827,7 +881,7 @@ async function albumSongs({ provider, id, page = 1, limit = 200 }) {
     case 'kg': r = await kgAlbumSongs(id, page, limit); break;
     case 'kw': r = await kwAlbumSongs(id, page, limit); break;
   }
-  const slice = r.metas; // 各源详情接口多为整表返回，直接全量（limit 语义留给未来分页源）
+  const slice = provider === 'tx' ? await enrichTxInfos(r.metas) : r.metas; // QQ 专辑曲目同样补真实 Hi-Res
   return {
     provider,
     info: r.info,
@@ -856,9 +910,10 @@ async function leaderboardList({ provider, bangid, page }) {
   if (!mod || !mod.leaderboard) throw new Error('该平台不支持排行榜');
   const r = await mod.leaderboard.getList(String(bangid), page || 1);
   const limit = r.limit || 100;
+  const infos = provider === 'tx' ? await enrichTxInfos(r.list || []) : (r.list || []);
   return {
     provider,
-    songs: (r.list || []).map((info) => normalize(provider, info)),
+    songs: infos.map((info) => normalize(provider, info)),
     total: r.total || 0,
     page: r.page || page || 1,
     allPage: Math.max(1, Math.ceil((r.total || 0) / limit)),
@@ -903,9 +958,10 @@ async function songListDetail({ provider, id, page }) {
   const mod = sdk[provider];
   if (!mod || !mod.songList) throw new Error('该平台不支持歌单');
   const r = await mod.songList.getListDetail(String(id), page || 1);
+  const infos = provider === 'tx' ? await enrichTxInfos(r.list || []) : (r.list || []);
   return {
     provider,
-    songs: (r.list || []).map((info) => normalize(provider, info)),
+    songs: infos.map((info) => normalize(provider, info)),
     total: r.total || 0, page: r.page || page || 1, limit: r.limit || 100,
     info: r.info || null, // V4.3.15：歌单真实名称等（导入歌单场景替换占位名）
   };
@@ -941,4 +997,4 @@ async function hotComments({ songmid, name, artist, limit = 15 }) {
   };
 }
 
-module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments, verifyUrlFormat, ENCRYPTED_EXT };
+module.exports = { PROVIDERS, PROVIDER_NAMES, loadSdk, search, songUrl, lyric, getPic, hotSearch, albumDetail, albumSearch, albumSongs, normalize, leaderboards, leaderboardList, songLists, songListSearch, songListDetail, hotComments, verifyUrlFormat, ENCRYPTED_EXT };

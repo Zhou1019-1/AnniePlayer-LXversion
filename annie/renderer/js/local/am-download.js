@@ -19,6 +19,17 @@
   var bound = false;
 
   function toast(msg) { try { if (typeof proToast === 'function') proToast(msg); } catch (e) { } }
+  function syncActualQuality(tasks) {
+    if (!AM.applyDownloadActualQuality) return;
+    (tasks || []).forEach(function (t) { AM.applyDownloadActualQuality(t); });
+  }
+  function actualTitle(t) {
+    var parts = [];
+    if (t.actualCodec) parts.push(String(t.actualCodec).toUpperCase());
+    if (t.actualBitDepth) parts.push(t.actualBitDepth + 'bit');
+    if (t.actualSampleRate) parts.push((t.actualSampleRate / 1000) + 'kHz');
+    return parts.join(' · ');
+  }
 
   /* 事件订阅（一次性）：tasks 全量刷新视图；progress 原地更新进度条（不重绘表格，防闪烁/失焦） */
   function bindEvents() {
@@ -28,6 +39,7 @@
       if (!ev) return;
       if (ev.type === 'tasks') {
         dlTasks = ev.tasks || [];
+        syncActualQuality(dlTasks);
         if (S.view === 'downloads') renderView();
       } else if (ev.type === 'progress') {
         var t = dlTasks.find(function (x) { return x.id === ev.id; });
@@ -37,6 +49,7 @@
     });
     window.mine.dlList().then(function (l) {
       dlTasks = l || [];
+      syncActualQuality(dlTasks);
       if (S.view === 'downloads') renderView();
     }).catch(function () { });
   }
@@ -117,7 +130,7 @@
     var tb = el('table', 'am-table am-dlt-table');
     tb.innerHTML = '<thead><tr><th style="width:44px;text-align:center">#</th><th>歌曲名</th>' +
       '<th style="width:150px">进度</th><th style="width:190px">状态</th>' +
-      '<th style="width:76px">品质</th><th style="width:110px">操作</th></tr></thead>';
+      '<th style="width:142px">品质</th><th style="width:110px">操作</th></tr></thead>';
     var body = el('tbody');
     list.forEach(function (t, i) {
       var tr = el('tr', 'am-tr');
@@ -144,11 +157,16 @@
       var tdS = el('td', t.status === 'error' ? 'am-dlt-err' : 'am-c-dim', esc(statusText(t)));
       tdS.title = statusText(t);
       tr.appendChild(tdS);
-      // 品质
-      var qlab = QLABEL[t.quality] || (t.quality || '—').toUpperCase();
+      // 品质：完成后以成品文件实测为准；下载中/失败任务仍显示请求档位
+      var hasActual = t.status === 'done' && !!t.actualCodec;
+      var qt = hasActual ? (t.actualQuality || t.actualCodec) : t.quality;
+      var qlab = QLABEL[qt] || (qt || '—').toUpperCase();
+      if (hasActual && t.actualBitDepth) qlab += ' ' + t.actualBitDepth + 'bit';
       var tdQ = el('td');
-      var qb = el('span', 'am-qbadge' + ((t.quality === 'flac' || t.quality === 'flac24bit' || t.quality === 'master' || t.quality === 'hires') ? ' hq' : ''), qlab);
+      var qb = el('span', 'am-qbadge' + ((qt === 'flac' || qt === 'flac24bit' || qt === 'master' || qt === 'hires') ? ' hq' : ''), qlab);
+      if (hasActual) qb.title = actualTitle(t) + '（成品文件实测）';
       tdQ.appendChild(qb);
+      if (hasActual && t.actualSampleRate) tdQ.appendChild(el('div', 'am-dlt-sub', (t.actualSampleRate / 1000) + 'kHz'));
       tr.appendChild(tdQ);
       // 操作
       var tdO = el('td');
@@ -169,4 +187,5 @@
   }
 
   window.annieAMDownload = { render: renderDlView };
+  bindEvents(); // 不进入下载页也接收完成事件，及时更新在线歌曲的真实 Hi-Res 徽标
 })();

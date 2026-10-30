@@ -478,10 +478,52 @@
     return S.stQuality; // 库里没有更低档：实际播放仍会从所选档尝试
   }
   function fillQualityBadge(badge, song) {
-    var qt = effectiveQuality(song);
+    // 播放/下载完成后以真实文件为准；未完成时仍只显示请求档位，不猜 QQ 是否 Hi-Res
+    var qt = song.actualQuality || effectiveQuality(song);
     badge.className = 'am-qbadge' + (qt === 'flac' || qt === 'flac24bit' ? ' hq' : '');
     badge.textContent = TYPE_LABEL[qt] || qt;
+    badge.title = '';
+    if (song.actualQuality) {
+      var details = [];
+      if (song.actualCodec) details.push(String(song.actualCodec).toUpperCase());
+      if (song.actualBitDepth) { details.push(song.actualBitDepth + 'bit'); badge.textContent += ' ' + song.actualBitDepth + 'bit'; }
+      if (song.actualSampleRate) details.push((song.actualSampleRate / 1000) + 'kHz');
+      badge.title = details.join(' · ') + '（真实文件参数）';
+    }
   }
+  AM.updateStreamActualQuality = function (data) {
+    var list = S._playList, song = list && list[S.stIndex];
+    if (!song || !data) return;
+    var codec = String(data.codec || '').toLowerCase();
+    if (!/flac|alac|wav|aiff|pcm|dsd/.test(codec)) return;
+    song.actualQuality = (data.bitDepth === 1 || data.bitDepth >= 24 || data.requestedRate > 48000) ? 'flac24bit' : 'flac';
+    song.actualCodec = codec;
+    song.actualBitDepth = data.bitDepth || 0;
+    song.actualSampleRate = data.requestedRate || 0;
+    var badge = document.querySelector('[data-stq="' + S.stIndex + '"]');
+    if (badge) fillQualityBadge(badge, song);
+  };
+
+  /* 下载任务完成后，同步当前列表中同平台同 ID 的歌曲；不触碰正在播放的引擎格式显示。 */
+  AM.applyDownloadActualQuality = function (t) {
+    if (!t || t.status !== 'done' || !t.actualQuality) return;
+    function apply(song) {
+      if (!song || (song.provider || '') !== (t.provider || '')) return;
+      var sid = String(song.id != null ? song.id : (song.name || ''));
+      if (sid !== String(t.songId)) return;
+      song.actualQuality = t.actualQuality;
+      song.actualCodec = t.actualCodec || '';
+      song.actualBitDepth = Number(t.actualBitDepth) || 0;
+      song.actualSampleRate = Number(t.actualSampleRate) || 0;
+    }
+    (S.stResults || []).forEach(apply);
+    (S._playList || []).forEach(apply);
+    if (state.currentStream && state.currentStream.song) apply(state.currentStream.song);
+    document.querySelectorAll('[data-stq]').forEach(function (badge) {
+      var song = S.stResults && S.stResults[+badge.dataset.stq];
+      if (song) fillQualityBadge(badge, song);
+    });
+  };
 
   /* 搜索结果/榜单/歌单共用的歌曲表格（单击即播）
    * V4.3.22：多选模式——右键「多选」进入，行首复选框 + 全选/下载选中/退出；批量下载进任务队列 */
@@ -514,7 +556,7 @@
       tbHost.innerHTML = '';
       var q = (S.stFilter || '').trim().toLowerCase();
       var tb = el('table', 'am-table');
-      tb.innerHTML = '<thead><tr>' + (S.stMulti ? '<th style="width:34px"></th>' : '') + '<th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:72px">音质</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
+      tb.innerHTML = '<thead><tr>' + (S.stMulti ? '<th style="width:34px"></th>' : '') + '<th style="width:46px"></th><th>歌曲</th><th>艺人</th><th>专辑</th><th style="width:56px;text-align:right">时长</th><th style="width:104px">音质</th><th style="width:44px"></th><th style="width:44px"></th><th style="width:44px"></th></tr></thead>';
       var body = el('tbody');
       // 在线歌单播放中队列≠本表：高亮只认当前队列（防误标同索引行）
       var queueHere = !S._playList || S._playList === S.stResults;
@@ -667,6 +709,14 @@
    * 复用共享弹层 R.pop（外点关闭全局已注册——禁自建弹层+自挂监听，见 AGENTS.md）。 */
   var DL_QORDER = ['flac24bit', 'flac', '320k', '128k'];
   var DL_QLABEL = { flac24bit: '无损 Hi-Res', flac: '无损 FLAC', '320k': '高品 320K', '128k': '标准 128K' };
+  /* QQ 搜索常缺 size_hires，但 V6/V5 的 lossless 通道实际能返回 24bit（加州旅馆实测 24bit/48kHz）。
+   * 仅在下载时开放 Hi-Res 尝试；不参与列表徽标推断，实际位深由下载后的本地文件识别。 */
+  function hasDlQuality(song, type) {
+    var m = (song && song.meta) || song || {};
+    var avail = m.types || [];
+    if (avail.some(function (t) { return t && t.type === type; })) return true;
+    return !!(song && song.provider === 'tx' && type === 'flac24bit' && !m.hiresDetailLoaded && avail.some(function (t) { return t && t.type === 'flac'; }));
+  }
   function pickDlQuality(songs, x, y, onPicked) {
     if (!window.mine.dlAdd || !songs || !songs.length) return;
     var sizeByType = {};
@@ -675,7 +725,7 @@
       var m = songs[0].meta || songs[0] || {};
       var avail = (m.types || []).filter(function (t) { return t && DL_QORDER.indexOf(t.type) >= 0; });
       if (avail.length) {
-        types = DL_QORDER.filter(function (tp) { return avail.some(function (t) { return t.type === tp; }); });
+        types = DL_QORDER.filter(function (tp) { return hasDlQuality(songs[0], tp); });
         avail.forEach(function (t) { if (t.size) sizeByType[t.type] = t.size; });
       }
     }
@@ -707,10 +757,8 @@
    * 每首歌音质清单为准，按「各自支持的最高音质」入队（上限 flac24bit/Hi-Res）——
    * 避免统一高档时接口返回保底/错误音质链；无清单信息的歌曲回退当前播放音质档。 */
   function bestDlType(song) {
-    var m = (song && song.meta) || song || {};
-    var avail = m.types || [];
     for (var i = 0; i < DL_QORDER.length; i++) {
-      if (avail.some(function (t) { return t && t.type === DL_QORDER[i]; })) return DL_QORDER[i];
+      if (hasDlQuality(song, DL_QORDER[i])) return DL_QORDER[i];
     }
     return null;
   }

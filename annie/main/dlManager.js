@@ -36,6 +36,18 @@ function init(broadcastFn) {
   for (const t of tasks) {
     if (t.status === 'downloading' || t.status === 'waiting') { t.status = 'paused'; t.error = ''; }
   }
+  backfillActualFormats();
+}
+
+/* 旧版本已完成任务没有真实格式：启动后逐个探测本地成品并回填，无需重新下载。 */
+async function backfillActualFormats() {
+  for (const t of tasks) {
+    if (t.status !== 'done' || !t.filePath || t.actualCodec || !fs.existsSync(t.filePath)) continue;
+    const actual = await streaming.probeDownloadedFile(t.filePath).catch(() => null);
+    if (!actual || !actual.actualCodec) continue;
+    Object.assign(t, actual);
+    pushTasks();
+  }
 }
 
 function persist() {
@@ -136,6 +148,11 @@ async function start(t) {
       t.note = '原平台失败，已从 ' + (PN[alt.provider] || alt.provider) + ' 换源下载';
     }
     t.status = 'done'; t.filePath = r.path || ''; t.doneAt = Date.now();
+    // 真实成品格式随任务持久化并推送：界面不得仅凭请求档位或 FLAC 容器猜 Hi-Res
+    t.actualCodec = (r && r.actualCodec) || '';
+    t.actualBitDepth = (r && Number(r.actualBitDepth)) || 0;
+    t.actualSampleRate = (r && Number(r.actualSampleRate)) || 0;
+    t.actualQuality = (r && r.actualQuality) || '';
     if (r && r.skipped) t.note = '同名文件已存在，跳过';
     else if (!t.note && r && r.downgraded) t.note = '已降级为 ' + (r.quality || '');
   } catch (e) {

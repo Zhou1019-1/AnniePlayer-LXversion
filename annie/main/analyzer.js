@@ -126,7 +126,7 @@ function probeCodec(input, headers) {
       args.push('-timeout', '15000000');
       if (headers) args.push('-headers', headers);
     }
-    args.push('-show_entries', 'stream=codec_name,sample_rate,bits_per_sample', '-of', 'json', input);
+    args.push('-show_entries', 'stream=codec_name,sample_rate,bits_per_sample,bits_per_raw_sample', '-of', 'json', input);
     let out = '';
     const proc = spawn(resolveTool('ffprobe.exe'), args, { windowsHide: true });
     // V4.6.4：stdout 上限（正常输出 <4KB，畸形文件防爆）+ stderr 消费（防管道缓冲堵死子进程）
@@ -144,7 +144,7 @@ function probeCodec(input, headers) {
       try {
         const j = JSON.parse(out);
         const s = (j.streams || []).find(x => x.sample_rate);
-        finish(s ? { codec: s.codec_name || '', sampleRate: Number(s.sample_rate) || 0, bitDepth: Number(s.bits_per_sample) || 0 } : null);
+        finish(s ? { codec: s.codec_name || '', sampleRate: Number(s.sample_rate) || 0, bitDepth: Number(s.bits_per_raw_sample) || Number(s.bits_per_sample) || 0 } : null);
       } catch { finish(null); }
     });
   });
@@ -471,4 +471,4 @@ function register(ipcMain, getWindow) {
   ipcMain.handle('analyze:cancel', () => { gen++; cancelAnalyze(); return { ok: true }; });
 }
 
-module.exports = { register };
+module.exports = { register, probeCodec };

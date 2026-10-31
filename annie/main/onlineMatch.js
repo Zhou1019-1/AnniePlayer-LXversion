@@ -16,6 +16,12 @@ const extMeta = require('./extMeta'); // V4.4.3：国际补充源（LRCLIB 歌�
 const PROVIDERS = ['wy', 'kg', 'kw', 'tx', 'mg'];
 const PROVIDER_LABEL = { wy: '网易云', kg: '酷狗', kw: '酷我', tx: 'QQ音乐', mg: '咪咕', lrclib: 'LRCLIB', musicbrainz: 'MusicBrainz' };
 
+/* CAA 是境外服务：惰性使用 net.fetch 跟随系统代理；CI 纯 Node 测试不加载 electron。 */
+function caaFetch(url, opts) {
+  const { net } = require('electron');
+  return net.fetch(url, opts);
+}
+
 /** 标题/艺人归一化：去括号注释（Live/Remix/feat.）、去标点空白、小写 */
 function norm(s) {
   return String(s || '').toLowerCase()
@@ -129,6 +135,7 @@ async function applyMatch({ path: filePath, provider, song, _lrclib, _mb, saveLr
   if (!provider || (!song && !_lrclib && !_mb)) return { ok: false, reason: '缺少目标曲目' };
   const cand = { provider, song, _lrclib, _mb, name: (_mb && _mb.title) || (song && song.name) || '', artist: (_mb && _mb.artist) || (song && song.artist) || '', album: (_mb && _mb.album) || (song && song.album) || '', duration: (_mb && _mb.duration) || (song && song.duration) || 0 };
   const out = { ok: true, lrc: '', cover: '', embedded: false, tagged: false, notes: [] };
+  const coverHttpFetch = provider === 'musicbrainz' ? caaFetch : null;
 
   // 1) 拉歌词（旁挂 / 嵌入 / 写标签都需要时只拉一次）；译文轨一并带回（外文歌词显示翻译行）
   let lrc = '', tlyric = '';
@@ -152,7 +159,7 @@ async function applyMatch({ path: filePath, provider, song, _lrclib, _mb, saveLr
       const pc = await streaming.getPic({ provider, song }).catch(() => null);
       if (pc && pc.url) coverUrl = pc.url;
     }
-    if (coverUrl) coverBuf = await tagWriter.fetchCoverBytes(coverUrl).catch(() => null);
+    if (coverUrl) coverBuf = await tagWriter.fetchCoverBytes(coverUrl, 10000, 8 * 1024 * 1024, coverHttpFetch).catch(() => null);
   }
   if (saveCover) {
     if (coverBuf) {
@@ -175,6 +182,7 @@ async function applyMatch({ path: filePath, provider, song, _lrclib, _mb, saveLr
     const wr = await tagWriter.writeTags({
       dest: filePath, ...meta,
       coverBytes: coverBuf || undefined, coverUrl: !coverBuf ? coverUrl || undefined : undefined,
+      httpFetch: coverHttpFetch || undefined,
       lyrics: lrc || '', tlyric,
     }).catch((e) => ({ ok: false, reason: String((e && e.message) || e) }));
     if (wr && wr.ok) { out.tagged = true; if (lrc) out.embedded = true; }

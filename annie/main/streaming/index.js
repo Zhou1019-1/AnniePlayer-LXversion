@@ -86,7 +86,10 @@ async function coverProxyFetch(u) {
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 10000);
-    const resp = await fetch(u, { signal: ctrl.signal });
+    // V4.6.8：与 Qobuz API 同走 Electron net.fetch，跟随系统代理。
+    // 惰性 require：CI 的纯 Node 测试没有 electron 包。
+    const { net } = require('electron');
+    const resp = await net.fetch(u, { signal: ctrl.signal });
     clearTimeout(to);
     if (!resp.ok) return { url: '', error: 'http-' + resp.status };
     const type = (resp.headers.get('content-type') || '').split(';')[0].trim();

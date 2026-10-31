@@ -321,6 +321,7 @@ function makePostProcessor(fill) {
       composer: (item.composer && item.composer.name) || '',
       publisher: item.publisher || (item.album && item.album.label && item.album.label.name) || '',
       coverUrl: item.coverUrl || coverUrlOf(item.album),
+      httpFetch: qzFetch, // V4.6.8：封面同走 net.fetch；Node 全局 fetch 不读系统代理会直连超时
       lyrics: lrc, tlyric,
     }).catch((err) => ({ ok: false, reason: String((err && err.message) || err) }));
     if (tg && tg.ok) fill.tagged++;

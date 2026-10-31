@@ -21,7 +21,11 @@ function wasmPath() {
   // dev：模块同目录；打包：asar 外 extraResources（electron-builder 配置 resources/am/temari.wasm）
   try {
     const { app } = require('electron');
-    if (app && app.isPackaged) return path.join(process.resourcesPath, 'am', 'temari.wasm');
+    if (app && app.isPackaged) {
+      const packaged = path.join(process.resourcesPath, 'am', 'temari.wasm');
+      // dev 下 app.isPackaged 异常为 true 时，resources/am 并不存在；按实际文件回退，避免解密前 ENOENT。
+      if (require('fs').existsSync(packaged)) return packaged;
+    }
   } catch { }
   return path.join(__dirname, 'temari.wasm');
 }
@@ -60,6 +64,10 @@ function toSong(t) {
 }
 
 function register(ipcMain) {
+  /* V4.6.8：IPC 开放前完成网络初始化。此前 status 与 ensureService 并发，
+   * 冷请求会误打公共服务、且回退全局 fetch 不随系统代理。 */
+  dl.setConfig({ wrapperUrl: 'http://127.0.0.1:12340', apiKey: '', fetchImpl: amFetch });
+
   /* wrapper-lite 健康检查（渲染层轮询引导） */
   ipcMain.handle('am:status', async () => {
     try {
@@ -87,7 +95,7 @@ function register(ipcMain) {
 
   /* 歌词三轨（lyric 正文 / tlyric 翻译 / rlyric 罗马音） */
   ipcMain.handle('am:lyric', async (_e, p) => {
-    const r = await dl.fetchLyricsSplit(String((p && p.id) || ''), (p && p.lang) || 'zh-Hans');
+    const r = await dl.fetchLyricsSplit(String((p && p.id) || ''), (p && p.lang) || 'zh-Hans') || {};
     return { lrc: r.lyric || '', tlyric: r.tlyric || '', rlyric: r.rlyric || '' };
   });
 

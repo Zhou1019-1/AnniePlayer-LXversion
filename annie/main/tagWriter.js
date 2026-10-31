@@ -49,7 +49,7 @@ function isImageBytes(buf) {
     && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true; // RIFF+WEBP
   return false;
 }
-async function fetchCoverBytes(url, timeoutMs = 10000, maxBytes = 8 * 1024 * 1024) {
+async function fetchCoverBytes(url, timeoutMs = 10000, maxBytes = 8 * 1024 * 1024, httpFetch) {
   const u = String(url || '');
   if (/^data:image\//i.test(u)) {
     const m = /^data:image\/[a-z]+;base64,(.+)$/is.exec(u);
@@ -63,7 +63,8 @@ async function fetchCoverBytes(url, timeoutMs = 10000, maxBytes = 8 * 1024 * 102
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), timeoutMs);
-    const resp = await fetch(u, { signal: ctrl.signal, redirect: 'follow' });
+    // Qobuz 由调用方注入 Electron net.fetch（跟随系统代理）；其他平台维持原全局 fetch
+    const resp = await (httpFetch || fetch)(u, { signal: ctrl.signal, redirect: 'follow' });
     clearTimeout(to);
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
@@ -97,7 +98,7 @@ async function writeTags(opts) {
   // 封面：优先传入字节，否则按 URL 抓取；embedCover=false 时不嵌入（洛雪「嵌入封面」开关）
   const wantEmbedCover = opts.embedCover !== false;
   let coverBuf = wantEmbedCover ? (opts.coverBytes || null) : null;
-  if (wantEmbedCover && !coverBuf && opts.coverUrl) coverBuf = await fetchCoverBytes(opts.coverUrl).catch(() => null);
+  if (wantEmbedCover && !coverBuf && opts.coverUrl) coverBuf = await fetchCoverBytes(opts.coverUrl, 10000, 8 * 1024 * 1024, opts.httpFetch).catch(() => null);
 
   // 临时输出路径（同目录保证跨设备 rename 原子性）
   const tmpOut = dest.replace(/\.[^.]+$/, '') + '.tagtmp.' + ext;

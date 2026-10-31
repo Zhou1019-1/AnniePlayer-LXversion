@@ -3847,9 +3847,16 @@
         stTitle.textContent = '检测中…'; stHint.textContent = '';
         window.mine.amWrapperStatus().then(function (st) {
           if (st.ok) {
-            stTitle.textContent = '✅ 服务运行中';
-            stHint.textContent = '区域：' + (st.regions || []).join('、') + ' · 端口 12340';
-            stTitle.style.color = '';
+            var regions = st.regions || [];
+            if (!regions.length) {
+              stTitle.textContent = '服务已连接，但未登录或实例异常';
+              stHint.textContent = '请先登录 Apple ID；若已登录，请停止服务后重新启动，避免连接到旧的异常实例';
+              stTitle.style.color = '#d97706';
+            } else {
+              stTitle.textContent = '✅ 服务运行中';
+              stHint.textContent = '区域：' + regions.join('、') + ' · 端口 12340';
+              stTitle.style.color = '';
+            }
           } else if (st.stage === 'starting') {
             stTitle.textContent = '⏳ 服务启动中…';
             stHint.textContent = 'QEMU 虚拟机启动需要几秒，请稍候';

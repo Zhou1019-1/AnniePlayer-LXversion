@@ -123,6 +123,7 @@ async function createAmService(opts = {}) {
       } catch (e) {
         if (!state.cancelled && !res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: String((e && e.message) || e) }));
         }
         if (!state.cancelled) console.error('[am-service] stream error:', e.message);
       } finally {

@@ -239,9 +239,11 @@
     var head = el('div'); head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap';
     head.appendChild(el('div', 'am-view-h', 'Apple Music'));
     var stTxt = '检测中…';
-    if (AMV.st) stTxt = AMV.st.ok ? 'wrapper 已连接' : 'wrapper 未运行';
+    var accountWarn = !!(AMV.st && AMV.st.ok && AMV.st.wrapper && !(AMV.st.wrapper.regions || []).length);
+    if (AMV.st) stTxt = AMV.st.ok ? (accountWarn ? 'wrapper 已连接，但未登录或实例异常' : 'wrapper 已连接') : 'wrapper 未运行';
     var stEl = el('span', 'am-c-dim', stTxt);
-    if (AMV.st && !AMV.st.ok) stEl.style.color = '#e11d48';
+    if (accountWarn) stEl.style.color = '#d97706';
+    else if (AMV.st && !AMV.st.ok) stEl.style.color = '#e11d48';
     head.appendChild(stEl);
     /* 播放音质选择（P2：AAC 缓冲式 / ALAC 流式无损） */
     head.appendChild(el('span', 'am-c-dim', '播放音质'));

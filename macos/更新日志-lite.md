@@ -1,5 +1,33 @@
 # 安妮播放器 Lite · 更新日志
 
+## V1.0.3（2026-11-08）
+
+独立功能核查后的缺陷修复。**关键：其中大部分是完整版 macOS 与 Lite 共用的代码，完整版构建同样受益（下次完整版发版可直接复用）。**
+
+### 修复
+
+- **在线音乐页单曲下载（⬇ → `streamDownload`）崩溃**：进度回调来自 URLSession 后台线程却直接调
+  `WKWebView.evaluateJavaScript`，触发 WebKit 主线程断言（EXC_BREAKPOINT）。改为
+  `DispatchQueue.main.async` 派发（与下载队列一致）。
+- **酷我单曲下载被 ATS 判失败**：`Info.plist` 同时存在 `NSAllowsArbitraryLoadsInWebContent` /
+  `NSAllowsLocalNetworking` 时，系统会**忽略** `NSAllowsArbitraryLoads`，音源 302 到 http CDN
+  的下载/封面请求被 ATS 拒绝。移除这两个键，由 `NSAllowsArbitraryLoads` 统管；同时修好
+  电平表（LRMeter）远程下载被 ATS 拦的问题。
+- **频谱/波形分析、曲库扫描进度、单曲下载百分比事件前端收不到**：前端 `index.html` 监听的是
+  `window.__analyzeEmit` / `window.__scanEvent`，后端却推注入层的 `mine.__emit_on*` 空通道。
+  后端改推正确通道；`__amDownloadProgress` 补转发 `onStreamDownloadProgress` 回调。
+- **曲库快照 `folders` 恒为空**：`librarySnapshot()` 改为读取 `LibraryScanner.folders` 真实列表，
+  侧栏文件夹 chip / 移除 / 文件夹过滤恢复。
+- **设置中心重启不恢复**：`getLibrary().ui` 改为读取 `Settings`（`saveSettings` 已写入 UserDefaults
+  的 `annie.settings.ui`），`player.js` 启动时 `hydrate` 读回。
+- **备份会带走 Qobuz 账号**：备份导出与大小估算都剔除 `qobuz.json`（与 1.0.1 更新日志承诺一致）。
+- **Lite 二进制残留 wrapper-lite/qemu/amdl 字符串**：`EnvPaths.swift` 整体加 `#if !LITE`
+  （引用者只有完整版的 LoginBridge/QemuLogin，Lite 不再编译该文件）。
+
+### 打包
+
+- 版本号 1.0.3；产物名沿用 ASCII：`AnniePlayer-Lite-1.0.3.dmg` / `annie-player-lite-macos-1.0.3.zip`。
+
 ## V1.0.2（2026-11-08）
 
 打包修正，无功能改动。

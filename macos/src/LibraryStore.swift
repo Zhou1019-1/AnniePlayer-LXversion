@@ -118,6 +118,13 @@ final class LibraryStore {
     // 我们目前只支持「在线音乐」，不扫描本地文件夹，所以 tracks/folders 为空，
     // 但 favorites 必须返回，否则「喜爱歌曲」界面永远是空的。
     func librarySnapshot() -> [String: Any] {
+        // ⚠️ 2026-11-08 修复：folders / ui 之前被写死为空 → 侧栏文件夹入口失效、
+        //    设置中心「保存了但重启不恢复」。这里改为读真实数据源：
+        //    · folders ← LibraryScanner（UserDefaults: annie.library.folders）
+        //    · ui      ← Settings（UserDefaults: annie.settings.ui，由 saveSettings 写入，
+        //                player.js 启动时 annieSettings.hydrate(library.ui) 读回）
+        let folders = LibraryScanner.shared.folders
+        let savedUI = (Settings.shared.get()["ui"] as? [String: Any]) ?? [:]
         lock.lock(); defer { lock.unlock() }
         // ⚠️ 2026-10-24：旧版本入库的曲目没有 dir 字段（前端会崩），
         //   返回快照时统一补齐（只改返回值，不改磁盘数据）。
@@ -131,11 +138,11 @@ final class LibraryStore {
         return [
             "favorites": favPaths,
             "tracks": fixedTracks,
-            "folders": [] as [Any],
+            "folders": folders,
             "metaCache": [:] as [String: Any],
             "volume": 0.8,
             "backend": "avplayer",
-            "ui": [:],
+            "ui": savedUI,
             "_pendingMigration": false,
             "_pendingRescan": false,
         ]

@@ -320,7 +320,14 @@ final class SourceAPI {
             let album = (dict["albumName"] as? String) ?? (dict["album"] as? String) ?? ""
             let onProgress: (DownloadProgress) -> Void = { prog in
                 let js = "window.__amDownloadProgress && window.__amDownloadProgress(\(jsonString(dlKey)), \(prog.percent), \(prog.received), \(prog.total));"
-                Bridge.shared.webView?.evaluateJavaScript(js) { _, _ in }
+                // ⚠️ 2026-11-08 修复「在线单曲下载闪退」：
+                //    这个进度回调来自 URLSession 的后台委托线程，直接调
+                //    WKWebView.evaluateJavaScript 会触发 WebKit 的主线程断言
+                //    （crashDueToApplicationCallingMainThreadOnlyWebKitAPIFromBackgroundThread）
+                //    → EXC_BREAKPOINT。必须切回主线程再调（与 DownloadQueue 一致）。
+                DispatchQueue.main.async {
+                    Bridge.shared.webView?.evaluateJavaScript(js) { _, _ in }
+                }
             }
 
             // ⚠️ 地址可能过期（2026-10-21）：酷我的播放地址有效期很短（几分钟），

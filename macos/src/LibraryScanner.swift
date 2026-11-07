@@ -197,12 +197,16 @@ final class LibraryScanner {
     }
 
     /// 推送扫描进度事件给前端（onScanEvent）
+    ///
+    /// ⚠️ 2026-11-08 修复「扫描进度条不动」：index.html 把 mine.onScanEvent 重定向到
+    ///    window.__scanCbs，并约定后端推 window.__scanEvent；之前这里推的是
+    ///    注入层自动生成的 mine.__emit_onScanEvent（handlers 已被补丁替换）→ 事件丢失。
     private func pushScanEvent(_ obj: [String: Any]) {
         guard let d = try? JSONSerialization.data(withJSONObject: obj),
               let js = String(data: d, encoding: .utf8) else { return }
         DispatchQueue.main.async {
             Bridge.shared.webView?.evaluateJavaScript(
-                "try{window.mine.__emit_onScanEvent(\(js));}catch(e){}") { _, _ in }
+                "try{window.__scanEvent && window.__scanEvent(\(js));}catch(e){}") { _, _ in }
         }
     }
 }

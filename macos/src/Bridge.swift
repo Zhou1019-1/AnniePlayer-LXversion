@@ -1156,12 +1156,14 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
             let input = strArg(args)
             let gen = Int.random(in: 1...1_000_000)
             let emit: ([String: Any]) -> Void = { payload in
-                // ⚠️ 2026-10-24：用注入层自动生成的 __emit_onAnalyzeEvent 通道
-                //   （mine 桥接模板会给每个 on* 方法生成 __emit_<name>）。
-                //   原来我自造的 window.__analyzeEmit 在 index.html 里会被覆盖 → 事件丢失。
+                // ⚠️ 2026-11-08 修复「频谱/波形分析结果前端收不到」：
+                //   index.html 里把 mine.onAnalyzeEvent 重定向到 window.__analyzeCbs，
+                //   并约定后端推 window.__analyzeEmit；而之前这里推的是注入层自动生成的
+                //   mine.__emit_onAnalyzeEvent（handlers 早已被 index.html 的补丁替换掉）
+                //   → 事件全部丢失，UI 永远停在「分析中…」。改推 index.html 实际监听的通道。
                 if let d = try? JSONSerialization.data(withJSONObject: payload),
                    let s = String(data: d, encoding: .utf8) {
-                    let js = "window.mine && window.mine.__emit_onAnalyzeEvent && window.mine.__emit_onAnalyzeEvent(\(s));"
+                    let js = "window.__analyzeEmit && window.__analyzeEmit(\(s));"
                     DispatchQueue.main.async {
                         Bridge.shared.webView?.evaluateJavaScript(js) { _, _ in }
                     }

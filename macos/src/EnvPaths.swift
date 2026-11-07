@@ -8,7 +8,13 @@
 //   3. 常见安装位置    Homebrew、~/amdl、~/.dsh/amdl（兼容我原来的部署）
 //
 // 找不到就让 App 显示「缺依赖」引导，而不是直接报错。
+//
+// ⚠️ 2026-11-08：整个文件只在完整版（Lima/QEMU 链路）里被使用 ——
+//    引用者仅 LoginBridge.swift / QemuLogin.swift，二者整文件 `#if !LITE`。
+//    Lite 构建时用 `#if !LITE` 整体排除，避免二进制里残留 wrapper-lite/qemu/amdl
+//    等字符串（之前 Lite 包里能 strings 到这些字样，虽不可达但观感/审计不佳）。
 
+#if !LITE
 import Foundation
 
 struct EnvPaths {
@@ -389,3 +395,5 @@ enum EnvCheck {
         }.resume()
     }
 }
+
+#endif

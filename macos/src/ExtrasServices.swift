@@ -391,7 +391,10 @@ final class BackupService {
         let dst = (docsDir as NSString).appendingPathComponent("AnnieBackup-\(stamp)")
         do {
             try FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
-            for name in ["library.json", "downloads.json", "resume.json", "qobuz.json", "source-backends.json"] {
+            // ⚠️ 安全（2026-11-07，2026-11-08 在 Lite 单源码里补齐）：备份**不包含** qobuz.json
+            //    —— 里面有登录 token，用户把备份发给别人（或传到网盘）就等于把 Qobuz 账号借出去。
+            //    注意：导出和估算两处都要剔除，否则「估算大小」还会把 token 文件算进去。
+            for name in ["library.json", "downloads.json", "resume.json", "source-backends.json"] {
                 let f = src.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: f.path) {
                     try? FileManager.default.copyItem(at: f, to: URL(fileURLWithPath: (dst as NSString).appendingPathComponent(name)))
@@ -409,7 +412,7 @@ final class BackupService {
         let src = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AnnieMac")
         var total: Int64 = 0
-        for name in ["library.json", "downloads.json", "resume.json", "qobuz.json"] {
+        for name in ["library.json", "downloads.json", "resume.json"] {
             let f = src.appendingPathComponent(name)
             if let sz = (try? FileManager.default.attributesOfItem(atPath: f.path))?[.size] as? Int64 {
                 total += sz

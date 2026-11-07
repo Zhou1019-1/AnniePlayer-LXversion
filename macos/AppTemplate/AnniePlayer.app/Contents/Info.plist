@@ -24,10 +24,11 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
-		<key>NSAllowsArbitraryLoadsInWebContent</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
+		<!-- ⚠️ 2026-11-08 修复「酷我下载被 ATS 拦」：
+		     不能再放 NSAllowsArbitraryLoadsInWebContent / NSAllowsLocalNetworking ——
+		     只要存在这两个键之一，NSAllowsArbitraryLoads 就会被系统忽略，
+		     在线音源 302 到 http CDN 的下载/封面请求会被 ATS 拒绝。
+		     去掉后由 NSAllowsArbitraryLoads 统管（含 WKWebView 本地 http 加载）。 -->
 		<key>NSExceptionDomains</key>
 		<dict>
 			<key>kugou.com</key>

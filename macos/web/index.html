@@ -854,6 +854,15 @@ window.__amDownloadProgress = function(dlKey, percent, received, total) {
     if (btn) {
       btn.textContent = percent > 0 ? percent + '%' : Math.floor(received / 1048576) + 'M';
     }
+    // ⚠️ 2026-11-08 修复「单曲下载按钮百分比不动」：
+    //   streaming.js / am-stream.js 通过 mine.onStreamDownloadProgress 注册回调
+    //   （index.html 把它重定向到 window.__amDlProgressCbs），但这里之前只改 DOM，
+    //   从不通知回调 → 按钮永远停在「…」。补上转发。
+    if (window.__amDlProgressCbs && window.__amDlProgressCbs.length) {
+      window.__amDlProgressCbs.forEach(function(cb) {
+        try { cb({ key: dlKey, received: received, total: total }); } catch (e) {}
+      });
+    }
   } catch (e) {}
 };
 

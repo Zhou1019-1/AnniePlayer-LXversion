@@ -1,5 +1,27 @@
 # 安妮播放器 macOS 版 · 更新日志
 
+## V1.0.3（2026-11-08）
+
+修复 macOS 线共享代码的缺陷（与 Lite 1.0.3 同批修复，Apple Music 功能与既有完整版一致、未改动）：
+
+### 修复
+
+- **在线音乐页单曲下载崩溃**：`SourceAPI.download` 的进度回调在 URLSession 后台线程直接调
+  `WKWebView.evaluateJavaScript`，触发 WebKit 主线程断言（EXC_BREAKPOINT）。改为主线程派发。
+- **酷我（及部分音源）下载被 ATS 拦**：`Info.plist` 同时存在 `NSAllowsArbitraryLoadsInWebContent` /
+  `NSAllowsLocalNetworking` 时，系统会忽略 `NSAllowsArbitraryLoads`，音源 302 到 http CDN 的
+  下载/封面请求被拒。移除这两个键；同时修好电平表（LRMeter）远程下载。
+- **频谱/波形分析、曲库扫描进度、单曲下载百分比事件前端收不到**：后端改推
+  `window.__analyzeEmit` / `window.__scanEvent`（`index.html` 实际监听的通道）；
+  `__amDownloadProgress` 补转发 `onStreamDownloadProgress` 回调。
+- **曲库快照 `folders` 恒为空 / 设置中心重启不恢复**：`librarySnapshot()` 改为读取
+  `LibraryScanner.folders` 与 `Settings` 持久化的 `ui`。
+- **备份导出/估算包含 `qobuz.json`**：会把 Qobuz 登录 token 随备份带走，现已剔除。
+
+### 打包
+
+- arm64 / macOS 15+；版本号 1.0.3。
+
 ## V1.0.0（2026-10-24）
 
 **首个 macOS ARM64 版本**（Windows 版完整移植）

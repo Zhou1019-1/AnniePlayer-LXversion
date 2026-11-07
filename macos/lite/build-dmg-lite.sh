@@ -6,7 +6,7 @@
 #   ./build-dmg-lite.sh [版本号]        # 版本号可带 mac-lite-v 前缀，会自动剥掉
 #
 # 产物：
-#   macos/dist/安妮播放器-Lite-{版本}.dmg
+#   macos/dist/AnniePlayer-Lite-{版本}.dmg
 #   macos/dist/annie-player-lite-macos-{版本}.zip
 #
 # 与完整版的差异：
@@ -152,7 +152,7 @@ cp "$README_TMP" "$ZIP_STAGE/"
 ( cd "$ZIP_STAGE" && ditto -c -k --sequesterRsrc --zlibCompressionLevel 9 . "$ZIP_OUT" )
 echo "  ✅ ZIP: $(du -h "$ZIP_OUT" | cut -f1)"
 
-DMG_OUT="$DIST/安妮播放器-Lite-${SAFE_VER}.dmg"
+DMG_OUT="$DIST/AnniePlayer-Lite-${SAFE_VER}.dmg"   # ⚠️ 资产名用 ASCII：GitHub Release 会剥离中文，曾产出 "-Lite-1.0.1.dmg"
 DMG_STAGE="$BUILD/dmgstage"; rm -rf "$DMG_STAGE"; mkdir -p "$DMG_STAGE"
 cp -R "$APP" "$DMG_STAGE/"
 ln -s /Applications "$DMG_STAGE/Applications"

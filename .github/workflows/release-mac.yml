@@ -128,7 +128,7 @@ jobs:
           body_path: release-notes-lite.md
           prerelease: true   # ⚠️ 硬规则：防止抢 releases/latest 指针（见顶部注释）
           files: |
-            macos/dist/安妮播放器-Lite-*.dmg
+            macos/dist/AnniePlayer-Lite-*.dmg
             macos/dist/annie-player-lite-macos-*.zip
 
 # ============================================================================

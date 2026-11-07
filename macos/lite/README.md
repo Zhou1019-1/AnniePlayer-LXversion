@@ -20,7 +20,7 @@
 产物在 `macos/dist/`：
 
 ```
-安妮播放器-Lite-1.0.1.dmg
+AnniePlayer-Lite-1.0.1.dmg
 annie-player-lite-macos-1.0.1.zip
 ```
 

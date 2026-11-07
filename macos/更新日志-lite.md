@@ -1,5 +1,14 @@
 # 安妮播放器 Lite · 更新日志
 
+## V1.0.2（2026-11-08）
+
+打包修正，无功能改动。
+
+- **Release 资产名改用 ASCII**：GitHub Release 会剥离中文资产文件名，
+  1.0.1 的 DMG 被发成 `-Lite-1.0.1.dmg`。现在 DMG 产物名改为
+  `AnniePlayer-Lite-{版本}.dmg`（ZIP 本来就是 ASCII，不受影响）。
+- 本地构建产物同步改名（App 显示名、DMG 卷名仍是「安妮播放器 Lite」）。
+
 > 只记录 Lite 线（`mac-lite-v*`）。完整版 macOS 的更新日志见 `更新日志-mac.md`。
 
 ## V1.0.1（2026-11-08）

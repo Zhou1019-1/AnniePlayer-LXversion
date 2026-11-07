@@ -1,3 +1,4 @@
+#if !LITE
 // Apple Music 账号登录 —— 把下载器里的 QemuLogin 接到 UI 上
 //
 // 流程：
@@ -211,3 +212,4 @@ final class LoginBridge {
         return ["ok": true]
     }
 }
+#endif

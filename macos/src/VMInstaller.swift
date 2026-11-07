@@ -1,3 +1,4 @@
+#if !LITE
 import Foundation
 
 /// ⚠️ 2026-10-24（用户要求「拖进应用文件夹一步完成全部部署」）：
@@ -350,3 +351,4 @@ final class VMInstaller {
         log("am-login 部署完成")
     }
 }
+#endif

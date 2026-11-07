@@ -1,3 +1,4 @@
+#if !LITE
 // Apple Music 登录器（VM 常驻服务版）
 //
 // ⚠️ 架构演进（2026-10-22）：
@@ -345,3 +346,4 @@ final class LinuxWrapperLogin {
         return code == 200 ? body : ""
     }
 }
+#endif

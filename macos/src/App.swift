@@ -306,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         //     TemariWasm.shared.warmup()
         // }
 
+#if !LITE
         // ⚠️ 2026-10-24：App 启动时自动确保 connect-proxy 运行（8443）。
         //   AM 登录/播放的 QEMU 需要走这个 CONNECT 代理访问 Apple 服务器
         //   （VM/QEMU 无法直连 gsa.apple.com）。之前它是手动启动的，没跑就会登录失败。
@@ -313,12 +314,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ConnectProxyManager.shared.ensureRunning()
         }
 
+#endif
         // ⚠️ 2026-10-24：安装菜单栏图标（macOS 的「托盘」等价物）。
         //   排查发现 macOS 版完全没实现，但帮助文档/设置里全是「托盘」文案。
         MenuBarItem.shared.install()
         // 窗口关闭行为交给 MenuBarItem 决定（最小化到菜单栏 / 直接退出）
         if let w = NSApp.windows.first(where: { $0.canBecomeMain }) { w.delegate = self }
 
+        // ⚠️ 安全（2026-11-07）：启动即初始化 Qobuz 服务。
+        //    这样旧版本遗留在 ~/Library/Application Support/AnnieMac/qobuz.json 里的
+        //    明文密码会在本次启动时就被清洗掉，不必等用户点进 Qobuz 页面。
+        _ = QobuzService.shared
+
+#if !LITE
         // ⚠️ 2026-10-24（用户要求「拖进应用文件夹一步完成全部部署」）：
         //   App 启动后自动检测/创建登录服务 VM（首次安装 5~10 分钟，后台执行）。
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
@@ -333,6 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { await LoginBridge.shared.ensureServiceRunning() }
         }
 
+#endif
         // 调试：执行任意 JS
         // ⚠️ 2026-10-24 调试注入：启动后自动开桌面歌词（不锁定）
         if ProcessInfo.processInfo.environment["ANNIE_DLYRICS_OPEN"] == "1" {
@@ -412,7 +421,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ⚠️ 2026-10-24（用户要求）：App 退出时停止所有后台服务。
     //   注意：这里不能访问 window（可能已释放 → objc_retain 崩溃，历史踩坑）。
     func applicationWillTerminate(_ notification: Notification) {
+        #if !LITE
         ServiceShutdown.run()
+        #endif
     }
 
     /// ⚠️ 2026-10-24：关闭按钮 → 按「设置 → 关闭行为」处理

@@ -95,3 +95,14 @@ swiftc -O -parse-as-library -target arm64-apple-macosx15.0 -o /tmp/annie src/*.s
 ```
 
 ⚠️ **`build-dmg.sh` 会从 `安妮播放器.app` 模板复制**，`Info.plist` 里的版本号需要单独改（脚本会自动确保 `CFBundleIconFile`）。
+
+---
+
+## 五、Lite 变体（mac-lite 线，2026-11-08）
+
+- **一条源码两个产品**：Lite 用 `swiftc -D LITE` 编译；AM/VM 代码在 `#if !LITE` 里（12 个文件整文件包裹 + Bridge/App/SourceAPI/DownloadQueue/ExtrasServices 局部包裹）。完整版构建命令不变，行为与 1.0.2 一致（改动后两种构建都编译通过）。
+- **`Bridge.allMethods` 在 Lite 下仍含 AM 方法名**：Swift 不允许在数组字面量里写 `#if`；这些名字只是白名单，Lite 没有对应 dispatch case，调用无副作用。
+- **前端不存第二份**：`macos/lite/web-patch.py` 构建时从 `macos/web` 生成 Lite 前端（删 `am-apple.js`、index.html 两个弹窗+脚本、am-dom.js 两行、helpContent 文案）。锚点强校验，匹配不到直接失败。
+- **App 从零拼**：`build-dmg-lite.sh` 不复制完整版 AppTemplate 的 deps/lima，只取 Info.plist + 图标；资源里附 `LICENSE.txt` / `THIRDPARTY` / `开源声明.txt`（GPL-3.0-only 合规）。
+- **构建命令**：`./macos/lite/build-dmg-lite.sh 1.0.1`（universal，macOS 13+，无运行时依赖；本地迭代可 `USE_PREBUILT=1` 跳过编译）。
+- **CI**：`.github/workflows/release-mac.yml` 新增 `build-mac-lite` job，tag `mac-lite-v*` 触发；prerelease=true（硬规则，防抢 latest 指针）。

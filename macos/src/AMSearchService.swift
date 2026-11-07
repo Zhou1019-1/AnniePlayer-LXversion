@@ -1,3 +1,4 @@
+#if !LITE
 // Apple Music 搜索服务（用公开 WebPlay developer token 调官方 amp-api）
 //
 // ⚠️ 为什么需要（2026-10-23）：
@@ -198,3 +199,4 @@ final class AMSearchService {
         return try? await URLSession.shared.data(for: req).0
     }
 }
+#endif

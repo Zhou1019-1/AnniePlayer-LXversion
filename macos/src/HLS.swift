@@ -1,3 +1,4 @@
+#if !LITE
 // HLS 播放列表解析 + 分片下载解密
 //
 // 流程（2026-10-21 已验证可行）：
@@ -275,3 +276,4 @@ enum AudioFetcher {
         return data
     }
 }
+#endif

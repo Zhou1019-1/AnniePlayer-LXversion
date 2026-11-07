@@ -1,3 +1,4 @@
+#if !LITE
 import Foundation
 
 /// ⚠️ 2026-10-24（用户要求「关闭 App 时那些服务要一起关闭」）：
@@ -40,3 +41,4 @@ enum ServiceShutdown {
         p.waitUntilExit()
     }
 }
+#endif

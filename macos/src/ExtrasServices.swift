@@ -608,8 +608,10 @@ final class MiscExtras {
             .appendingPathComponent("AnnieMac").path
         lines.append("应用数据目录: \(appsupport)")
         lines.append("缓存目录: \(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].path)")
+        #if !LITE
         // 环境
         lines.append("Lite 服务: \(LiteAPI.server)")
+        #endif
         try? lines.joined(separator: "\n").write(toFile: tmp, atomically: true, encoding: .utf8)
         return ["ok": true, "path": tmp]
     }

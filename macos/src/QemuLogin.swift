@@ -1,3 +1,4 @@
+#if !LITE
 // 直接控制 QEMU 的登录 —— 支持验证码注入。
 //
 // 背景（2026-10-18 调研结论）：
@@ -1031,3 +1032,4 @@ final class QemuLogin: ObservableObject {
         try? fm.removeItem(at: url)
     }
 }
+#endif

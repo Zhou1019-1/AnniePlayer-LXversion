@@ -1,3 +1,4 @@
+#if !LITE
 // temari.wasm 解密桥接
 //
 // Swift 不能直接跑 WebAssembly，但 JavaScriptCore 可以。
@@ -443,3 +444,4 @@ final class TemariWasm {
         }
     }
 }
+#endif

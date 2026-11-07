@@ -75,3 +75,36 @@ GitHub 的 `releases/latest` 永远指向**最新创建的正式 Release**。Win
 3. 检查 `.github/workflows/release-mac.yml` 的构建步骤与你工程的实际结构是否吻合，不适配就改它（只许改这一个 workflow 文件），并用 `mac-v0.0.0-test` 之类的测试 tag 真打一次验证链路（验证完把测试 Release 删掉或保持 prerelease）。
 4. 建 `macos/更新日志-mac.md` 写第一段。
 5. 全部就绪后告知维护者，在主线 README 的下载区加 macOS 入口。
+
+---
+
+## 八、Lite 变体（mac-lite 线）
+
+完整版 macOS 应用之外，额外维护一个**无 Apple Music** 的 Lite 版（`macos/lite/`），面向「拖过去就能用、不折腾虚拟机」的分发场景。
+
+### 一条源码，两个产品
+
+- Lite 与完整版共用同一份 `macos/src`，差异全部用**编译开关**表达：
+  - `#if !LITE` 包裹 Apple Music / Lima VM / QEMU / FairPlay 解密 / 登录相关代码（12 个文件整文件包裹 + Bridge/App/SourceAPI/DownloadQueue/ExtrasServices 的局部包裹）
+  - 完整版构建命令**不带** `-D LITE`，行为与 1.0.x 完全一致（改动前后都验证过能编译）
+  - Lite 构建带 `-D LITE`，被包裹的代码不参与编译
+- 前端**不复制第二份**：`macos/lite/web-patch.py` 在构建时从 `macos/web` 生成 Lite 前端（删 AM 页面/弹窗/侧栏入口）。前端结构变化时同步改脚本锚点，脚本对锚点做强校验，匹配不到直接失败。
+- 注意 Swift 不支持在数组字面量里写 `#if`：`Bridge.allMethods` 在 Lite 下仍保留 AM 方法名（只是白名单，没有 dispatch case，无副作用）。
+
+### 构建与发版
+
+```bash
+./macos/lite/build-dmg-lite.sh 1.0.1        # 本地构建（universal + -D LITE，macOS 13+）
+git tag mac-lite-v1.0.1 && git push origin mac-lite-v1.0.1
+```
+
+- tag 前缀 `mac-lite-v*`，与完整版 `mac-v*`、Windows `v*` 完全隔离
+- `release-mac.yml` 的 `build-mac-lite` job 自动构建并发布；**prerelease 同样是硬规则**
+- Release notes 从 `macos/更新日志-lite.md` 提取
+- 要求：universal（arm64+x86_64）、最低 macOS 13.0、零外部依赖、不打包任何 AM 运行时
+- 合规：App 资源里必须带 `LICENSE.txt` / `THIRDPARTY` / `开源声明.txt`（GPL-3.0-only）
+
+### 边界
+
+- Lite 改动只能落在 `macos/` 内（`src/` 的共享文件加 `#if !LITE` 属于 mac 线内的合法改动，但不得改变完整版默认构建行为）
+- 动了共享 Swift 文件后必须**两种构建都编译通过**（`-D LITE` 与不带），再提交

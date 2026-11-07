@@ -302,6 +302,7 @@ final class DownloadQueue {
 
     private func run(_ t: DlTask) async {
         do {
+#if !LITE
             // ============================================================
             // ⚠️ 2026-10-23：Apple Music（provider=alac）下载
             //   此前 DownloadQueue 只有 kw/kg/else 分支 —— AM 歌曲走 else →
@@ -385,6 +386,7 @@ final class DownloadQueue {
                 return
             }
 
+#endif
             // 1. 拿播放地址
             // ⚠️ 2026-10-22：下载必须和**播放**走同一套接口。
             //    原来这里直接调 SourceAPI.shared.songURL（旧链路 → 第三方后端 403），

@@ -1,6 +1,8 @@
 # 构建产物
 dist/
 build/
+build-lite/
+build-check/
 
 # Xcode / Swift
 *.xcodeproj/

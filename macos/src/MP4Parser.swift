@@ -1,3 +1,4 @@
+#if !LITE
 // MP4 (fMP4) 解析 —— 找出每个音频 sample 的字节范围
 //
 // 为什么要这个：
@@ -341,3 +342,4 @@ enum MP4Parser {
         }
     }
 }
+#endif

@@ -18,7 +18,11 @@ final class SourceAPI {
     ///    他们读的是 r.songs / r.page / r.allPage / r.total，不是 r.list
     func search(args: [Any]) async -> Any? {
         let dict = args.first as? [String: Any] ?? [:]
+        #if LITE
+        let provider = (dict["provider"] as? String) ?? "kw"
+        #else
         let provider = (dict["provider"] as? String) ?? "alac"
+        #endif
         let keyword = (dict["keywords"] as? String)
             ?? (dict["keyword"] as? String) ?? ""
         let page = (dict["page"] as? Int) ?? 1
@@ -42,6 +46,7 @@ final class SourceAPI {
             return ["songs": [Any](), "page": page, "allPage": 1, "total": 0]
         }
 
+#if !LITE
         // Apple Music（ALAC）
         guard provider == "alac" || provider == "apple" else {
             return ["songs": [Any](), "page": page, "allPage": 1, "total": 0]
@@ -87,6 +92,10 @@ final class SourceAPI {
             return ["songs": [Any](), "page": page, "allPage": 1,
                     "total": 0, "error": error.localizedDescription]
         }
+#else
+        // Lite：没有 Apple Music 音源，走不到这里
+        return ["songs": [Any](), "page": page, "allPage": 1, "total": 0]
+#endif
     }
 
     /// streamSongUrl({source, songmid, quality}) → {url, type, quality}
@@ -98,7 +107,11 @@ final class SourceAPI {
         if let inner = dict0["song"] as? [String: Any] {
             for (k, v) in inner { dict[k] = v }
         }
+        #if LITE
+        let source = (dict["source"] as? String) ?? (dict0["provider"] as? String) ?? ""
+        #else
         let source = (dict["source"] as? String) ?? (dict0["provider"] as? String) ?? "alac"
+        #endif
         // ⚠️ songmid 可能是数字也可能是字符串（2026-10-21）：
         //    酷狗/网易云返回的是 Number，酷我/咪咕返回 String。
         var adamId = (dict["songmid"] as? String) ?? (dict["id"] as? String) ?? ""
@@ -120,6 +133,9 @@ final class SourceAPI {
             return await songURLViaLxSDK(source: source, songInfo: dict, quality: quality)
         }
 
+        #if LITE
+        return ["url": "", "playable": false, "message": "不支持的音源：\(source)"]
+        #else
         do {
             let master = try await LiteAPI.masterURL(adamId: adamId)
             let variant = try await HLS.selectALAC(master: master)
@@ -132,8 +148,10 @@ final class SourceAPI {
         } catch {
             return ["url": "", "playable": false, "message": error.localizedDescription]
         }
+        #endif
     }
 
+#if !LITE
     /// 跨平台兜底：用歌名+歌手去 Apple Music 搜，找到后按 ALAC 播放
     private func playViaAppleMusic(name: String, singer: String,
                                    quality: String, origin: String) async -> Any? {
@@ -188,6 +206,7 @@ final class SourceAPI {
         }
     }
 
+#endif
     /// 通过音源脚本拿播放地址（各平台用自己的音源解析）
     ///
     /// ⚠️ 用户明确要求「不能跨平台匹配」，所以这里必须走各平台自己的音源。
@@ -397,6 +416,7 @@ final class SourceAPI {
     private func lyricDispatch(source: String, songid: String, name: String,
                                singer: String, dict: [String: Any]) async -> Any? {
         switch source {
+        #if !LITE
         case "alac", "apple":
             guard !songid.isEmpty else { return ["lrc": "", "tlyric": ""] }
             do {
@@ -404,6 +424,7 @@ final class SourceAPI {
                 let (lrc, tlrc) = TTMLParser.toLRC(ttml)
                 return ["lrc": lrc, "tlyric": tlrc]
             } catch { return ["lrc": "", "tlyric": ""] }
+        #endif
 
         case "kw":
             return await lyricKuwo(id: songid)
@@ -1006,6 +1027,7 @@ final class SourceAPI {
 
 // MARK: - 搜索核心（从 bot 移植）
 
+#if !LITE
 enum SearchCore {
     private static var tokenCache: (token: String, ts: Date)?
 
@@ -1099,3 +1121,4 @@ enum SearchCore {
         }
     }
 }
+#endif

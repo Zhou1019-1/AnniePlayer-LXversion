@@ -1,3 +1,4 @@
+#if !LITE
 import Foundation
 
 /// ⚠️ 2026-10-24：ConnectProxy 管理器
@@ -76,3 +77,4 @@ final class ConnectProxyManager {
         return p.terminationStatus == 0
     }
 }
+#endif

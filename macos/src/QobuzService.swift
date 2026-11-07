@@ -15,11 +15,13 @@
 //   qobuzDownload({items, quality}) → 下载
 //   qobuzDlCancel / qobuzPickDlDir / qobuzLyricMatch / onQobuzDlEvent
 //
-// ⚠️ 网络：Qobuz 域名直连超时，必须走系统代理（127.0.0.1:65532）。
-//    WKWebView/URLSession 默认不走系统代理，这里显式配代理。
+// ⚠️ 网络：Qobuz 域名在部分地区被墙，走代理。
+//    Lite 版不写死代理端口：按「系统代理 → 本机 127.0.0.1:65532 → 直连」自动选择。
+//    （2026-11-07：原来写死 65532，换到别人电脑上没有该代理时 Qobuz 会全部失败）
 
 import Foundation
 import CommonCrypto
+import Network
 
 final class QobuzService {
     static let shared = QobuzService()
@@ -31,9 +33,6 @@ final class QobuzService {
     //   只能搜艺术家名。等有真实订阅账号登录后会自动走 user/login 拿全权限。
     private let appId = "312369995"
     private let appSecret = "e79f8b9be485692b0e5f9dd895826368"
-    /// 代理（用户本机）
-    private let proxyHost = "127.0.0.1"
-    private let proxyPort = 65532
 
     private var session: URLSession!
     /// 内置公开 token（写死在代码里，会过期）
@@ -58,52 +57,111 @@ final class QobuzService {
     private var userName = ""
     private var subscription = ""
     private var savedEmail = ""
-    private var savedPassword = ""
 
     private var cfgURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory,
                                             in: .userDomainMask)[0]
             .appendingPathComponent("AnnieMac")
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
         return base.appendingPathComponent("qobuz.json")
     }
 
     private init() {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 20
-        cfg.connectionProxyDictionary = [
-            kCFNetworkProxiesHTTPEnable as String: 1,
-            kCFNetworkProxiesHTTPProxy as String: proxyHost,
-            kCFNetworkProxiesHTTPPort as String: proxyPort,
-            "HTTPSEnable": 1,
-            "HTTPSProxy": proxyHost,
-            "HTTPSPort": proxyPort,
-        ]
+        if let p = Self.effectiveProxy() { cfg.connectionProxyDictionary = p }
         session = URLSession(configuration: cfg, delegate: ATSBypassDelegate.shared,
                              delegateQueue: nil)
         loadCreds()
     }
 
+    /// 代理选择：系统代理（Clash / V2Ray 等）→ 本机 127.0.0.1:65532 → 直连。
+    private static func effectiveProxy() -> [AnyHashable: Any]? {
+        if let s = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] {
+            let httpOn = (s[kCFNetworkProxiesHTTPEnable as String] as? Int) ?? 0
+            let host = (s[kCFNetworkProxiesHTTPProxy as String] as? String) ?? ""
+            let port = (s[kCFNetworkProxiesHTTPPort as String] as? Int) ?? 0
+            if httpOn == 1, !host.isEmpty, port > 0 {
+                return [kCFNetworkProxiesHTTPEnable as String: 1,
+                        kCFNetworkProxiesHTTPProxy as String: host,
+                        kCFNetworkProxiesHTTPPort as String: port,
+                        "HTTPSEnable": 1, "HTTPSProxy": host, "HTTPSPort": port]
+            }
+            let socksOn = (s[kCFNetworkProxiesSOCKSEnable as String] as? Int) ?? 0
+            let sHost = (s[kCFNetworkProxiesSOCKSProxy as String] as? String) ?? ""
+            let sPort = (s[kCFNetworkProxiesSOCKSPort as String] as? Int) ?? 0
+            if socksOn == 1, !sHost.isEmpty, sPort > 0 {
+                return [kCFNetworkProxiesSOCKSEnable as String: 1,
+                        kCFNetworkProxiesSOCKSProxy as String: sHost,
+                        kCFNetworkProxiesSOCKSPort as String: sPort]
+            }
+        }
+        if isLocalPortOpen(65532) {
+            return [kCFNetworkProxiesHTTPEnable as String: 1,
+                    kCFNetworkProxiesHTTPProxy as String: "127.0.0.1",
+                    kCFNetworkProxiesHTTPPort as String: 65532,
+                    "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": 65532]
+        }
+        return nil
+    }
+
+    private static func isLocalPortOpen(_ port: UInt16) -> Bool {
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return false }
+        let sem = DispatchSemaphore(value: 0)
+        var ready = false
+        let conn = NWConnection(host: "127.0.0.1", port: nwPort, using: .tcp)
+        conn.stateUpdateHandler = { st in
+            switch st {
+            case .ready: ready = true; sem.signal()
+            case .failed, .cancelled: sem.signal()
+            default: break
+            }
+        }
+        conn.start(queue: .global())
+        _ = sem.wait(timeout: .now() + 0.3)
+        conn.cancel()
+        return ready
+    }
+
     // MARK: - 凭据持久化
 
+    // ⚠️ 安全（2026-11-07）：
+    //   · 不再把 Qobuz 密码写盘（旧版本写过，启动时自动清洗）
+    //   · 凭据文件 0600，目录 0700
+    //   · 退出登录 = 直接删除文件，不留 token
+    //   · 备份导出不包含 qobuz.json
     private func loadCreds() {
         guard let d = try? Data(contentsOf: cfgURL),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
         savedEmail = (o["email"] as? String) ?? ""
-        savedPassword = (o["password"] as? String) ?? ""
         userToken = (o["token"] as? String) ?? ""
         userName = (o["userName"] as? String) ?? ""
         subscription = (o["subscription"] as? String) ?? ""
         customToken = (o["customToken"] as? String) ?? ""
         customTokenRegion = (o["customTokenRegion"] as? String) ?? ""
+        // 旧版遗留的明文密码 → 立刻清洗掉
+        if o.keys.contains("password") { persistCreds() }
     }
 
-    private func saveCreds() {
+    private func persistCreds() {
+        // 没有任何凭据 → 不留文件
+        if userToken.isEmpty && customToken.isEmpty && savedEmail.isEmpty {
+            try? FileManager.default.removeItem(at: cfgURL)
+            return
+        }
         let o: [String: Any] = [
-            "email": savedEmail, "password": savedPassword,
+            "email": savedEmail,
             "token": userToken, "userName": userName, "subscription": subscription,
+            "customToken": customToken, "customTokenRegion": customTokenRegion,
         ]
-        if let d = try? JSONSerialization.data(withJSONObject: o) { try? d.write(to: cfgURL) }
+        guard let d = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted]) else { return }
+        let dir = cfgURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        try? d.write(to: cfgURL, options: [.atomic])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                               ofItemAtPath: cfgURL.path)
     }
 
     // MARK: - 请求
@@ -198,7 +256,7 @@ final class QobuzService {
         else { userNameShown = "" }
         return [
             "loggedIn": hasUsable,
-            "hasSavedCreds": !savedEmail.isEmpty || !customToken.isEmpty,
+            "hasSavedCreds": !userToken.isEmpty || !customToken.isEmpty,
             "userName": userNameShown,
             "subscription": subscription.isEmpty ? (hasUsable ? "Studio" : "") : subscription,
             "appId": appId,
@@ -230,7 +288,6 @@ final class QobuzService {
         if let tok = obj["user_auth_token"] as? String {
             userToken = tok
             savedEmail = email
-            savedPassword = password
             if let u = obj["user"] as? [String: Any] {
                 userName = (u["display_name"] as? String) ?? (u["email"] as? String) ?? email
             } else { userName = email }
@@ -239,7 +296,7 @@ final class QobuzService {
                let label = cred["label"] as? String {
                 subscription = label
             }
-            saveCreds()
+            persistCreds()
             return status()
         }
         return ["ok": false, "error": (obj["message"] as? String) ?? "登录失败"]
@@ -249,20 +306,14 @@ final class QobuzService {
     /// ⚠️ 2026-10-22：同时把**所有内置 token 标记失效**，
     ///    这样界面会退回登录页（用户要求「token 失效时退回登录页」）。
     func logout() -> [String: Any] {
-        userToken = ""; userName = ""; subscription = ""
+        // ⚠️ 安全（2026-11-07）：退出登录必须干净 —— 内存清空 + 直接删凭据文件。
+        userToken = ""; userName = ""; subscription = ""; savedEmail = ""
         customToken = ""; customTokenRegion = ""
         // 让 status() 返回 loggedIn=false
         for (_, tk) in builtinTokens { failedTokens.insert(tk) }
         tokenValid = false
         tokenError = "已退出登录，请填入 Token 或重新登录"
-        saveCreds()
-        // 清自定义 token 存盘
-        var cfg: [String: Any] = [:]
-        if let d = try? Data(contentsOf: cfgURL),
-           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { cfg = o }
-        cfg["customToken"] = ""
-        cfg["customTokenRegion"] = ""
-        if let d = try? JSONSerialization.data(withJSONObject: cfg) { try? d.write(to: cfgURL) }
+        try? FileManager.default.removeItem(at: cfgURL)
         return ["ok": true]
     }
 
@@ -277,13 +328,7 @@ final class QobuzService {
         failedTokens.removeAll()          // 重置失效标记，重新尝试
         tokenValid = nil
         tokenError = ""
-        // 存盘
-        var cfg: [String: Any] = [:]
-        if let d = try? Data(contentsOf: cfgURL),
-           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { cfg = o }
-        cfg["customToken"] = customToken
-        cfg["customTokenRegion"] = customTokenRegion
-        if let d = try? JSONSerialization.data(withJSONObject: cfg) { try? d.write(to: cfgURL) }
+        persistCreds()
         // 立即验证
         Task { _ = await request("catalog/search", ["query": "test", "limit": "1"]) }
         return ["ok": true, "hasCustomToken": !customToken.isEmpty]
@@ -296,20 +341,18 @@ final class QobuzService {
         failedTokens.removeAll()
         tokenValid = nil
         tokenError = ""
-        var cfg: [String: Any] = [:]
-        if let d = try? Data(contentsOf: cfgURL),
-           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { cfg = o }
-        cfg["customToken"] = ""
-        cfg["customTokenRegion"] = ""
-        if let d = try? JSONSerialization.data(withJSONObject: cfg) { try? d.write(to: cfgURL) }
+        persistCreds()
         return ["ok": true]
     }
 
     /// token 状态详情（给界面显示）
     func tokenStatus() -> [String: Any] {
+        let builtinSet = Set(builtinTokens.map { $0.1 })
         let list: [[String: Any]] = allTokens.map {
-            ["region": $0.0, "preview": String($0.1.prefix(12)) + "...",
-             "failed": failedTokens.contains($0.1)]
+            // ⚠️ 安全（2026-11-07）：只显示内置公开 token 的前缀，用户自己的 token 不显示
+            let preview = builtinSet.contains($0.1) ? String($0.1.prefix(12)) + "..." : "已保存（不显示）"
+            return ["region": $0.0, "preview": preview,
+                    "failed": failedTokens.contains($0.1)]
         }
         return [
             "hasCustomToken": !customToken.isEmpty,

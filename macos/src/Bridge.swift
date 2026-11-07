@@ -172,6 +172,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
     /// 从他们的代码里提取的方法名
     static let allMethods: [String] = [
         "amClearToken","amLogout","amSearch","amPlay","vmLogin","vmLoginStatus","vmLogout","amGetToken","setWindowBg","nativeFetch","amLogin","amLoginCode","amLoginStatus","amSetToken",
+
         "analyzeStart","appVersion","backupApply","backupEstimate","backupExport","backupPickDir","backupPickInspect","backupRematch",
         "backupRootCheck","beatCacheGet","beatCacheSet","bpmSet","checkUpdate","copyText","diagExport","dlAdd",
         "dlClear","favoriteSongs","favorites","playlistAdd","playlistCreate","playlistDelete","playlistRemove","playlistRename",
@@ -259,6 +260,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
 
     struct FetchResult { let ok: Bool; let json: String }
 
+#if !LITE
     /// ⚠️ 2026-10-23：VM（登录，支持 2FA）登录成功后，把 token 同步给 QEMU（解密播放）。
     ///   两套架构数据不共享：VM token 在 /tmp/wrapper-pkg/rootfs/data，QEMU 在 data.img（ext4）。
     ///   调用 scripts/sync-am-token.sh 完成：VM 挂载 data.img → 复制 token → 复制回 host → 重启 QEMU。
@@ -284,6 +286,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
         }
     }
 
+#endif
     static func nativeFetch(url: String, method: String,
                             headers: [String: String],
                             body: String?) async -> FetchResult {
@@ -482,6 +485,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
             }
             return nil   // 异步回调
 
+#if !LITE
         // ---- Apple Music 账号登录 ----
         // ⚠️ 2026-10-22：改用 Linux VM 里的原生 wrapper 登录
         //    原来 QEMU 双层模拟被 Apple 风控拒绝（account disabled）
@@ -543,6 +547,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
             } catch {
                 return ["ok": false, "error": "\(error)"]
             }
+#endif
         // ⚠️ 2026-10-23 新增：音频元数据（资料库/专辑视图的标题·艺术家·专辑·封面·位深）
         //    之前这三个方法只在 allMethods 里注册了名字、dispatch 没实现 →
         //    资料库永远显示文件名、没有封面和歌手信息。
@@ -555,6 +560,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
         case "metaFullBatch":
             let paths2 = arrArg(args)
             return AudioMetaService.shared.metaFullBatch(paths2)
+#if !LITE
         case "amLoginStatus":
             return await LoginBridge.shared.status()
         case "amLogin":
@@ -583,6 +589,7 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
         case "amLogout":
             return await LoginBridge.shared.logout()
 
+#endif
         // ---- 在线音源（我们的核心）----
         case "streamSearch":
             return await searchDispatch(args: args)
@@ -972,7 +979,11 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
         case "streamCoverProxy":
             return await SourceAPI.shared.coverProxy(args: args)
         case "streamSourcesList":
+            #if LITE
+            return [Any]()   // Lite：无 Apple Music 音源
+            #else
             return [["id": "apple", "name": "Apple Music", "enabled": true]]
+            #endif
 
         // ---- 窗口背景色（日夜模式同步）----
         case "setWindowBg":
@@ -1412,7 +1423,11 @@ final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUI
 
     private func searchDispatch(args: [Any]) async -> Any? {
         let dict = args.first as? [String: Any] ?? [:]
+        #if LITE
+        let provider = (dict["provider"] as? String) ?? "kw"
+        #else
         let provider = (dict["provider"] as? String) ?? "alac"
+        #endif
         let keyword = (dict["keywords"] as? String) ?? (dict["keyword"] as? String) ?? ""
         let page = (dict["page"] as? Int) ?? 1
         let limit = (dict["limit"] as? Int) ?? 30

@@ -1,3 +1,4 @@
+#if !LITE
 // Apple Music 播放/下载核心（HLS → ALAC → 解密 → 缓存 mp4）
 //
 // ⚠️ 为什么需要（2026-10-23）：
@@ -54,3 +55,4 @@ final class AMPlayService {
         return ""
     }
 }
+#endif

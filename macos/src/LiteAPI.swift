@@ -1,3 +1,4 @@
+#if !LITE
 // wrapper-lite 接口 + 配置 + 错误类型
 //
 // wrapper-lite 提供 4 个我们需要的能力：
@@ -217,3 +218,4 @@ enum TTMLParser {
         return ""
     }
 }
+#endif

@@ -1,34 +1,39 @@
 # ============================================================================
-# 安妮播放器 · macOS 版云端构建发布（macOS 线专用）
-# 触发：push 一个 mac-v* 标签（如 git tag mac-v1.0.0 && git push origin mac-v1.0.0）
-#       或在 GitHub Actions 页面手动 Run workflow
+# 安妮播放器 · macOS 线云端构建发布（完整版 + Lite）
+#
+# 触发：
+#   mac-v*        → 完整版（含 Apple Music / Lima VM），产物 安妮播放器-{ver}-离线版.dmg
+#   mac-lite-v*   → Lite 版（无 Apple Music，universal，macOS 13+），产物 安妮播放器-Lite-{ver}.dmg
+#   或在 GitHub Actions 页面手动 Run workflow（手动跑只会走 tag 判断不到的分支，按需要改）
+#
 # 工程：原生 Swift（AppKit 外壳 + WKWebView + 原生音频引擎），非 Electron。
-# 流程：swiftc 编译 → build-dmg.sh 打 DMG/ZIP → 发布 Release（prerelease，见下）
+# 两条线共用同一份 macos/src：Lite 用 -D LITE 编译，AM/VM 代码在 #if !LITE 里。
+#
 # 维护边界：本 workflow 只许动 macOS 线；Windows 主线是 release.yml，禁止混改。
-# ⚠️ prerelease: true 是硬规则（防止抢走 releases/latest 指针打断 Windows 用户
-#    自动更新），mac 自动更新通道方案落地前不得移除。详见 macos/AGENTS.md 第二节。
+# ⚠️ 两个 job 的 prerelease: true 都是硬规则（防止抢走 releases/latest 指针打断
+#    Windows 用户自动更新），mac 自动更新通道方案落地前不得移除。详见 macos/AGENTS.md。
 # ============================================================================
 name: release-mac
 
 on:
   push:
-    tags: ['mac-v*']
+    tags: ['mac-v*', 'mac-lite-v*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # ==========================================================================
+  # 完整版（mac-v*）
+  # ==========================================================================
   build-mac:
+    if: startsWith(github.ref_name, 'mac-v')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       # ===== Swift 工程构建（按 numb 提供的构建方式，只允许改本文件） =====
-      # macos/ 目录结构：src/*.swift + build-dmg.sh（打 DMG/ZIP 的脚本）
-      # 若工程结构调整（如改 SwiftPM / Xcode 工程），改这里对应命令即可，
-      # 但「产物流向 GitHub Release + prerelease」的规矩不变。
-
       - name: 编译 Swift 工程（arm64，release）
         working-directory: macos
         run: |
@@ -70,8 +75,65 @@ jobs:
             macos/dist/annie-player-macos-arm64-*.zip
             macos/dist/安妮播放器-*-离线版.dmg
 
+  # ==========================================================================
+  # Lite 版（mac-lite-v*）—— 无 Apple Music，universal，macOS 13+
+  # ==========================================================================
+  build-mac-lite:
+    if: startsWith(github.ref_name, 'mac-lite-v')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境
+        run: |
+          swiftc --version
+          python3 --version
+
+      - name: 构建 Lite（universal，-D LITE）
+        working-directory: macos
+        run: |
+          ver="${GITHUB_REF_NAME#mac-lite-v}"
+          [ -n "$ver" ] || ver="0.0.0-dev"
+          chmod +x lite/build-dmg-lite.sh lite/web-patch.py
+          ./lite/build-dmg-lite.sh "$ver"
+
+      - name: 提取本版 release notes（macos/更新日志-lite.md）
+        shell: bash
+        run: |
+          ver="${GITHUB_REF_NAME#mac-lite-v}"
+          echo "LITEVER=$ver" >> "$GITHUB_ENV"
+          awk -v v="## V$ver" 'BEGIN{f=0} index($0,v)==1{f=1;next} /^## V/&&f{exit} f' macos/更新日志-lite.md > release-notes-lite.md || true
+          [ -s release-notes-lite.md ] || echo "安妮播放器 Lite v$ver" > release-notes-lite.md
+          cat >> release-notes-lite.md <<'EOF'
+
+          ---
+
+          **首次打开被 Gatekeeper 拦截时：**
+          系统设置 → 隐私与安全 → 滚到最底部「安全性」→ 点「仍要打开」；
+          或在终端执行 `xattr -cr "/Applications/安妮播放器 Lite.app"`（只需一次）。
+
+          macOS 13+ · universal（Apple Silicon + Intel）· 无 Apple Music、无需虚拟机。
+          EOF
+
+      - name: 列出产物（核对用）
+        shell: bash
+        run: |
+          find macos/dist -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' \) -exec ls -lh {} \;
+
+      - name: 发布 Lite Release（prerelease，勿改）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: 安妮播放器 Lite v${{ env.LITEVER }}
+          body_path: release-notes-lite.md
+          prerelease: true   # ⚠️ 硬规则：防止抢 releases/latest 指针（见顶部注释）
+          files: |
+            macos/dist/安妮播放器-Lite-*.dmg
+            macos/dist/annie-player-lite-macos-*.zip
+
 # ============================================================================
-# 备注：ubuntu.img（588MB）与 limactl（31MB）是 AM 解密 VM 的运行时依赖，
-# 不随每次发版重复上传——仿照 wrapper-lite 的做法，单独打一个固定 tag 的
-# 资产 Release（同样必须 prerelease），VMInstaller.swift 里写死该下载地址。
+# 备注：
+# · 完整版 ubuntu.img（588MB）/limactl（31MB）/wrapper-lite 是 AM 运行时依赖，
+#   不随每次发版重复上传——走固定 tag 的资产 Release（同样必须 prerelease）。
+# · Lite 无任何运行时依赖，DMG 9.5MB，随每次 tag 直接上传。
 # ============================================================================

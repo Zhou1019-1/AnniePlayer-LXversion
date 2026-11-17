@@ -276,8 +276,10 @@ html[data-motion="off"] #boot-splash *, html[data-motion="off"] #theme-splash * 
           <!-- ⚠️ 2026-10-23：默认平台从「酷狗」改为「酷我」。
                酷狗版权歌（晴天等）以 status=0 拒绝返回地址（需要 VIP），
                而酷我/网易/咪咕的官方接口对普通歌可以直接拿到播放地址。 -->
+          <!-- 2026-11-17：综合 = 五平台聚合搜索（searchAgg.js，iOS 搜索逻辑的桌面独立实现） -->
+          <button class="pf-tab active" data-pf="all">综合</button>
           <button class="pf-tab" data-pf="kg">酷狗</button>
-          <button class="pf-tab active" data-pf="kw">酷我</button>
+          <button class="pf-tab" data-pf="kw">酷我</button>
           <button class="pf-tab" data-pf="mg">咪咕</button>
           <button class="pf-tab" data-pf="tx">QQ</button>
           <button class="pf-tab" data-pf="wy">网易</button>
@@ -448,6 +450,7 @@ html[data-motion="off"] #boot-splash *, html[data-motion="off"] #theme-splash * 
 <script src="js/local/wallpaper.js"></script><!-- V4.4：全局自定义壁纸（三主题共用，IndexedDB 存图） -->
 <script src="js/local/settings.js"></script>
 <script src="js/local/viz.js"></script>
+<script src="js/local/searchAgg.js"></script>
 <script src="js/local/streaming.js"></script>
   <script src="js/local/eq.js"></script>
   <script src="js/local/exclusive.js"></script>

@@ -36,7 +36,7 @@
     fmt: '',              // 音质徽标文本（引擎 format 事件 / 流式音质）
     lyricsOn: true,
     // 洛雪在线搜索 / 发现音乐（V3.5.4：排行榜 + 歌单广场）
-    stProvider: 'kg', stKw: '', stPage: 0, stAllPage: 1, stResults: [], stIndex: -1,
+    stProvider: 'all', stKw: '', stPage: 0, stAllPage: 1, stResults: [], stIndex: -1,
     stSearching: false, stQuality: 'flac',
     stTab: 'search',           // search | boards | lists | albums
     tabSongs: {},              // 每个页签各自的歌曲列表缓存（切页签恢复）
@@ -57,7 +57,8 @@
   // ⚠️ 2026-10-22：Apple Music 独立成板块后，从「在线音乐」平台列表移除
   //    （用户要求：在线搜索不再需要 ALAC / AM 选项）
   //    AM 的搜索与播放走侧栏「🍎 Apple Music」专属页面。
-  var PLATFORMS = { kg: '酷狗音乐', kw: '酷我音乐', mg: '咪咕音乐', wy: '网易云音乐' };
+  // 2026-11-17：综合 = 五平台聚合搜索（searchAgg.js，桌面独立实现）；平台顺序与 streaming.js 一致
+  var PLATFORMS = { all: '综合', kg: '酷狗音乐', kw: '酷我音乐', mg: '咪咕音乐', wy: '网易云音乐' };
   var TYPE_LABEL = { alac: 'ALAC', flac24bit: 'Hi-Res', flac: 'FLAC', '320k': '320K', '128k': '128K' };
 
   function el(tag, cls, text) {

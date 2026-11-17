@@ -5,11 +5,11 @@
  */
 (function () {
 
-const PLATFORMS = { kg: '酷狗音乐', kw: '酷我音乐', mg: '咪咕音乐', wy: '网易云音乐' }; // QQ 音乐已下线（后端 403）
+const PLATFORMS = { kg: '酷狗音乐', kw: '酷我音乐', mg: '咪咕音乐', wy: '网易云音乐', tx: 'QQ 音乐', all: '综合' }; // QQ 单独平台需 lx SDK 就绪；综合 = 五平台聚合（searchAgg.js）
 
 const streamState = {
-  // ⚠️ 2026-10-23：默认「酷我」—— 酷狗版权歌需要 VIP，官方直连接口会拒绝。
-  provider: 'kw',
+  // 2026-11-17：默认「综合」（五平台聚合）；单平台标签仍可切回原来的行为。
+  provider: 'all',
   kw: '',             // 当前关键词
   page: 0,            // 已加载到的页码
   allPage: 1,
@@ -118,6 +118,8 @@ function localDupOf(song) {
 async function doSearch(fresh) {
   const kw = $s('#stream-search').value.trim();
   if (!kw || streamState.searching) return;
+  // 综合搜索（五平台聚合）走 searchAgg.js 的独立实现，单平台路径保持原样不动
+  if (streamState.provider === 'all' && window.SearchAgg) return doAggSearch(fresh);
   streamState.searching = true;
   const provider = streamState.provider;
   const pname = PLATFORMS[provider];
@@ -140,6 +142,42 @@ async function doSearch(fresh) {
     prefetchCovers(); // 后台补齐列表封面（搜索后立即显示，无需等点击播放）
   } catch (e) {
     setStreamStatus('搜索失败：' + (e.message || e), true);
+  } finally {
+    streamState.searching = false;
+  }
+}
+
+/* ---------------- 综合搜索（五平台聚合，2026-11-17） ----------------
+ * 逻辑全部在 searchAgg.js：五平台并发 → 合并同曲 → 相关度排序 → 不足 10 首模糊兜底 → 后台补 2/3 页。
+ * 这里只负责：调它、把每页 30 首拼进 streamState.results（沿用原来的列表渲染/播放/下载）。 */
+async function doAggSearch(fresh) {
+  const kw = $s('#stream-search').value.trim();
+  if (!kw || streamState.searching) return;
+  streamState.searching = true;
+  const page = fresh ? 1 : streamState.page + 1;
+  setStreamStatus(fresh ? '综合搜索中（五平台）…' : `综合：加载第 ${page} 页…`);
+  try {
+    const r = await window.SearchAgg.search({ kw, page });
+    if (streamState.provider !== 'all') return;           // 等结果期间用户切到单平台了
+    if (fresh) {
+      streamState.kw = kw;
+      streamState.results = r.rows;
+    } else {
+      streamState.results = streamState.results.concat(r.rows);
+    }
+    streamState.page = r.page;
+    streamState.allPage = r.allPage;
+    streamState.index = -1;
+    renderResults();
+    if (fresh && !r.rows.length) {
+      // 不静默：要么真没这首歌，要么平台接口这轮不通——说清楚，别留个空白列表
+      setStreamStatus(`没搜到「${kw}」的在线结果：五个平台都没有，或平台接口这轮不通，换关键词或切单平台再试`, true);
+      return;
+    }
+    setStreamStatus(`综合：共 ${r.total} 首${r.done ? '' : '（后台仍在补）'} · 已加载 ${streamState.results.length} 首（第 ${r.page}/${r.allPage} 页）`);
+    prefetchCovers();
+  } catch (e) {
+    setStreamStatus('综合搜索失败：' + (e.message || e), true);
   } finally {
     streamState.searching = false;
   }
@@ -322,8 +360,11 @@ function prefetchNextSong() {
   const next = streamState.results[streamState.index + 1];
   if (!next || next._prefetched) return;
   next._prefetched = true;
-  window.mine.streamSongUrl({ provider: next.provider, quality: currentQuality(), song: next })
-    .then(r => {
+  // 综合搜索的行：预取也走多平台回退，避免预取到一个取不到地址的平台而白等
+  const pf = (next._aggSources && next._aggSources.length > 1 && window.SearchAgg)
+    ? window.SearchAgg.resolveUrl(next, currentQuality())
+    : window.mine.streamSongUrl({ provider: next.provider, quality: currentQuality(), song: next });
+  pf.then(r => {
       if (!r || !r.playable || !r.url) return;
       next._prefetchedUrl = r;
       // 预热引擎 probe 缓存（URL → TrackInfo），切歌时 Play 命中缓存跳过网络探测
@@ -353,25 +394,51 @@ async function playStreamAt(i) {
   setStreamStatus(`正在获取播放地址：${song.name}…`);
 
   let r, ly;
-  const lyP = (window.mine.streamLyric
-    ? window.mine.streamLyric({ provider: song.provider, song }).catch(() => null)
-    : Promise.resolve(null));
-  try {
-    // V1.1.4：预取缓存命中时跳过 songUrl 网络请求（播放中已预取下一首）
-    if (song._prefetchedUrl) {
-      r = song._prefetchedUrl;
-      song._prefetchedUrl = null;
-    } else {
-      r = await window.mine.streamSongUrl({
-        provider: song.provider,
-        quality: currentQuality(),
-        song, // 完整歌曲对象（含 meta：洛雪音源脚本需要 hash/songmid 等原始字段）
-      });
+  // 综合搜索的行带着多平台源（_aggSources）：按平台优先级逐个真实取址，谁给出地址就用谁，
+  // 歌词再用最终落定的那个平台取——避免「封面一个平台、音源另一个平台、歌词第三个平台」。
+  const aggSrcs = (song._aggSources && song._aggSources.length > 1 && window.SearchAgg) ? song._aggSources : null;
+  if (aggSrcs) {
+    try {
+      // 预取（prefetchNextSong）已经按回退链取到地址就直接用，省一次网络往返
+      if (song._prefetchedUrl && song._prefetchedUrl.playable && song._prefetchedUrl.url) {
+        r = song._prefetchedUrl;
+        song._prefetchedUrl = null;
+      } else {
+        r = await window.SearchAgg.resolveUrl(song, currentQuality());
+      }
+      if (streamState.index !== i || streamState.gen !== gen) return;
+      ly = window.mine.streamLyric
+        ? await window.mine.streamLyric({ provider: song.provider, song }).catch(() => null)
+        : null;
+    } catch (e) {
+      setStreamStatus(`获取播放地址失败：${e.message || e}`, true);
+      return;
     }
-    ly = await lyP;
-  } catch (e) {
-    setStreamStatus(`获取播放地址失败：${e.message || e}`, true);
-    return;
+    if (!r || !r.playable || !r.url) {
+      setStreamStatus(`${song.name}：${(r && r.message) || '无法播放'}`, true);
+      return;
+    }
+  } else {
+    const lyP = (window.mine.streamLyric
+      ? window.mine.streamLyric({ provider: song.provider, song }).catch(() => null)
+      : Promise.resolve(null));
+    try {
+      // V1.1.4：预取缓存命中时跳过 songUrl 网络请求（播放中已预取下一首）
+      if (song._prefetchedUrl) {
+        r = song._prefetchedUrl;
+        song._prefetchedUrl = null;
+      } else {
+        r = await window.mine.streamSongUrl({
+          provider: song.provider,
+          quality: currentQuality(),
+          song, // 完整歌曲对象（含 meta：洛雪音源脚本需要 hash/songmid 等原始字段）
+        });
+      }
+      ly = await lyP;
+    } catch (e) {
+      setStreamStatus(`获取播放地址失败：${e.message || e}`, true);
+      return;
+    }
   }
   if (streamState.index !== i || streamState.gen !== gen) return; // 等待期间用户已点击其他曲目/本地接管
 
@@ -384,7 +451,7 @@ async function playStreamAt(i) {
   const downgradeNote = r.downgraded
     ? `（所选 ${TYPE_FULL[r.requestedType] || r.requestedType} 不可用，已降级为 ${TYPE_FULL[r.level] || r.level}）`
     : '';
-  setStreamStatus(`${pname} · ${r.quality || ''} · ${fmt}${downgradeNote} · 独占输出中`, !!r.downgraded);
+  setStreamStatus(`${PLATFORMS[song.provider] || song.provider} · ${r.quality || ''} · ${fmt}${downgradeNote} · 独占输出中`, !!r.downgraded);
   // 歌词/封面注入通过 onPlayed 回调：playTrack（视觉切换）在 engine('play') 确认前
   // 同步执行完毕（player.js 已重排），此时注入 token 匹配、不会被 reset 覆盖，
   // 也不再被慢速网络流的引擎确认时间阻塞。

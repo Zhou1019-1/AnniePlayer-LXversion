@@ -33,6 +33,8 @@
     var kw = S.stKw;
     if (!kw || S.stSearching) return;
     if (fresh) stHistPush(kw);
+    // 综合搜索（五平台聚合）走 searchAgg.js；单平台路径保持原样
+    if (S.stProvider === 'all' && window.SearchAgg) return doAggStreamSearch(fresh);
     S.stSearching = true;
     var provider = S.stProvider;
     var page = fresh ? 1 : S.stPage + 1;
@@ -52,6 +54,32 @@
     }).catch(function (e) {
       S.stSearching = false;
       renderStreamStatus('搜索失败：' + (e.message || e), true);
+    });
+  }
+  /* 2026-11-17：综合搜索（五平台聚合）。逻辑在 searchAgg.js，这里只接 UI 状态。 */
+  function doAggStreamSearch(fresh) {
+    var kw = S.stKw;
+    var page = fresh ? 1 : S.stPage + 1;
+    S.stSearching = true;
+    renderStreamStatus(fresh ? '综合搜索中（五平台）…' : '综合：加载第 ' + page + ' 页…');
+    window.SearchAgg.search({ kw: kw, page: page }).then(function (r) {
+      if (S.stProvider !== 'all') { S.stSearching = false; return; }   // 期间切到单平台了
+      S.stResults = fresh ? r.rows : S.stResults.concat(r.rows);
+      if (fresh) S.stFilter = '';
+      S.stPage = r.page;
+      S.stAllPage = r.allPage;
+      if (fresh) S.stIndex = -1;
+      S.stSearching = false;
+      renderView();
+      if (fresh && !r.rows.length) {
+        renderStreamStatus('没搜到「' + kw + '」的在线结果：五个平台都没有，或平台接口这轮不通，换关键词或切单平台再试', true);
+        return;
+      }
+      renderStreamStatus('综合：共 ' + r.total + ' 首' + (r.done ? '' : '（后台仍在补）') +
+        ' · 已加载 ' + S.stResults.length + ' 首（第 ' + S.stPage + '/' + S.stAllPage + ' 页）');
+    }).catch(function (e) {
+      S.stSearching = false;
+      renderStreamStatus('综合搜索失败：' + (e.message || e), true);
     });
   }
   function renderStreamStatus(text, warn) { if (R.stStatus) { R.stStatus.textContent = text || ''; R.stStatus.classList.toggle('warn', !!warn); } }
@@ -102,7 +130,10 @@
     if (Date.now() - _preAt2 < 4000) return; // 全局节流：至少间隔 4s 才发起一次预解析
     _preAt2 = Date.now();
     _preLoading = true; _preKey = key; _preUrl = null;
-    window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }).then(function (r) {
+    var _preP = (song._aggSources && song._aggSources.length > 1 && window.SearchAgg)
+      ? window.SearchAgg.resolveUrl(song, S.stQuality)
+      : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song });
+    _preP.then(function (r) {
       _preLoading = false;
       if (!r || !r.playable || !r.url) { _preKey = ''; return; }
       // 慢回调守卫：期间队列/当前曲/目标已变则丢弃（nextStreamIndex 重算即可，不做复杂比对）
@@ -144,7 +175,9 @@
     // V4.4：命中下一首预解析则跳过 IPC 请求（promise 链统一走同一个 then/catch）
     var preHit = consumePreload(song);
     var urlP = preHit ? Promise.resolve(preHit)
-      : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song });
+      : ((song._aggSources && song._aggSources.length > 1 && window.SearchAgg)
+          ? window.SearchAgg.resolveUrl(song, S.stQuality)
+          : window.mine.streamSongUrl({ provider: song.provider, quality: S.stQuality, song: song }));
     urlP.then(function (r) {
       if (S.stIndex !== i || S._playList !== list) return;
       if (!r || !r.playable || !r.url) { renderStreamStatus(song.name + '：' + ((r && r.message) || '无法播放'), true); return; }
@@ -389,6 +422,7 @@
   function switchStreamProvider(k) {
     if (S.stProvider === k) return;
     S.stProvider = k;
+    if (k === 'all' && S.stTab !== 'search') { S.stTab = 'search'; renderView(); if (S.stKw) doStreamSearch(true); return; }
     if (S.stTab === 'search') { if (S.stKw) doStreamSearch(true); else renderView(); }
     else if (S.stTab === 'boards') { renderView(); loadBoards(); }
     else if (S.stTab === 'albums') { // V4.3：切平台清专辑详情，有关键词则重搜（mg 不支持→主进程报错提示）
@@ -399,6 +433,7 @@
   }
   function loadBoards() {
     var provider = S.stProvider;
+    if (provider === 'all') { renderStreamStatus('综合模式没有排行榜：先在平台栏选一个平台（酷狗/酷我/网易/咪咕）', true); return; }
     renderStreamStatus('加载' + PLATFORMS[provider] + '排行榜…');
     window.mine.streamLeaderboards({ provider: provider }).then(function (r) {
       if (S.stProvider !== provider) return;
@@ -420,6 +455,7 @@
   }
   function loadSongLists(page) {
     var provider = S.stProvider;
+    if (provider === 'all') { renderStreamStatus('综合模式没有歌单广场：先在平台栏选一个平台', true); return; }
     renderStreamStatus('加载歌单广场…');
     window.mine.streamSongLists({ provider: provider, page: page || 1 }).then(function (r) {
       if (S.stProvider !== provider) return;
@@ -500,6 +536,7 @@
   function doAlbumSearch(fresh) {
     var kw = S.abKw;
     if (!kw || S.abSearching) return;
+    if (S.stProvider === 'all') { renderStreamStatus('综合模式没有专辑页：先在平台栏选一个平台', true); return; }
     if (S.stProvider === 'mg') { renderStreamStatus('咪咕暂不支持专辑搜索，请切换到酷狗/酷我/QQ/网易', true); return; }
     S.abSearching = true;
     S.abDetailId = ''; S.abDetailInfo = null;
